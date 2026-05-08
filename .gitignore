@@ -1,0 +1,20 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.DS_Store
+.mplconfig/
+.pytest_cache/
+
+# Generated products. Keep the project code and configs tracked, not bulk SWT/CWT arrays.
+runs/
+outputs/
+artifacts/
+*.npy
+*.npz
+*.h5
+*.hdf5
+*.parquet
+
+# Local CE4 raw samples.
+data/CE4/*.2C
+data/CE4/*.2c
