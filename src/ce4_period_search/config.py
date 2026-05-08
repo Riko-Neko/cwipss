@@ -49,6 +49,11 @@ class SWTScanConfig:
     validation_fold_bins: int = 16
     validation_shuffle_trials: int = 100
     validation_random_seed: int = 12345
+    visualization_enabled: bool = False
+    visualization_max_blocks: int = 2
+    visualization_max_levels: int = 3
+    visualization_top_candidates: int = 50
+    visualization_dpi: int = 140
     run_id: str | None = None
     save_legacy_candidates_csv: bool = True
 
@@ -106,6 +111,13 @@ _SECTION_KEY_MAP: dict[str, dict[str, str]] = {
         "output_dir": "output_dir",
         "run_id": "run_id",
         "save_legacy_candidates_csv": "save_legacy_candidates_csv",
+    },
+    "visualization": {
+        "enabled": "visualization_enabled",
+        "max_blocks": "visualization_max_blocks",
+        "max_levels": "visualization_max_levels",
+        "top_candidates": "visualization_top_candidates",
+        "dpi": "visualization_dpi",
     },
 }
 
@@ -214,6 +226,13 @@ def swt_config_to_nested_dict(config: SWTScanConfig) -> dict[str, Any]:
             "output_dir": config.output_dir,
             "run_id": config.run_id,
             "save_legacy_candidates_csv": config.save_legacy_candidates_csv,
+        },
+        "visualization": {
+            "enabled": config.visualization_enabled,
+            "max_blocks": config.visualization_max_blocks,
+            "max_levels": config.visualization_max_levels,
+            "top_candidates": config.visualization_top_candidates,
+            "dpi": config.visualization_dpi,
         },
     }
 

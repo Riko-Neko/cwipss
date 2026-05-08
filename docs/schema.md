@@ -15,10 +15,25 @@ Each run directory contains:
 - `candidates_reviewed.csv`: raw candidates plus veto labels and evidence.
 - `candidates.csv`: compatibility alias for `candidates_raw.csv`.
 - `validation_summary.csv`: optional original time-series validation evidence.
+- `validation_reviewed.csv`: optional validation evidence with BH/FDR statistics.
 - `validation/candidate_*.json`: optional per-candidate validation details.
 - `summary.json`: compact run summary and top candidates.
+- `report.md`: optional Markdown review report.
+
+Batch runs write a separate batch directory containing:
+
+- `batch_config.resolved.json`: batch settings, base scan config, and jobs.
+- `manifest.csv`: one row per attempted source file.
+- `files/<run_id>/`: isolated single-file run products.
+- `candidates_raw.all.csv`: merged raw candidates.
+- `candidates_reviewed.all.csv`: merged veto-reviewed candidates.
+- `validation_summary.all.csv`: merged validation evidence.
+- `validation_reviewed.all.csv`: merged validation statistics with global correction.
+- `report.md`: optional Markdown batch review report.
 
 ## `manifest.csv`
+
+Single-file run manifests use:
 
 | Field | Meaning |
 | --- | --- |
@@ -34,6 +49,22 @@ Each run directory contains:
 | `candidate_count` | Number of retained raw candidates. |
 | `status` | Processing status for this source file. |
 | `error` | Error message for failed rows. |
+
+Batch-level manifests use:
+
+| Field | Meaning |
+| --- | --- |
+| `batch_id` | Batch output id. |
+| `run_id` | Per-file run id. |
+| `source_file` | Input data file path. |
+| `run_dir` | Isolated per-file run directory. |
+| `status` | `complete` or `error`. |
+| `error` | Error message for failed files. |
+| `duration_seconds` | Wall-clock runtime for the file. |
+| `candidate_count` | Raw candidates from the per-file summary. |
+| `vetoed_candidate_count` | Vetoed candidates from the per-file summary. |
+| `validation_count` | Validation rows produced for the file. |
+| `stats_count` | Statistics rows produced for the file. |
 
 ## `candidates_raw.csv`
 
@@ -102,3 +133,20 @@ This table is written by `scripts/run_validation.py`.
 Validation metrics are evidence for review, not a final signal claim. A later
 statistics stage should apply multiple-testing correction across all evaluated
 candidates.
+
+## `validation_reviewed.csv`
+
+This table is written by `scripts/run_stats.py`. It starts with all
+`validation_summary.csv` fields and appends:
+
+| Field | Meaning |
+| --- | --- |
+| `p_value` | Candidate-local p-value copied from `shuffle_pvalue`. |
+| `q_value` | Benjamini-Hochberg adjusted p-value within each `run_id`. |
+| `global_q_value` | Benjamini-Hochberg adjusted p-value across all rows in the input file. |
+| `evidence_rank` | Deterministic review order among rows with valid p-values. |
+| `stats_status` | `evaluated` for rows with valid p-values, otherwise `missing_pvalue`. |
+
+For a single-run input, `global_q_value` is usually the same as the run-level
+correction unless the input file contains multiple `run_id` groups. In batch
+mode, global correction should be applied to the merged validation table.

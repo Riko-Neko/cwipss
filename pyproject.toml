@@ -8,6 +8,7 @@ dependencies = [
   "numpy",
   "pywavelets",
   "scipy",
+  "matplotlib",
 ]
 
 [tool.pytest.ini_options]

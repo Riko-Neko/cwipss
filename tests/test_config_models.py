@@ -15,6 +15,7 @@ def test_structured_config_maps_to_resolved_dataclass() -> None:
             "detection": {"threshold": 6.5, "min_pixels": 8},
             "veto": {"enabled": True, "max_bandwidth_fraction": 0.8},
             "validation": {"max_candidates": 12, "shuffle_trials": 20},
+            "visualization": {"enabled": True, "max_blocks": 1, "max_levels": 2, "top_candidates": 10},
             "output": {"output_dir": "runs", "run_id": "smoke"},
         }
     )
@@ -29,6 +30,10 @@ def test_structured_config_maps_to_resolved_dataclass() -> None:
     assert config.veto_max_bandwidth_fraction == 0.8
     assert config.validation_max_candidates == 12
     assert config.validation_shuffle_trials == 20
+    assert config.visualization_enabled is True
+    assert config.visualization_max_blocks == 1
+    assert config.visualization_max_levels == 2
+    assert config.visualization_top_candidates == 10
     assert config.run_id == "smoke"
 
     nested = swt_config_to_nested_dict(config)
@@ -37,6 +42,7 @@ def test_structured_config_maps_to_resolved_dataclass() -> None:
     assert nested["detection"]["threshold"] == 6.5
     assert nested["veto"]["max_bandwidth_fraction"] == 0.8
     assert nested["validation"]["shuffle_trials"] == 20
+    assert nested["visualization"]["enabled"] is True
 
 
 def test_flat_config_remains_supported_with_overrides() -> None:

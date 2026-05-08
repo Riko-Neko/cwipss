@@ -44,14 +44,27 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Cap components retained per block and level.",
     )
+    parser.add_argument("--visualize", action="store_true", default=None, help="Write staged visualization PNGs.")
+    parser.add_argument("--viz-max-blocks", type=int, default=None, help="Maximum blocks to visualize; 0 means all.")
+    parser.add_argument("--viz-max-levels", type=int, default=None, help="Maximum SWT levels per block to visualize; 0 means all.")
+    parser.add_argument("--viz-top-candidates", type=int, default=None, help="Maximum candidate overlays/scatter points.")
+    parser.add_argument("--viz-dpi", type=int, default=None, help="Visualization image DPI.")
     return parser.parse_args()
 
 
 def resolve_config(args: argparse.Namespace) -> SWTScanConfig:
     overrides = {}
     for key, value in vars(args).items():
-        if key != "config" and value is not None:
-            overrides[key] = value
+        if key == "config" or value is None:
+            continue
+        mapped_key = {
+            "visualize": "visualization_enabled",
+            "viz_max_blocks": "visualization_max_blocks",
+            "viz_max_levels": "visualization_max_levels",
+            "viz_top_candidates": "visualization_top_candidates",
+            "viz_dpi": "visualization_dpi",
+        }.get(key, key)
+        overrides[mapped_key] = value
     config = load_swt_config(args.config, overrides=overrides)
     config = resolve_output_dir(config, PROJECT_DIR)
     if not config.input:

@@ -87,6 +87,75 @@ Candidate validation is a separate step:
 This writes `validation_summary.csv` and per-candidate JSON files under
 `validation/`.
 
+Validation statistics are also a separate step:
+
+```bash
+/opt/miniconda3/envs/pytorch/bin/python scripts/run_stats.py \
+  --run-dir runs/<run_id>
+```
+
+This writes `validation_reviewed.csv` with p-values, run-level q-values,
+global q-values, and deterministic evidence ranks.
+
+Batch processing is available for multiple inputs:
+
+```bash
+/opt/miniconda3/envs/pytorch/bin/python scripts/run_batch.py \
+  --input-dir data/CE4 \
+  --pattern "*.2C" \
+  --batch-id smoke_batch \
+  --f-start 38.0 \
+  --f-stop 38.3 \
+  --t-start 0 \
+  --t-stop 2048
+```
+
+Each source file gets an isolated run under `runs/<batch_id>/files/`, and the
+batch directory receives merged candidate, validation, and statistics tables.
+
+Generate a Markdown review report for either a single run or a batch:
+
+```bash
+/opt/miniconda3/envs/pytorch/bin/python scripts/run_report.py \
+  --run-dir runs/<run_id-or-batch_id>
+```
+
+This writes `report.md` with candidate counts, veto distribution, top SWT
+candidates, and top validation evidence rows.
+
+Stage visualization can be enabled on scans, batches, and injection benchmarks:
+
+```bash
+/opt/miniconda3/envs/pytorch/bin/python scripts/run_swt_candidates.py \
+  --input data/CE4/example.2C \
+  --f-start 38.0 \
+  --f-stop 38.3 \
+  --t-start 0 \
+  --t-stop 2048 \
+  --visualize
+```
+
+This writes `visualization/index.md` plus PNG diagnostics for the raw matrix,
+SWT power, local S/N, candidate overlays, veto review, and optional
+validation/injection stages. See `docs/visualization.md`.
+
+Run an injection benchmark to test recovery of controlled synthetic periodic
+signals:
+
+```bash
+/opt/miniconda3/envs/pytorch/bin/python scripts/run_injection_benchmark.py \
+  --background synthetic \
+  --records 1024 \
+  --channels 64 \
+  --period-records 8 16 32 \
+  --amplitudes 4 6 8 \
+  --grid \
+  --run-id injection_smoke
+```
+
+This writes truth, candidate, validation, reviewed statistics, and per-injection
+recovery/performance tables. See `docs/injection_benchmark.md`.
+
 ## Current Application Adapter
 
 The bundled reader in `src/ce4_period_search/io.py` supports CE-4 LFRS

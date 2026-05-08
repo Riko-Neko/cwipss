@@ -79,6 +79,15 @@ VALIDATION_FIELDNAMES = [
 ]
 
 
+VALIDATION_REVIEWED_FIELDNAMES = VALIDATION_FIELDNAMES + [
+    "p_value",
+    "q_value",
+    "global_q_value",
+    "evidence_rank",
+    "stats_status",
+]
+
+
 MANIFEST_FIELDNAMES = [
     "run_id",
     "source_file",
@@ -95,6 +104,81 @@ MANIFEST_FIELDNAMES = [
     "candidate_count",
     "status",
     "error",
+]
+
+
+BATCH_MANIFEST_FIELDNAMES = [
+    "batch_id",
+    "run_id",
+    "source_file",
+    "run_dir",
+    "status",
+    "error",
+    "duration_seconds",
+    "candidate_count",
+    "vetoed_candidate_count",
+    "validation_count",
+    "stats_count",
+]
+
+
+INJECTION_TRUTH_FIELDNAMES = [
+    "injection_id",
+    "signal_model",
+    "period_records",
+    "amplitude",
+    "record_start",
+    "record_stop",
+    "duration_records",
+    "channel_start",
+    "channel_stop",
+    "channel_center",
+    "bandwidth_channels",
+    "freq_start_mhz",
+    "freq_stop_mhz",
+    "freq_center_mhz",
+    "duty_cycle",
+    "phase",
+    "drift_channels",
+]
+
+
+INJECTION_RESULT_FIELDNAMES = [
+    "injection_id",
+    "signal_model",
+    "period_records",
+    "amplitude",
+    "detected_raw",
+    "detected_after_veto",
+    "validated",
+    "matched_candidate_id",
+    "failure_stage",
+    "time_overlap_fraction",
+    "freq_overlap_fraction",
+    "period_error_fraction",
+    "peak_score",
+    "candidate_status",
+    "veto_flags",
+    "p_value",
+    "q_value",
+    "global_q_value",
+    "evidence_rank",
+    "refined_period_records",
+]
+
+
+INJECTION_PERFORMANCE_FIELDNAMES = [
+    "signal_model",
+    "period_records",
+    "amplitude",
+    "injection_count",
+    "detected_raw_count",
+    "detected_after_veto_count",
+    "validated_count",
+    "detected_raw_rate",
+    "detected_after_veto_rate",
+    "validated_rate",
+    "failure_stage_counts_json",
 ]
 
 

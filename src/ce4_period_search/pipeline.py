@@ -82,6 +82,10 @@ def write_summary_json(
         "candidate_count": len(candidates),
         "reviewed_candidate_count": len(reviewed_candidates),
         "vetoed_candidate_count": vetoed_count,
+        "visualization": {
+            "enabled": bool(config.visualization_enabled),
+            "dir": "visualization" if config.visualization_enabled else "",
+        },
         "top_candidates": candidates[:20],
         "notes": [
             "SWT bright components are candidates, not signal claims.",
@@ -189,4 +193,33 @@ def run_swt_scan(config: SWTScanConfig) -> Path:
         final_candidates,
         reviewed_candidates,
     )
+    if config.visualization_enabled:
+        from .visualization import SearchVisualizationConfig, VisualizationConfig, visualize_matrix_stages
+
+        selected_block = reader.read_block(selected_records, reader.freq_slice(config.f_start, config.f_stop))
+        visualize_matrix_stages(
+            selected_block.data,
+            selected_block.freqs_mhz,
+            run_dir / "visualization",
+            SearchVisualizationConfig(
+                wavelet=config.wavelet,
+                levels=config.levels,
+                block_channels=config.block_channels,
+                threshold=config.threshold,
+                local_time=config.local_time,
+                local_freq=config.local_freq,
+            ),
+            raw_candidates=final_candidates,
+            reviewed_candidates=reviewed_candidates,
+            run_id=run_id,
+            source_name=str(config.input),
+            record_offset=int(selected_block.record_range[0]),
+            config=VisualizationConfig(
+                enabled=True,
+                max_blocks=config.visualization_max_blocks,
+                max_levels=config.visualization_max_levels,
+                top_candidates=config.visualization_top_candidates,
+                dpi=config.visualization_dpi,
+            ),
+        )
     return run_dir
