@@ -11,7 +11,7 @@ from typing import Any
 
 import numpy as np
 
-_MPL_CONFIG_DIR = Path(tempfile.gettempdir()) / "swt_period_search_matplotlib"
+_MPL_CONFIG_DIR = Path(tempfile.gettempdir()) / "cwt_period_search_matplotlib"
 _MPL_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 os.environ.setdefault("MPLCONFIGDIR", str(_MPL_CONFIG_DIR))
 
@@ -21,27 +21,30 @@ matplotlib.use("Agg")
 from matplotlib import pyplot as plt
 from matplotlib.patches import Rectangle
 
+from .cwt import aggregate_cwt_time, cwt_power_cube
 from .detection import robust_score_2d
-from .swt import swt_detail_power_matrix
 
 
 @dataclass(frozen=True)
-class VisualizationConfig:
+class CWTVisualizationConfig:
     enabled: bool = False
     max_blocks: int = 2
-    max_levels: int = 3
+    max_channels: int = 4
     top_candidates: int = 50
     dpi: int = 140
 
 
 @dataclass(frozen=True)
 class SearchVisualizationConfig:
-    wavelet: str = "db4"
-    levels: int = 5
+    wavelet: str
+    periods: np.ndarray
+    cwt_method: str = "fft"
     block_channels: int = 128
-    threshold: float = 5.0
-    local_time: int = 513
+    threshold: float = 6.0
+    local_period: int = 9
     local_freq: int = 9
+    time_aggregation: str = "p95"
+    aggregation_percentile: float = 95.0
 
 
 def read_csv_rows(path: str | Path) -> list[dict[str, str]]:
@@ -87,7 +90,7 @@ def _freq_step(freqs_mhz: np.ndarray) -> float:
     return float(np.nanmedian(diffs)) if diffs.size else 1.0
 
 
-def _extent(freqs_mhz: np.ndarray, records: int, record_offset: int) -> list[float]:
+def _matrix_extent(freqs_mhz: np.ndarray, records: int, record_offset: int) -> list[float]:
     step = _freq_step(freqs_mhz)
     if freqs_mhz.size == 0:
         x0, x1 = 0.0, 1.0
@@ -96,6 +99,60 @@ def _extent(freqs_mhz: np.ndarray, records: int, record_offset: int) -> list[flo
     else:
         x0, x1 = float(freqs_mhz[0]) - 0.5 * step, float(freqs_mhz[-1]) + 0.5 * step
     return [x0, x1, float(record_offset), float(record_offset + records)]
+
+
+def _response_extent(freqs_mhz: np.ndarray, periods: np.ndarray) -> list[float]:
+    step = _freq_step(freqs_mhz)
+    if freqs_mhz.size == 0:
+        x0, x1 = 0.0, 1.0
+    elif freqs_mhz.size == 1:
+        x0, x1 = float(freqs_mhz[0]) - 0.5 * step, float(freqs_mhz[0]) + 0.5 * step
+    else:
+        x0, x1 = float(freqs_mhz[0]) - 0.5 * step, float(freqs_mhz[-1]) + 0.5 * step
+    return [x0, x1, float(np.nanmin(periods)), float(np.nanmax(periods))]
+
+
+def _scalogram_extent(records: int, record_offset: int, periods: np.ndarray) -> list[float]:
+    return [
+        float(record_offset),
+        float(record_offset + records),
+        float(np.nanmin(periods)),
+        float(np.nanmax(periods)),
+    ]
+
+
+def _linear_edges_from_centers(values: np.ndarray) -> np.ndarray:
+    centers = np.asarray(values, dtype=np.float64)
+    if centers.size == 0:
+        return np.array([0.0, 1.0], dtype=np.float64)
+    if centers.size == 1:
+        width = max(1.0, abs(float(centers[0])) * 0.01)
+        return np.array([centers[0] - 0.5 * width, centers[0] + 0.5 * width], dtype=np.float64)
+    edges = np.empty(centers.size + 1, dtype=np.float64)
+    edges[1:-1] = 0.5 * (centers[:-1] + centers[1:])
+    edges[0] = centers[0] - (edges[1] - centers[0])
+    edges[-1] = centers[-1] + (centers[-1] - edges[-2])
+    return edges
+
+
+def _period_edges(periods: np.ndarray) -> np.ndarray:
+    centers = np.asarray(periods, dtype=np.float64)
+    if centers.size == 0:
+        return np.array([1.0, 2.0], dtype=np.float64)
+    if centers.size == 1:
+        width = max(1e-6, abs(float(centers[0])) * 0.1)
+        return np.array([max(1e-12, centers[0] - 0.5 * width), centers[0] + 0.5 * width], dtype=np.float64)
+    if np.all(centers > 0):
+        edges = np.empty(centers.size + 1, dtype=np.float64)
+        edges[1:-1] = np.sqrt(centers[:-1] * centers[1:])
+        edges[0] = centers[0] * centers[0] / edges[1]
+        edges[-1] = centers[-1] * centers[-1] / edges[-2]
+        return edges
+    return _linear_edges_from_centers(centers)
+
+
+def _record_edges(records: int, record_offset: int) -> np.ndarray:
+    return np.arange(int(record_offset), int(record_offset) + int(records) + 1, dtype=np.float64)
 
 
 def _new_figure(width: float = 9.0, height: float = 5.4) -> tuple[plt.Figure, plt.Axes]:
@@ -109,7 +166,7 @@ def _save(fig: plt.Figure, path: Path, dpi: int) -> None:
     plt.close(fig)
 
 
-def _draw_rows(
+def _draw_period_rows(
     ax: plt.Axes,
     rows: list[dict[str, Any]],
     *,
@@ -122,21 +179,27 @@ def _draw_rows(
     for row in rows[:max_rows]:
         f0 = _float(row, "freq_start_mhz")
         f1 = _float(row, "freq_stop_mhz", f0)
-        r0 = _float(row, "record_start")
-        r1 = _float(row, "record_stop", r0 + 1)
-        if not all(math.isfinite(value) for value in [f0, f1, r0, r1]):
+        p0 = _float(row, "period_start_records", _float(row, "period_records", _float(row, "peak_period_records")))
+        p1 = _float(row, "period_stop_records", p0)
+        if not all(math.isfinite(value) for value in [f0, f1, p0, p1]):
             continue
         f0, f1 = sorted([f0, f1])
-        r0, r1 = sorted([r0, r1])
+        p0, p1 = sorted([p0, p1])
         if f1 <= f0:
-            f1 = f0 + 1e-9
-        if r1 <= r0:
-            r1 = r0 + 1.0
+            x0, x1 = ax.get_xlim()
+            width = max(1e-9, abs(x1 - x0) * 0.01)
+            f0 -= 0.5 * width
+            f1 += 0.5 * width
+        if p1 <= p0:
+            y0, y1 = ax.get_ylim()
+            height = max(1e-9, abs(y1 - y0) * 0.01)
+            p0 -= 0.5 * height
+            p1 += 0.5 * height
         ax.add_patch(
             Rectangle(
-                (f0, r0),
+                (f0, p0),
                 f1 - f0,
-                r1 - r0,
+                p1 - p0,
                 fill=False,
                 edgecolor=color,
                 linewidth=linewidth,
@@ -148,15 +211,38 @@ def _draw_rows(
         ax.plot([], [], color=color, linewidth=linewidth, label=label)
 
 
+def _draw_time_truth(
+    ax: plt.Axes,
+    rows: list[dict[str, Any]],
+    *,
+    color: str,
+    label: str,
+    linewidth: float = 1.2,
+) -> None:
+    drawn = 0
+    for row in rows:
+        r0 = _float(row, "record_start")
+        r1 = _float(row, "record_stop", r0)
+        p = _float(row, "period_records", _float(row, "peak_period_records"))
+        if not all(math.isfinite(value) for value in [r0, r1, p]):
+            continue
+        ax.hlines(p, r0, r1, colors=color, linewidth=linewidth, alpha=0.9)
+        drawn += 1
+    if drawn:
+        ax.plot([], [], color=color, linewidth=linewidth, label=label)
+
+
 def _imshow(
     ax: plt.Axes,
     image: np.ndarray,
-    freqs_mhz: np.ndarray,
-    record_offset: int,
+    extent: list[float],
     *,
     title: str,
+    xlabel: str,
+    ylabel: str,
     cmap: str,
     cbar_label: str,
+    yscale: str | None = None,
 ) -> None:
     vmin, vmax = _limits(image)
     im = ax.imshow(
@@ -164,20 +250,52 @@ def _imshow(
         origin="lower",
         aspect="auto",
         interpolation="nearest",
-        extent=_extent(freqs_mhz, image.shape[0], record_offset),
+        extent=extent,
         cmap=cmap,
         vmin=vmin,
         vmax=vmax,
     )
     ax.set_title(title)
-    ax.set_xlabel("Frequency / channel coordinate")
-    ax.set_ylabel("Record")
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+    if yscale:
+        ax.set_yscale(yscale)
     plt.colorbar(im, ax=ax, label=cbar_label)
 
 
-def _candidate_status_colors(rows: list[dict[str, Any]]) -> tuple[list[str], list[str]]:
+def _pcolormesh(
+    ax: plt.Axes,
+    image: np.ndarray,
+    x_edges: np.ndarray,
+    y_edges: np.ndarray,
+    *,
+    title: str,
+    xlabel: str,
+    ylabel: str,
+    cmap: str,
+    cbar_label: str,
+    yscale: str | None = None,
+) -> None:
+    vmin, vmax = _limits(image)
+    mesh = ax.pcolormesh(
+        x_edges,
+        y_edges,
+        image,
+        shading="auto",
+        cmap=cmap,
+        vmin=vmin,
+        vmax=vmax,
+    )
+    ax.set_title(title)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+    if yscale:
+        ax.set_yscale(yscale)
+    plt.colorbar(mesh, ax=ax, label=cbar_label)
+
+
+def _candidate_status_colors(rows: list[dict[str, Any]]) -> list[str]:
     colors = []
-    labels = []
     for row in rows:
         status = str(row.get("candidate_status", "raw"))
         if status == "vetoed":
@@ -186,15 +304,42 @@ def _candidate_status_colors(rows: list[dict[str, Any]]) -> tuple[list[str], lis
             colors.append("#1f77b4")
         else:
             colors.append("#5c677d")
-        labels.append(status)
-    return colors, labels
+    return colors
 
 
 def _sort_candidates(rows: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
     return sorted(rows, key=lambda row: _float(row, "peak_score", -math.inf), reverse=True)[: max(0, limit)]
 
 
-def visualize_matrix_stages(
+def _representative_channels(
+    block_start: int,
+    block_stop: int,
+    block_freqs: np.ndarray,
+    candidates: list[dict[str, Any]],
+    max_channels: int,
+) -> list[int]:
+    channels: list[int] = []
+    freqs = np.asarray(block_freqs, dtype=np.float64)
+    for row in _sort_candidates(candidates, max_channels * 4):
+        peak_freq = _float(row, "peak_freq_mhz")
+        if not math.isfinite(peak_freq) or freqs.size == 0:
+            continue
+        local_channel = int(np.nanargmin(np.abs(freqs - peak_freq)))
+        channels.append(block_start + local_channel)
+    if not channels:
+        span = max(1, block_stop - block_start)
+        channels = [block_start + int((idx + 1) * span / (max_channels + 1)) for idx in range(max_channels)]
+    unique: list[int] = []
+    for channel in channels:
+        clamped = min(max(int(channel), block_start), block_stop - 1)
+        if clamped not in unique:
+            unique.append(clamped)
+        if len(unique) >= max(1, max_channels):
+            break
+    return unique
+
+
+def visualize_cwt_stages(
     data: np.ndarray,
     freqs_mhz: np.ndarray,
     output_dir: str | Path,
@@ -208,11 +353,12 @@ def visualize_matrix_stages(
     run_id: str = "",
     source_name: str = "",
     record_offset: int = 0,
-    config: VisualizationConfig | None = None,
+    config: CWTVisualizationConfig | None = None,
 ) -> Path:
-    config = config or VisualizationConfig(enabled=True)
+    config = config or CWTVisualizationConfig(enabled=True)
     matrix = np.asarray(data, dtype=np.float32)
     freqs = np.asarray(freqs_mhz, dtype=np.float64)
+    periods = np.asarray(search_config.periods, dtype=np.float64)
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     reviewed = reviewed_candidates or raw_candidates
@@ -225,21 +371,32 @@ def visualize_matrix_stages(
     _imshow(
         ax,
         matrix,
-        freqs,
-        record_offset,
+        _matrix_extent(freqs, matrix.shape[0], record_offset),
         title=f"Stage 01 input matrix: {source_name or run_id}",
+        xlabel="Frequency / channel coordinate",
+        ylabel="Record",
         cmap="magma",
         cbar_label="amplitude",
     )
-    _draw_rows(ax, truths, color="#00e5ff", label="injection truth", linewidth=1.5)
+    for truth in truths:
+        f0 = _float(truth, "freq_start_mhz")
+        f1 = _float(truth, "freq_stop_mhz", f0)
+        r0 = _float(truth, "record_start")
+        r1 = _float(truth, "record_stop", r0)
+        if all(math.isfinite(value) for value in [f0, f1, r0, r1]):
+            if f1 <= f0:
+                f0 -= 0.25
+                f1 += 0.25
+            ax.add_patch(Rectangle((f0, r0), f1 - f0, r1 - r0, fill=False, edgecolor="#00e5ff", linewidth=1.5))
     if truths:
+        ax.plot([], [], color="#00e5ff", linewidth=1.5, label="injection truth")
         ax.legend(loc="upper right")
     path = output_dir / "stage_01_input_matrix.png"
     _save(fig, path, config.dpi)
     images.append(("Stage 01 Input Matrix", path, "Raw time-channel matrix. Cyan boxes mark injected truth spans when available."))
 
     max_blocks = math.inf if int(config.max_blocks) <= 0 else int(config.max_blocks)
-    max_levels = math.inf if int(config.max_levels) <= 0 else int(config.max_levels)
+    max_channels = max(1, int(config.max_channels))
     block_count = 0
     for block_index, block_start in enumerate(range(0, matrix.shape[1], search_config.block_channels), start=1):
         if block_count >= max_blocks:
@@ -249,95 +406,117 @@ def visualize_matrix_stages(
         block_data = matrix[:, block_start:block_stop]
         block_freqs = freqs[block_start:block_stop]
         block_id = f"block_{block_index:04d}"
-        powers, level_numbers = swt_detail_power_matrix(
+        power = cwt_power_cube(
             block_data,
+            periods,
             wavelet=search_config.wavelet,
-            levels=search_config.levels,
+            method=search_config.cwt_method,
             normalize_channels=True,
         )
-        level_count = 0
-        for level_idx, level_number in enumerate(level_numbers):
-            if level_count >= max_levels:
-                break
-            level_count += 1
-            log_power = np.log10(powers[level_idx] + 1e-12)
-            score = robust_score_2d(
-                log_power,
-                local_time=search_config.local_time,
-                local_freq=min(search_config.local_freq, max(3, block_freqs.size | 1)),
-            )
-            level_rows = [
-                row for row in raw_candidates
-                if str(row.get("block_id", "")) == block_id
-                and int(_float(row, "swt_level", -1)) == int(level_number)
-            ]
+        response = aggregate_cwt_time(
+            power,
+            method=search_config.time_aggregation,
+            percentile=search_config.aggregation_percentile,
+        )
+        score = robust_score_2d(
+            np.log10(response + 1e-12),
+            local_time=search_config.local_period,
+            local_freq=min(search_config.local_freq, max(3, block_freqs.size | 1)),
+        )
+        block_rows = [row for row in raw_candidates if str(row.get("block_id", "")) == block_id]
+        representative = _representative_channels(block_start, block_stop, block_freqs, block_rows, max_channels)
 
+        for global_channel in representative:
+            local_channel = global_channel - block_start
+            if local_channel < 0 or local_channel >= block_freqs.size:
+                continue
+            scalogram = np.log10(power[:, :, local_channel] + 1e-12)
             fig, ax = _new_figure()
-            _imshow(
+            _pcolormesh(
                 ax,
-                log_power,
-                block_freqs,
-                record_offset,
-                title=f"Stage 02 SWT log-power: {block_id}, level {int(level_number)}",
+                scalogram,
+                _record_edges(matrix.shape[0], record_offset),
+                _period_edges(periods),
+                title=f"Stage 02 CWT scalogram: {block_id}, channel {global_channel}",
+                xlabel="Record",
+                ylabel="Period / records",
                 cmap="inferno",
-                cbar_label="log10(detail power)",
+                cbar_label="log10(CWT power)",
+                yscale="log",
             )
-            path = output_dir / f"stage_02_{block_id}_level_{int(level_number)}_power.png"
+            channel_truths = [
+                row for row in truths
+                if _float(row, "channel_start", -1) <= global_channel < _float(row, "channel_stop", -1)
+            ]
+            _draw_time_truth(ax, channel_truths, color="#00e5ff", label="truth period", linewidth=1.5)
+            if channel_truths:
+                ax.legend(loc="best")
+            path = output_dir / f"stage_02_{block_id}_channel_{global_channel:04d}_scalogram.png"
             _save(fig, path, config.dpi)
-            images.append((f"Stage 02 SWT Power {block_id} L{int(level_number)}", path, "SWT detail-power map before local robust S/N."))
+            images.append((f"Stage 02 CWT Scalogram {block_id} Ch {global_channel}", path, "Full period-time CWT power for one representative frequency channel before time aggregation."))
 
-            fig, ax = _new_figure()
-            _imshow(
-                ax,
-                score,
-                block_freqs,
-                record_offset,
-                title=f"Stage 03 local robust S/N: {block_id}, level {int(level_number)}",
-                cmap="viridis",
-                cbar_label="local robust S/N",
-            )
-            ax.contour(
-                block_freqs,
-                np.arange(record_offset, record_offset + score.shape[0]),
-                score,
-                levels=[float(search_config.threshold)],
-                colors="white",
-                linewidths=0.7,
-            )
-            path = output_dir / f"stage_03_{block_id}_level_{int(level_number)}_snr.png"
-            _save(fig, path, config.dpi)
-            images.append((f"Stage 03 Local S/N {block_id} L{int(level_number)}", path, "Local robust S/N map; white contour is the detection threshold."))
+        fig, ax = _new_figure()
+        _pcolormesh(
+            ax,
+            np.log10(response + 1e-12),
+            _linear_edges_from_centers(block_freqs),
+            _period_edges(periods),
+            title=f"Stage 03 period-channel response: {block_id}",
+            xlabel="Frequency / channel coordinate",
+            ylabel="Period / records",
+            cmap="magma",
+            cbar_label=f"log10({search_config.time_aggregation} CWT power)",
+            yscale="log",
+        )
+        _draw_period_rows(ax, truths, color="#00e5ff", label="truth", linewidth=1.5)
+        if truths:
+            ax.legend(loc="best")
+        path = output_dir / f"stage_03_{block_id}_period_channel_response.png"
+        _save(fig, path, config.dpi)
+        images.append((f"Stage 03 Period-Channel Response {block_id}", path, "CWT power after time aggregation, forming the period-channel candidate map."))
 
-            fig, ax = _new_figure()
-            _imshow(
-                ax,
-                score,
-                block_freqs,
-                record_offset,
-                title=f"Stage 04 candidates: {block_id}, level {int(level_number)}",
-                cmap="viridis",
-                cbar_label="local robust S/N",
-            )
-            _draw_rows(ax, _sort_candidates(level_rows, config.top_candidates), color="#ffdf4d", label="candidate")
-            _draw_rows(ax, truths, color="#00e5ff", label="truth", linewidth=1.5)
-            if level_rows or truths:
-                ax.legend(loc="upper right")
-            path = output_dir / f"stage_04_{block_id}_level_{int(level_number)}_candidates.png"
-            _save(fig, path, config.dpi)
-            images.append((f"Stage 04 Candidate Overlay {block_id} L{int(level_number)}", path, "Candidate boxes over the local S/N map; truth boxes are cyan when available."))
+        fig, ax = _new_figure()
+        _pcolormesh(
+            ax,
+            score,
+            _linear_edges_from_centers(block_freqs),
+            _period_edges(periods),
+            title=f"Stage 04 local robust S/N: {block_id}",
+            xlabel="Frequency / channel coordinate",
+            ylabel="Period / records",
+            cmap="viridis",
+            cbar_label="local robust S/N",
+            yscale="log",
+        )
+        ax.contour(
+            block_freqs,
+            periods,
+            score,
+            levels=[float(search_config.threshold)],
+            colors="white",
+            linewidths=0.7,
+        )
+        _draw_period_rows(ax, _sort_candidates(block_rows, config.top_candidates), color="#ffdf4d", label="candidate")
+        _draw_period_rows(ax, truths, color="#00e5ff", label="truth", linewidth=1.5)
+        if block_rows or truths:
+            ax.legend(loc="best")
+        path = output_dir / f"stage_04_{block_id}_period_channel_candidates.png"
+        _save(fig, path, config.dpi)
+        images.append((f"Stage 04 Period-Channel Candidate Overlay {block_id}", path, "Local S/N period-channel map with threshold contour, candidates, and optional truth."))
 
     if reviewed:
         top_rows = _sort_candidates(reviewed, config.top_candidates)
         x = [_float(row, "peak_freq_mhz") for row in top_rows]
-        y = [_float(row, "peak_record") for row in top_rows]
+        y = [_float(row, "peak_period_records") for row in top_rows]
         size = [max(15.0, 12.0 * _float(row, "peak_score", 1.0)) for row in top_rows]
-        colors, _labels = _candidate_status_colors(top_rows)
+        colors = _candidate_status_colors(top_rows)
         fig, ax = _new_figure()
         ax.scatter(x, y, s=size, c=colors, alpha=0.75, edgecolors="black", linewidths=0.3)
-        _draw_rows(ax, truths, color="#00a6c8", label="truth", linewidth=1.4)
+        _draw_period_rows(ax, truths, color="#00a6c8", label="truth", linewidth=1.4)
         ax.set_title("Stage 05 candidate review overview")
         ax.set_xlabel("Frequency / channel coordinate")
-        ax.set_ylabel("Record")
+        ax.set_ylabel("Period / records")
+        ax.set_yscale("log")
         ax.grid(alpha=0.25)
         ax.plot([], [], "o", color="#1f77b4", label="needs_validation")
         ax.plot([], [], "o", color="#b23b2e", label="vetoed")
@@ -346,13 +525,13 @@ def visualize_matrix_stages(
         ax.legend(loc="best")
         path = output_dir / "stage_05_candidate_review_overview.png"
         _save(fig, path, config.dpi)
-        images.append(("Stage 05 Candidate Review Overview", path, "Top candidates after veto review, colored by candidate status and scaled by peak score."))
+        images.append(("Stage 05 Candidate Review Overview", path, "Top period-channel candidates after veto review, colored by candidate status and scaled by peak score."))
 
     if validation_rows:
         rows = sorted(validation_rows, key=lambda row: _float(row, "evidence_rank", math.inf))
         candidate_ids = [_float(row, "candidate_id") for row in rows]
         qvalues = [_float(row, "global_q_value") for row in rows]
-        periods = [_float(row, "refined_period_records") for row in rows]
+        periods_refined = [_float(row, "refined_period_records") for row in rows]
         fig, ax1 = _new_figure()
         ax1.scatter(candidate_ids, qvalues, c="#1f77b4", label="global q-value")
         ax1.set_yscale("log")
@@ -360,7 +539,7 @@ def visualize_matrix_stages(
         ax1.set_ylabel("global q-value")
         ax1.grid(alpha=0.25)
         ax2 = ax1.twinx()
-        ax2.scatter(candidate_ids, periods, c="#e07a2f", marker="x", label="refined period")
+        ax2.scatter(candidate_ids, periods_refined, c="#e07a2f", marker="x", label="refined period")
         ax2.set_ylabel("refined period / records")
         ax1.set_title("Stage 06 validation/statistics overview")
         lines, labels = ax1.get_legend_handles_labels()
@@ -429,7 +608,18 @@ def visualize_matrix_stages(
                 "record_offset": record_offset,
                 "matrix_shape": list(matrix.shape),
                 "visualization_config": config.__dict__,
-                "search_config": search_config.__dict__,
+                "search_config": {
+                    "wavelet": search_config.wavelet,
+                    "cwt_method": search_config.cwt_method,
+                    "period_count": int(periods.size),
+                    "period_min_records": float(np.nanmin(periods)),
+                    "period_max_records": float(np.nanmax(periods)),
+                    "block_channels": search_config.block_channels,
+                    "threshold": search_config.threshold,
+                    "local_period": search_config.local_period,
+                    "local_freq": search_config.local_freq,
+                    "time_aggregation": search_config.time_aggregation,
+                },
             },
             indent=2,
             ensure_ascii=True,
@@ -438,4 +628,3 @@ def visualize_matrix_stages(
     lines.append("```")
     index_path.write_text("\n".join(lines) + "\n")
     return index_path
-

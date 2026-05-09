@@ -8,13 +8,13 @@ import numpy as np
 @dataclass(frozen=True)
 class InjectionSpec:
     injection_id: str
-    signal_model: str = "pulsed_periodic"
+    signal_model: str = "single_channel_periodic"
     period_records: float = 16.0
     amplitude: float = 5.0
     record_start: int = 0
     duration_records: int | None = None
     channel_center: float = 16.0
-    bandwidth_channels: float = 3.0
+    bandwidth_channels: float = 1.0
     duty_cycle: float = 0.15
     phase: float = 0.0
     drift_channels: float = 0.0
@@ -36,6 +36,13 @@ def default_frequency_axis(channels: int, f_start_mhz: float = 0.0, f_stop_mhz: 
 
 
 def _channel_envelope(channels: int, center: float, bandwidth: float) -> np.ndarray:
+    if channels <= 0:
+        return np.zeros(0, dtype=np.float64)
+    if float(bandwidth) <= 1.0:
+        envelope = np.zeros(channels, dtype=np.float64)
+        idx = min(max(int(round(float(center))), 0), channels - 1)
+        envelope[idx] = 1.0
+        return envelope
     x = np.arange(channels, dtype=np.float64)
     width = max(float(bandwidth), 1.0)
     sigma = max(width / 2.355, 0.5)
@@ -57,7 +64,7 @@ def _periodic_wave(times: np.ndarray, spec: InjectionSpec) -> np.ndarray:
     model = spec.signal_model
     if model in {"sinusoidal_narrowband", "band_limited_periodic", "drifting_ridge"}:
         return np.sin(2.0 * np.pi * phase)
-    if model in {"pulsed_periodic", "intermittent_periodic"}:
+    if model in {"single_channel_periodic", "pulsed_periodic", "intermittent_periodic"}:
         duty = min(max(float(spec.duty_cycle), 1e-3), 0.95)
         distance = np.minimum(phase, 1.0 - phase)
         sigma = max(duty / 2.355, 1e-3)
@@ -75,16 +82,17 @@ def inject_periodic_signal(data: np.ndarray, spec: InjectionSpec) -> tuple[np.nd
         return matrix, injection_truth(spec, channels, start, stop)
 
     wave = _periodic_wave(times, spec)
+    bandwidth = 1.0 if spec.signal_model == "single_channel_periodic" else spec.bandwidth_channels
     if spec.signal_model == "drifting_ridge" and spec.drift_channels != 0:
         span = max(times.size - 1, 1)
         for row_idx, time_value in enumerate(times):
             frac = row_idx / span
             center = float(spec.channel_center) + (frac - 0.5) * float(spec.drift_channels)
             matrix[time_value, :] += (float(spec.amplitude) * wave[row_idx] * _channel_envelope(
-                channels, center, spec.bandwidth_channels
+                channels, center, bandwidth
             )).astype(np.float32)
     else:
-        envelope = _channel_envelope(channels, spec.channel_center, spec.bandwidth_channels)
+        envelope = _channel_envelope(channels, spec.channel_center, bandwidth)
         matrix[times, :] += (float(spec.amplitude) * wave[:, None] * envelope[None, :]).astype(np.float32)
     return matrix, injection_truth(spec, channels, start, stop)
 
@@ -95,10 +103,14 @@ def injection_truth(spec: InjectionSpec, channels: int, start: int | None = None
         duration = 0 if spec.duration_records is None else int(spec.duration_records)
         stop = start + max(0, duration)
     center = float(spec.channel_center)
-    half_width = max(float(spec.bandwidth_channels), 1.0) / 2.0
+    bandwidth = 1.0 if spec.signal_model == "single_channel_periodic" else max(float(spec.bandwidth_channels), 1.0)
+    half_width = bandwidth / 2.0
     if channels <= 0:
         channel_start = 0
         channel_stop = 0
+    elif spec.signal_model == "single_channel_periodic":
+        channel_start = min(max(int(round(center)), 0), int(channels) - 1)
+        channel_stop = channel_start + 1
     else:
         channel_start = min(max(0, int(np.floor(center - half_width))), int(channels) - 1)
         channel_stop = min(int(channels), max(channel_start + 1, int(np.ceil(center + half_width)) + 1))
@@ -110,6 +122,7 @@ def injection_truth(spec: InjectionSpec, channels: int, start: int | None = None
             "duration_records": int(max(0, stop - start)),
             "channel_start": channel_start,
             "channel_stop": channel_stop,
+            "bandwidth_channels": bandwidth,
         }
     )
     return payload

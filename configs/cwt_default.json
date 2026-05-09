@@ -8,30 +8,36 @@
     "f_stop": null,
     "t_start": null,
     "t_stop": null,
-    "wavelet": "db4",
-    "levels": 5,
-    "block_channels": 128
+    "wavelet": "cmor1.5-1.0",
+    "cwt_method": "fft",
+    "period_min_records": 2.0,
+    "period_max_records": 512.0,
+    "period_count": 96,
+    "period_spacing": "log",
+    "block_channels": 128,
+    "time_aggregation": "p95",
+    "aggregation_percentile": 95.0
   },
   "detection": {
-    "threshold": 5.0,
-    "min_pixels": 12,
-    "local_time": 513,
+    "threshold": 6.0,
+    "min_pixels": 6,
+    "local_period": 9,
     "local_freq": 9,
-    "max_candidates_per_block": 200
+    "max_candidates_per_block": 50
   },
   "veto": {
     "enabled": true,
-    "edge_time_records": 0,
+    "edge_time_records": -1,
     "edge_freq_mhz": 0.0,
     "max_bandwidth_fraction": 0.75,
-    "max_fixed_channel_bandwidth_fraction": 0.01,
+    "max_fixed_channel_bandwidth_fraction": -1.0,
     "min_fixed_channel_duration_fraction": 0.25,
     "max_burst_duration_fraction": 0.02,
     "min_burst_bandwidth_fraction": 0.25
   },
   "validation": {
     "include_vetoed": false,
-    "max_candidates": 50,
+    "max_candidates": 25,
     "window_periods": 128,
     "min_window_records": 256,
     "max_window_records": 4096,
@@ -42,9 +48,20 @@
     "shuffle_trials": 100,
     "random_seed": 12345
   },
+  "visualization": {
+    "enabled": false,
+    "max_blocks": 2,
+    "max_channels": 4,
+    "top_candidates": 50,
+    "dpi": 140
+  },
+  "progress": {
+    "enabled": true,
+    "leave": false
+  },
   "output": {
     "output_dir": "runs",
     "run_id": null,
-    "save_legacy_candidates_csv": true
+    "save_legacy_candidates_csv": false
   }
 }

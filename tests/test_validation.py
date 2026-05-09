@@ -8,6 +8,7 @@ from ce4_period_search.validation import (
     best_fold_period,
     fft_periodogram_peak,
     period_grid,
+    refined_period_from_metrics,
     select_candidates,
     shuffle_null_pvalue,
     validation_period_bounds,
@@ -41,6 +42,17 @@ def test_shuffle_null_pvalue_is_bounded_and_deterministic() -> None:
     assert result["shuffle_trials"] == 12.0
     assert 0.0 < result["shuffle_pvalue"] <= 1.0
     assert result["observed_metric"] > 1.0
+
+
+def test_refined_period_prefers_seed_consistent_periodogram_over_fold_harmonic() -> None:
+    refined = refined_period_from_metrics(
+        8.1,
+        {"acf_best_lag_records": 8.0},
+        {"periodogram_best_period_records": 8.125},
+        {"folding_best_period_records": 15.0},
+    )
+
+    assert refined == 8.125
 
 
 def test_select_candidates_skips_vetoed_by_default() -> None:

@@ -6,8 +6,9 @@ from pathlib import Path
 
 import numpy as np
 
-from .config import SWTScanConfig, swt_config_to_nested_dict
-from .detection import add_candidate_ids, robust_score_2d, summarize_components
+from .config import CWTSearchConfig, cwt_config_to_nested_dict
+from .cwt import aggregate_cwt_time, cwt_power_cube, period_grid_records
+from .detection import add_candidate_ids, robust_score_2d, summarize_period_components
 from .io import CE4Reader
 from .models import (
     MANIFEST_FIELDNAMES,
@@ -17,7 +18,6 @@ from .models import (
     normalize_candidate_row,
 )
 from .runtime import runtime_info
-from .swt import approximate_scale_records, swt_detail_power_matrix
 from .veto import VetoContext, review_candidates, veto_config_from_scan_config
 
 
@@ -26,7 +26,7 @@ def _token(value: object) -> str:
     return text.replace(".", "p").replace("/", "_").replace(" ", "_")
 
 
-def build_run_id(config: SWTScanConfig, reader: CE4Reader) -> str:
+def build_run_id(config: CWTSearchConfig, reader: CE4Reader) -> str:
     if config.run_id:
         return _token(config.run_id)
     source = Path(config.input).stem
@@ -35,12 +35,12 @@ def build_run_id(config: SWTScanConfig, reader: CE4Reader) -> str:
             source,
             f"f_{_token(config.f_start)}_{_token(config.f_stop)}",
             f"t_{_token(config.t_start)}_{_token(config.t_stop)}",
-            f"swt_{_token(config.wavelet)}_L{config.levels}",
+            f"cwt_{_token(config.period_min_records)}_{_token(config.period_max_records)}_{config.period_count}",
         ]
     )
 
 
-def build_run_dir(config: SWTScanConfig, reader: CE4Reader) -> Path:
+def build_run_dir(config: CWTSearchConfig, reader: CE4Reader) -> Path:
     return Path(config.output_dir) / build_run_id(config, reader)
 
 
@@ -66,7 +66,7 @@ def write_manifest_csv(path: Path, rows: list[dict]) -> None:
 
 def write_summary_json(
     path: Path,
-    config: SWTScanConfig,
+    config: CWTSearchConfig,
     reader: CE4Reader,
     run_id: str,
     candidates: list[dict],
@@ -76,7 +76,7 @@ def write_summary_json(
     payload = {
         "schema_version": 1,
         "run_id": run_id,
-        "config": swt_config_to_nested_dict(config),
+        "config": cwt_config_to_nested_dict(config),
         "runtime": runtime_info(),
         "source": reader.info(),
         "candidate_count": len(candidates),
@@ -88,15 +88,29 @@ def write_summary_json(
         },
         "top_candidates": candidates[:20],
         "notes": [
-            "SWT bright components are candidates, not signal claims.",
-            "SWT level scale is approximate; refine candidate periods in validation.",
-            "Frequency-block boundary components may be split in this prototype.",
+            "CWT period-channel components are candidates, not signal claims.",
+            "CWT power is computed per channel; time aggregation creates the period-channel response map.",
+            "Candidate periods require validation in the original time series.",
         ],
     }
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=True))
 
 
-def run_swt_scan(config: SWTScanConfig) -> Path:
+def _channel_progress(total: int, run_id: str, enabled: bool, leave: bool):
+    if not enabled:
+        return None
+    from tqdm.auto import tqdm
+
+    return tqdm(
+        total=max(0, int(total)),
+        desc=f"CWT channels {run_id}",
+        unit="ch",
+        leave=bool(leave),
+        dynamic_ncols=True,
+    )
+
+
+def run_cwt_search(config: CWTSearchConfig) -> Path:
     if not config.input:
         raise ValueError("config.input is required")
     reader = CE4Reader(config.input)
@@ -104,45 +118,69 @@ def run_swt_scan(config: SWTScanConfig) -> Path:
     run_dir = build_run_dir(config, reader)
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "config.resolved.json").write_text(
-        json.dumps(swt_config_to_nested_dict(config), indent=2, ensure_ascii=True)
+        json.dumps(cwt_config_to_nested_dict(config), indent=2, ensure_ascii=True)
     )
 
+    periods = period_grid_records(
+        config.period_min_records,
+        config.period_max_records,
+        config.period_count,
+        config.period_spacing,
+    )
+    selected_records = reader.record_slice(config.t_start, config.t_stop)
+    selected_channels = reader.freq_slice(config.f_start, config.f_stop)
+    selected_freqs = reader.freqs_mhz[selected_channels]
+    progress = _channel_progress(
+        total=int(selected_channels.stop - selected_channels.start),
+        run_id=run_id,
+        enabled=config.progress_enabled,
+        leave=config.progress_leave,
+    )
     all_candidates: list[dict] = []
-    for block_index, block in enumerate(
-        reader.iter_frequency_blocks(
-            f_start=config.f_start,
-            f_stop=config.f_stop,
-            t_start=config.t_start,
-            t_stop=config.t_stop,
-            block_channels=config.block_channels,
-        ),
-        start=1,
-    ):
-        block_id = f"block_{block_index:04d}"
-        powers, level_numbers = swt_detail_power_matrix(
-            block.data,
-            wavelet=config.wavelet,
-            levels=config.levels,
-            normalize_channels=True,
-        )
-        for level_idx, level_number in enumerate(level_numbers):
-            log_power = np.log10(powers[level_idx] + 1e-12)
+    try:
+        for block_index, block in enumerate(
+            reader.iter_frequency_blocks(
+                f_start=config.f_start,
+                f_stop=config.f_stop,
+                t_start=config.t_start,
+                t_stop=config.t_stop,
+                block_channels=config.block_channels,
+            ),
+            start=1,
+        ):
+            block_id = f"block_{block_index:04d}"
+            power = cwt_power_cube(
+                block.data,
+                periods,
+                wavelet=config.wavelet,
+                method=config.cwt_method,
+                normalize_channels=True,
+            )
+            response = aggregate_cwt_time(
+                power,
+                method=config.time_aggregation,
+                percentile=config.aggregation_percentile,
+            )
+            log_response = np.log10(response + 1e-12)
             score = robust_score_2d(
-                log_power,
-                local_time=config.local_time,
+                log_response,
+                local_time=config.local_period,
                 local_freq=min(config.local_freq, max(3, block.freqs_mhz.size | 1)),
             )
-            candidates = summarize_components(
+            candidates = summarize_period_components(
                 score=score,
+                power_cube=power,
+                periods=periods,
                 freqs_mhz=block.freqs_mhz,
                 record_start=block.record_range[0],
-                level_number=int(level_number),
+                record_stop=block.record_range[1],
                 threshold=config.threshold,
                 min_pixels=config.min_pixels,
                 max_components=config.max_candidates_per_block,
             )
             for row in candidates:
-                row["approx_scale_records"] = approximate_scale_records(int(level_number))
+                row["cwt_wavelet"] = config.wavelet
+                row["time_aggregation"] = config.time_aggregation
                 row["block_channel_start"] = block.channel_range[0]
                 row["block_channel_stop"] = block.channel_range[1]
                 all_candidates.append(
@@ -154,14 +192,17 @@ def run_swt_scan(config: SWTScanConfig) -> Path:
                         tsamp_seconds=reader.tsamp_seconds,
                     )
                 )
+            if progress is not None:
+                progress.update(int(block.data.shape[1]))
+    finally:
+        if progress is not None:
+            progress.close()
 
     final_candidates = add_candidate_ids(all_candidates)
     write_candidates_csv(run_dir / "candidates_raw.csv", final_candidates)
     if config.save_legacy_candidates_csv:
         write_candidates_csv(run_dir / "candidates.csv", final_candidates)
 
-    selected_records = reader.record_slice(config.t_start, config.t_stop)
-    selected_freqs = reader.freqs_mhz[reader.freq_slice(config.f_start, config.f_stop)]
     veto_context = VetoContext(
         record_start=int(selected_records.start),
         record_stop=int(selected_records.stop),
@@ -194,30 +235,33 @@ def run_swt_scan(config: SWTScanConfig) -> Path:
         reviewed_candidates,
     )
     if config.visualization_enabled:
-        from .visualization import SearchVisualizationConfig, VisualizationConfig, visualize_matrix_stages
+        from .visualization import CWTVisualizationConfig, SearchVisualizationConfig, visualize_cwt_stages
 
         selected_block = reader.read_block(selected_records, reader.freq_slice(config.f_start, config.f_stop))
-        visualize_matrix_stages(
+        visualize_cwt_stages(
             selected_block.data,
             selected_block.freqs_mhz,
             run_dir / "visualization",
             SearchVisualizationConfig(
                 wavelet=config.wavelet,
-                levels=config.levels,
+                cwt_method=config.cwt_method,
+                periods=periods,
                 block_channels=config.block_channels,
                 threshold=config.threshold,
-                local_time=config.local_time,
+                local_period=config.local_period,
                 local_freq=config.local_freq,
+                time_aggregation=config.time_aggregation,
+                aggregation_percentile=config.aggregation_percentile,
             ),
             raw_candidates=final_candidates,
             reviewed_candidates=reviewed_candidates,
             run_id=run_id,
             source_name=str(config.input),
             record_offset=int(selected_block.record_range[0]),
-            config=VisualizationConfig(
+            config=CWTVisualizationConfig(
                 enabled=True,
                 max_blocks=config.visualization_max_blocks,
-                max_levels=config.visualization_max_levels,
+                max_channels=config.visualization_max_channels,
                 top_candidates=config.visualization_top_candidates,
                 dpi=config.visualization_dpi,
             ),

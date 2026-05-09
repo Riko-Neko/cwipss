@@ -12,19 +12,19 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from ce4_period_search.benchmark import (
+    CWTBenchmarkConfig,
     MatchConfig,
-    MatrixSearchConfig,
     make_background_from_args,
     make_default_injections,
     run_injection_benchmark,
 )
 from ce4_period_search.validation import ValidationConfig
-from ce4_period_search.visualization import VisualizationConfig
+from ce4_period_search.visualization import CWTVisualizationConfig
 from ce4_period_search.veto import VetoConfig
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run synthetic/injected SWT period-search benchmark.")
+    parser = argparse.ArgumentParser(description="Run synthetic/injected CWT period-search benchmark.")
     parser.add_argument("--background", choices=["synthetic", "ce4"], default="synthetic", help="Background source.")
     parser.add_argument("--input", type=str, default=None, help="Input file for --background ce4.")
     parser.add_argument("--output-dir", type=Path, default=None, help="Output directory. Defaults to runs/injection_<run-id>.")
@@ -47,29 +47,48 @@ def parse_args() -> argparse.Namespace:
         "--signal-model",
         choices=[
             "pulsed_periodic",
+            "single_channel_periodic",
             "intermittent_periodic",
             "sinusoidal_narrowband",
             "band_limited_periodic",
             "drifting_ridge",
         ],
-        default="pulsed_periodic",
+        default="single_channel_periodic",
         help="Injected signal morphology.",
     )
 
-    parser.add_argument("--wavelet", type=str, default="db4", help="SWT wavelet.")
-    parser.add_argument("--levels", type=int, default=5, help="SWT decomposition levels.")
+    parser.add_argument("--wavelet", type=str, default="cmor1.5-1.0", help="PyWavelets CWT wavelet.")
+    parser.add_argument("--cwt-method", choices=["conv", "fft"], default="fft", help="PyWavelets CWT computation method.")
+    parser.add_argument("--period-min-records", type=float, default=2.0, help="Minimum CWT period in records.")
+    parser.add_argument("--period-max-records", type=float, default=512.0, help="Maximum CWT period in records.")
+    parser.add_argument("--period-count", type=int, default=96, help="Number of CWT periods.")
+    parser.add_argument("--period-spacing", choices=["log", "linear"], default="log", help="CWT period spacing.")
     parser.add_argument("--block-channels", type=int, default=128, help="Frequency channels per block.")
-    parser.add_argument("--threshold", type=float, default=5.0, help="Local robust S/N threshold.")
-    parser.add_argument("--min-pixels", type=int, default=12, help="Minimum connected-component size.")
-    parser.add_argument("--local-time", type=int, default=513, help="Median/MAD local time window.")
+    parser.add_argument("--time-aggregation", type=str, default="p95", help="Time aggregation for period-channel response.")
+    parser.add_argument("--aggregation-percentile", type=float, default=95.0, help="Percentile for percentile aggregation.")
+    parser.add_argument("--threshold", type=float, default=6.0, help="Local robust S/N threshold.")
+    parser.add_argument("--min-pixels", type=int, default=6, help="Minimum connected-component size.")
+    parser.add_argument("--local-period", type=int, default=9, help="Median/MAD local period-bin window.")
     parser.add_argument("--local-freq", type=int, default=9, help="Median/MAD local frequency window.")
-    parser.add_argument("--max-candidates-per-block", type=int, default=200, help="Candidate cap per block and level.")
+    parser.add_argument("--max-candidates-per-block", type=int, default=50, help="Candidate cap per block.")
+    parser.add_argument(
+        "--progress",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Show CWT channel-progress tqdm.",
+    )
+    parser.add_argument(
+        "--progress-leave",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Leave the tqdm progress bar on screen when finished.",
+    )
 
-    parser.add_argument("--validation-max-candidates", type=int, default=50, help="Maximum candidates to validate.")
+    parser.add_argument("--validation-max-candidates", type=int, default=25, help="Maximum candidates to validate.")
     parser.add_argument("--validation-window-periods", type=int, default=128, help="Validation window in periods.")
     parser.add_argument("--validation-min-window-records", type=int, default=256, help="Minimum validation window.")
     parser.add_argument("--validation-max-window-records", type=int, default=4096, help="Maximum validation window.")
-    parser.add_argument("--validation-radius", type=float, default=2.0, help="Period-search radius around SWT scale.")
+    parser.add_argument("--validation-radius", type=float, default=2.0, help="Period-search radius around CWT candidate period.")
     parser.add_argument("--validation-fold-bins", type=int, default=16, help="Fold profile bin count.")
     parser.add_argument("--validation-shuffle-trials", type=int, default=100, help="Shuffle/null trials.")
     parser.add_argument("--validation-include-vetoed", action="store_true", help="Validate vetoed candidates too.")
@@ -80,7 +99,7 @@ def parse_args() -> argparse.Namespace:
 
     parser.add_argument("--visualize", action="store_true", help="Write staged visualization PNGs and index.md.")
     parser.add_argument("--viz-max-blocks", type=int, default=2, help="Maximum blocks to visualize; 0 means all.")
-    parser.add_argument("--viz-max-levels", type=int, default=3, help="Maximum SWT levels per block to visualize; 0 means all.")
+    parser.add_argument("--viz-max-channels", type=int, default=4, help="Representative channels per block for period-time CWT plots.")
     parser.add_argument("--viz-top-candidates", type=int, default=50, help="Maximum candidate overlays/scatter points.")
     parser.add_argument("--viz-dpi", type=int, default=140, help="Visualization image DPI.")
     return parser.parse_args()
@@ -119,15 +138,23 @@ def main() -> None:
         grid=args.grid,
         repeats=args.repeats,
     )
-    search_config = MatrixSearchConfig(
+    search_config = CWTBenchmarkConfig(
         wavelet=args.wavelet,
-        levels=args.levels,
+        cwt_method=args.cwt_method,
+        period_min_records=args.period_min_records,
+        period_max_records=args.period_max_records,
+        period_count=args.period_count,
+        period_spacing=args.period_spacing,
         block_channels=args.block_channels,
+        time_aggregation=args.time_aggregation,
+        aggregation_percentile=args.aggregation_percentile,
         threshold=args.threshold,
         min_pixels=args.min_pixels,
-        local_time=args.local_time,
+        local_period=args.local_period,
         local_freq=args.local_freq,
         max_candidates_per_block=args.max_candidates_per_block,
+        progress_enabled=args.progress,
+        progress_leave=args.progress_leave,
     )
     validation_config = ValidationConfig(
         include_vetoed=args.validation_include_vetoed,
@@ -154,10 +181,10 @@ def main() -> None:
         veto_config=VetoConfig(),
         validation_config=validation_config,
         match_config=match_config,
-        visualization_config=VisualizationConfig(
+        visualization_config=CWTVisualizationConfig(
             enabled=bool(args.visualize),
             max_blocks=args.viz_max_blocks,
-            max_levels=args.viz_max_levels,
+            max_channels=args.viz_max_channels,
             top_candidates=args.viz_top_candidates,
             dpi=args.viz_dpi,
         ),

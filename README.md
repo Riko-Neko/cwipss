@@ -1,21 +1,29 @@
-# SWT Period Search Pipeline
+# CWT Period Search Pipeline
 
-Reproducible SWT period-candidate search pipeline for time-channel data.
+Reproducible CWT period-channel candidate search for time-channel data.
 
-The core pipeline treats the input as a dynamic spectrum or equivalent
-time-channel matrix. Mission- or instrument-specific file formats belong to the
-application adapter layer. The current application adapter reads CE-4 LFRS
-`.2C/.2CL` files, but the SWT detection, veto, validation, and reporting
-contracts are defined independently of that file format.
+The core pipeline treats input as a dynamic spectrum or equivalent
+`time x channel` matrix. Mission- or instrument-specific file formats belong to
+the application adapter layer. The bundled adapter reads CE-4 LFRS `.2C/.2CL`
+files, but CWT detection, veto, validation, injection benchmarking, and
+reporting are defined independently of that format.
 
-The current development target is a whole-file, time-axis SWT post-processing
-pipeline:
+The candidate generator is:
 
-1. read time-channel data through an application adapter;
-2. run block-wise stationary wavelet transform along the time axis;
-3. estimate local robust S/N on wavelet power maps;
-4. detect bright bands / bright points as candidates;
-5. write a candidate table for later RFI veto and period validation.
+1. read time-channel data through an adapter;
+2. run per-channel CWT over an explicit period grid;
+3. keep full `period x time` scalograms for representative channels when
+   visualization is enabled;
+4. aggregate time to a `period x channel` response map;
+5. estimate local robust S/N on that response map;
+6. detect connected components as period-channel candidates.
+
+Detected components are candidates only. Validation in the original time series
+is still required before any signal interpretation.
+
+Single-channel period candidates are valid targets. The legacy-style
+`fixed_channel` and time-edge vetoes are disabled by default because they are
+not meaningful for the time-aggregated CWT candidate map.
 
 ## Layout
 
@@ -24,44 +32,44 @@ pipeline:
   configs/                 JSON configs for reproducible scans
   docs/                    design notes and scientific assumptions
   scripts/                 command-line entrypoints
-  src/ce4_period_search/   current implementation package and CE-4 adapter
-  tests/                   small synthetic tests
+  src/ce4_period_search/   implementation package and CE-4 adapter
+  tests/                   synthetic tests
 ```
 
 Generated products go under `runs/` and are ignored by git.
-
-Core runtime dependencies are declared in `pyproject.toml`. The detection stage
-requires SciPy and always uses `scipy.ndimage.median_filter` for local robust
-S/N estimation and `scipy.ndimage.label` for connected components.
 
 ## Quick Start
 
 Use the `pytorch` conda environment:
 
 ```bash
-/opt/miniconda3/envs/pytorch/bin/python scripts/run_swt_candidates.py \
-  --input data/CE4/CE4_GRAS_LFRS-TR_SCI_P_20190830160000_20190831040000_0056_B.2C \
-  --f-start 38.0 \
-  --f-stop 40.0 \
-  --levels 5 \
-  --block-channels 128
-```
-
-For a small smoke run:
-
-```bash
-/opt/miniconda3/envs/pytorch/bin/python scripts/run_swt_candidates.py \
-  --input data/CE4/CE4_GRAS_LFRS-TR_SCI_P_20190830160000_20190831040000_0056_B.2C \
+/opt/miniconda3/envs/pytorch/bin/python scripts/run_cwt_candidates.py \
+  --input data/CE4/example.2C \
   --f-start 38.0 \
   --f-stop 38.3 \
   --t-start 0 \
   --t-stop 2048 \
-  --levels 3 \
+  --period-min-records 2 \
+  --period-max-records 512 \
+  --period-count 96 \
   --block-channels 32
 ```
 
-Config files can use the structured layout in `configs/swt_default.json`. CLI
+Config files can use the structured layout in `configs/cwt_default.json`. CLI
 arguments override matching config values.
+
+Default candidate generation is intentionally conservative:
+
+- `threshold=6.0`: local robust S/N cutoff on the period-channel map.
+- `min_pixels=6`: minimum connected-component area.
+- `max_candidates_per_block=50`: cap retained components per frequency block.
+- `validation.max_candidates=25`: cap rows passed to validation by default.
+
+For diagnostic/high-recall sweeps, lower `--threshold` and `--min-pixels`
+explicitly. Do not use low thresholds as the default review mode.
+
+CLI scans show a CWT channel-progress bar by default. Use `--no-progress` to
+disable it, or `--progress-leave` to keep the finished bar in terminal logs.
 
 Each run writes:
 
@@ -69,13 +77,12 @@ Each run writes:
 - `manifest.csv`
 - `candidates_raw.csv`
 - `candidates_reviewed.csv`
-- `candidates.csv` as a temporary compatibility alias
 - `summary.json`
 
-`summary.json` records the Python, NumPy, PyWavelets, and SciPy versions used
-for the run, plus the local-filter implementation.
+`summary.json` records Python, NumPy, PyWavelets, SciPy, and local-filter
+runtime information.
 
-Candidate validation is a separate step:
+## Validation
 
 ```bash
 /opt/miniconda3/envs/pytorch/bin/python scripts/run_validation.py \
@@ -87,8 +94,6 @@ Candidate validation is a separate step:
 This writes `validation_summary.csv` and per-candidate JSON files under
 `validation/`.
 
-Validation statistics are also a separate step:
-
 ```bash
 /opt/miniconda3/envs/pytorch/bin/python scripts/run_stats.py \
   --run-dir runs/<run_id>
@@ -97,7 +102,7 @@ Validation statistics are also a separate step:
 This writes `validation_reviewed.csv` with p-values, run-level q-values,
 global q-values, and deterministic evidence ranks.
 
-Batch processing is available for multiple inputs:
+## Batch
 
 ```bash
 /opt/miniconda3/envs/pytorch/bin/python scripts/run_batch.py \
@@ -113,20 +118,10 @@ Batch processing is available for multiple inputs:
 Each source file gets an isolated run under `runs/<batch_id>/files/`, and the
 batch directory receives merged candidate, validation, and statistics tables.
 
-Generate a Markdown review report for either a single run or a batch:
+## Visualization
 
 ```bash
-/opt/miniconda3/envs/pytorch/bin/python scripts/run_report.py \
-  --run-dir runs/<run_id-or-batch_id>
-```
-
-This writes `report.md` with candidate counts, veto distribution, top SWT
-candidates, and top validation evidence rows.
-
-Stage visualization can be enabled on scans, batches, and injection benchmarks:
-
-```bash
-/opt/miniconda3/envs/pytorch/bin/python scripts/run_swt_candidates.py \
+/opt/miniconda3/envs/pytorch/bin/python scripts/run_cwt_candidates.py \
   --input data/CE4/example.2C \
   --f-start 38.0 \
   --f-stop 38.3 \
@@ -135,12 +130,15 @@ Stage visualization can be enabled on scans, batches, and injection benchmarks:
   --visualize
 ```
 
-This writes `visualization/index.md` plus PNG diagnostics for the raw matrix,
-SWT power, local S/N, candidate overlays, veto review, and optional
-validation/injection stages. See `docs/visualization.md`.
+This writes `visualization/index.md` plus PNG diagnostics for:
 
-Run an injection benchmark to test recovery of controlled synthetic periodic
-signals:
+- raw time-channel matrix;
+- representative-channel `period x time` CWT scalograms before time aggregation;
+- aggregated `period x channel` response maps;
+- local robust S/N and candidate overlays;
+- veto review and optional validation/injection summaries.
+
+## Injection Benchmark
 
 ```bash
 /opt/miniconda3/envs/pytorch/bin/python scripts/run_injection_benchmark.py \
@@ -150,24 +148,22 @@ signals:
   --period-records 8 16 32 \
   --amplitudes 4 6 8 \
   --grid \
+  --visualize \
   --run-id injection_smoke
 ```
 
-This writes truth, candidate, validation, reviewed statistics, and per-injection
-recovery/performance tables. See `docs/injection_benchmark.md`.
+The default injection is a single-channel, time-modulated periodic signal.
+Cross-channel injection models remain available only as explicit stress tests.
 
-## Current Application Adapter
+## Report
 
-The bundled reader in `src/ce4_period_search/io.py` supports CE-4 LFRS
-`.2C/.2CL` dynamic spectra. This is the first application target, not the
-definition of the core SWT period search method. Future readers should expose
-the same time-channel block interface used by the pipeline.
+```bash
+/opt/miniconda3/envs/pytorch/bin/python scripts/run_report.py \
+  --run-dir runs/<run_id-or-batch_id>
+```
 
-## Interpretation
-
-Detected components are not claimed signals. They are SWT-localized candidates.
-Each candidate still needs validation in the original time series, including
-folding, autocorrelation / periodogram checks, shuffle controls, and RFI veto.
+This writes `report.md` with candidate counts, veto distribution, top CWT
+candidates, validation evidence, and links to stage visualizations when present.
 
 ## License
 

@@ -8,38 +8,39 @@ from typing import Any
 
 
 @dataclass
-class SWTScanConfig:
-    """Resolved single-file SWT candidate-generation config.
-
-    The public dataclass stays flat for compatibility with the original
-    prototype. JSON config files may use either this flat layout or the
-    structured sections handled by `swt_config_from_mapping`.
-    """
+class CWTSearchConfig:
+    """Resolved single-file CWT period-candidate-generation config."""
 
     input: str | None = None
     f_start: float | None = None
     f_stop: float | None = None
     t_start: int | None = None
     t_stop: int | None = None
-    wavelet: str = "db4"
-    levels: int = 5
+    wavelet: str = "cmor1.5-1.0"
+    cwt_method: str = "fft"
+    period_min_records: float = 2.0
+    period_max_records: float = 512.0
+    period_count: int = 96
+    period_spacing: str = "log"
     block_channels: int = 128
-    threshold: float = 5.0
-    min_pixels: int = 12
-    local_time: int = 513
+    time_aggregation: str = "p95"
+    aggregation_percentile: float = 95.0
+    threshold: float = 6.0
+    min_pixels: int = 6
+    local_period: int = 9
     local_freq: int = 9
     output_dir: str = "runs"
-    max_candidates_per_block: int = 200
+    max_candidates_per_block: int = 50
     veto_enabled: bool = True
-    veto_edge_time_records: int = 0
+    veto_edge_time_records: int = -1
     veto_edge_freq_mhz: float = 0.0
     veto_max_bandwidth_fraction: float = 0.75
-    veto_max_fixed_channel_bandwidth_fraction: float = 0.01
+    veto_max_fixed_channel_bandwidth_fraction: float = -1.0
     veto_min_fixed_channel_duration_fraction: float = 0.25
     veto_max_burst_duration_fraction: float = 0.02
     veto_min_burst_bandwidth_fraction: float = 0.25
     validation_include_vetoed: bool = False
-    validation_max_candidates: int = 50
+    validation_max_candidates: int = 25
     validation_window_periods: int = 128
     validation_min_window_records: int = 256
     validation_max_window_records: int = 4096
@@ -51,14 +52,16 @@ class SWTScanConfig:
     validation_random_seed: int = 12345
     visualization_enabled: bool = False
     visualization_max_blocks: int = 2
-    visualization_max_levels: int = 3
+    visualization_max_channels: int = 4
     visualization_top_candidates: int = 50
     visualization_dpi: int = 140
+    progress_enabled: bool = True
+    progress_leave: bool = False
     run_id: str | None = None
-    save_legacy_candidates_csv: bool = True
+    save_legacy_candidates_csv: bool = False
 
 
-_KNOWN_FIELDS = {field.name for field in fields(SWTScanConfig)}
+_KNOWN_FIELDS = {field.name for field in fields(CWTSearchConfig)}
 
 
 _SECTION_KEY_MAP: dict[str, dict[str, str]] = {
@@ -73,13 +76,19 @@ _SECTION_KEY_MAP: dict[str, dict[str, str]] = {
         "t_start": "t_start",
         "t_stop": "t_stop",
         "wavelet": "wavelet",
-        "levels": "levels",
+        "cwt_method": "cwt_method",
+        "period_min_records": "period_min_records",
+        "period_max_records": "period_max_records",
+        "period_count": "period_count",
+        "period_spacing": "period_spacing",
         "block_channels": "block_channels",
+        "time_aggregation": "time_aggregation",
+        "aggregation_percentile": "aggregation_percentile",
     },
     "detection": {
         "threshold": "threshold",
         "min_pixels": "min_pixels",
-        "local_time": "local_time",
+        "local_period": "local_period",
         "local_freq": "local_freq",
         "max_candidates_per_block": "max_candidates_per_block",
     },
@@ -112,10 +121,14 @@ _SECTION_KEY_MAP: dict[str, dict[str, str]] = {
         "run_id": "run_id",
         "save_legacy_candidates_csv": "save_legacy_candidates_csv",
     },
+    "progress": {
+        "enabled": "progress_enabled",
+        "leave": "progress_leave",
+    },
     "visualization": {
         "enabled": "visualization_enabled",
         "max_blocks": "visualization_max_blocks",
-        "max_levels": "visualization_max_levels",
+        "max_channels": "visualization_max_channels",
         "top_candidates": "visualization_top_candidates",
         "dpi": "visualization_dpi",
     },
@@ -135,8 +148,7 @@ def _coerce_section(section_name: str, value: object, flat: dict[str, Any]) -> N
         flat[mapping[key]] = item
 
 
-def flatten_swt_config_mapping(payload: Mapping[str, Any]) -> dict[str, Any]:
-    """Return flat SWTScanConfig kwargs from flat or structured config input."""
+def flatten_cwt_config_mapping(payload: Mapping[str, Any]) -> dict[str, Any]:
     flat: dict[str, Any] = {}
     for key, value in payload.items():
         if key in _SECTION_KEY_MAP:
@@ -150,34 +162,34 @@ def flatten_swt_config_mapping(payload: Mapping[str, Any]) -> dict[str, Any]:
     return flat
 
 
-def swt_config_from_mapping(
+def cwt_config_from_mapping(
     payload: Mapping[str, Any] | None,
     overrides: Mapping[str, Any] | None = None,
-) -> SWTScanConfig:
-    flat = flatten_swt_config_mapping(payload or {})
+) -> CWTSearchConfig:
+    flat = flatten_cwt_config_mapping(payload or {})
     if overrides:
         flat.update({key: value for key, value in overrides.items() if value is not None})
-    return SWTScanConfig(**flat)
+    return CWTSearchConfig(**flat)
 
 
-def load_swt_config(path: str | Path | None, overrides: Mapping[str, Any] | None = None) -> SWTScanConfig:
+def load_cwt_config(path: str | Path | None, overrides: Mapping[str, Any] | None = None) -> CWTSearchConfig:
     payload: dict[str, Any] = {}
     if path is not None:
         loaded = json.loads(Path(path).read_text())
         if not isinstance(loaded, dict):
             raise ValueError("Config JSON must contain an object.")
         payload = loaded
-    return swt_config_from_mapping(payload, overrides=overrides)
+    return cwt_config_from_mapping(payload, overrides=overrides)
 
 
-def resolve_output_dir(config: SWTScanConfig, project_dir: str | Path) -> SWTScanConfig:
+def resolve_output_dir(config: CWTSearchConfig, project_dir: str | Path) -> CWTSearchConfig:
     output_dir = Path(config.output_dir)
     if not output_dir.is_absolute():
         output_dir = Path(project_dir) / output_dir
     return replace(config, output_dir=str(output_dir))
 
 
-def swt_config_to_nested_dict(config: SWTScanConfig) -> dict[str, Any]:
+def cwt_config_to_nested_dict(config: CWTSearchConfig) -> dict[str, Any]:
     return {
         "schema_version": 1,
         "input": {
@@ -189,13 +201,19 @@ def swt_config_to_nested_dict(config: SWTScanConfig) -> dict[str, Any]:
             "t_start": config.t_start,
             "t_stop": config.t_stop,
             "wavelet": config.wavelet,
-            "levels": config.levels,
+            "cwt_method": config.cwt_method,
+            "period_min_records": config.period_min_records,
+            "period_max_records": config.period_max_records,
+            "period_count": config.period_count,
+            "period_spacing": config.period_spacing,
             "block_channels": config.block_channels,
+            "time_aggregation": config.time_aggregation,
+            "aggregation_percentile": config.aggregation_percentile,
         },
         "detection": {
             "threshold": config.threshold,
             "min_pixels": config.min_pixels,
-            "local_time": config.local_time,
+            "local_period": config.local_period,
             "local_freq": config.local_freq,
             "max_candidates_per_block": config.max_candidates_per_block,
         },
@@ -227,15 +245,19 @@ def swt_config_to_nested_dict(config: SWTScanConfig) -> dict[str, Any]:
             "run_id": config.run_id,
             "save_legacy_candidates_csv": config.save_legacy_candidates_csv,
         },
+        "progress": {
+            "enabled": config.progress_enabled,
+            "leave": config.progress_leave,
+        },
         "visualization": {
             "enabled": config.visualization_enabled,
             "max_blocks": config.visualization_max_blocks,
-            "max_levels": config.visualization_max_levels,
+            "max_channels": config.visualization_max_channels,
             "top_candidates": config.visualization_top_candidates,
             "dpi": config.visualization_dpi,
         },
     }
 
 
-def swt_config_to_flat_dict(config: SWTScanConfig) -> dict[str, Any]:
+def cwt_config_to_flat_dict(config: CWTSearchConfig) -> dict[str, Any]:
     return asdict(config)

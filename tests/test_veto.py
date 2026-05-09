@@ -39,6 +39,7 @@ def test_edge_veto_flags_time_and_frequency_boundaries() -> None:
     decision = evaluate_vetoes(
         _row(record_start=0, record_stop=20, duration_records=20, freq_start_mhz=30.0, freq_stop_mhz=31.0),
         _context(),
+        VetoConfig(edge_time_records=0),
     )
 
     flags = decision["veto_flags"].split("|")
@@ -50,6 +51,7 @@ def test_fixed_channel_veto_flags_narrow_long_candidate() -> None:
     decision = evaluate_vetoes(
         _row(record_start=100, record_stop=500, duration_records=400, freq_start_mhz=35.0, freq_stop_mhz=35.0),
         _context(),
+        VetoConfig(max_fixed_channel_bandwidth_fraction=0.01),
     )
 
     assert "fixed_channel" in decision["veto_flags"].split("|")

@@ -6,7 +6,7 @@ from pathlib import Path
 
 from ce4_period_search import batch
 from ce4_period_search.batch import BatchConfig, BatchJob, discover_input_files, ensure_run_ids, read_batch_manifest
-from ce4_period_search.config import SWTScanConfig
+from ce4_period_search.config import CWTSearchConfig
 from ce4_period_search.models import (
     RAW_CANDIDATE_FIELDNAMES,
     REVIEWED_CANDIDATE_FIELDNAMES,
@@ -55,7 +55,7 @@ def test_read_manifest_and_run_id_assignment_preserves_overrides(tmp_path: Path)
 
 
 def test_run_batch_merges_outputs_and_recomputes_global_stats(tmp_path: Path, monkeypatch) -> None:
-    def fake_run_swt_scan(config: SWTScanConfig) -> Path:
+    def fake_run_cwt_search(config: CWTSearchConfig) -> Path:
         run_dir = Path(config.output_dir) / str(config.run_id)
         run_dir.mkdir(parents=True, exist_ok=True)
         _write_csv(
@@ -82,7 +82,7 @@ def test_run_batch_merges_outputs_and_recomputes_global_stats(tmp_path: Path, mo
         )
         return run_dir
 
-    def fake_validation(run_dir: Path, scan_config: SWTScanConfig, project_dir: Path):
+    def fake_validation(run_dir: Path, scan_config: CWTSearchConfig, project_dir: Path):
         pvalue = "0.01" if scan_config.run_id == "run_a" else "0.20"
         rows = [
             {
@@ -100,12 +100,12 @@ def test_run_batch_merges_outputs_and_recomputes_global_stats(tmp_path: Path, mo
         _write_csv(run_dir / "validation_summary.csv", VALIDATION_FIELDNAMES, rows)
         return rows
 
-    monkeypatch.setattr(batch, "run_swt_scan", fake_run_swt_scan)
+    monkeypatch.setattr(batch, "run_cwt_search", fake_run_cwt_search)
     monkeypatch.setattr(batch, "_run_validation_for_dir", fake_validation)
 
     batch_dir = batch.run_batch(
         jobs=[BatchJob(input="a.2C", run_id="run_a"), BatchJob(input="b.2C", run_id="run_b")],
-        base_config=SWTScanConfig(),
+        base_config=CWTSearchConfig(),
         batch_config=BatchConfig(batch_id="batch_test", output_dir=str(tmp_path), validate=True, stats=True),
         project_dir=tmp_path,
     )

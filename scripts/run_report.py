@@ -15,7 +15,7 @@ from ce4_period_search.reporting import write_report
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Generate a Markdown SWT period-candidate review report.")
+    parser = argparse.ArgumentParser(description="Generate a Markdown CWT period-candidate review report.")
     parser.add_argument("--run-dir", type=Path, required=True, help="Single-run or batch directory.")
     parser.add_argument("--output", type=Path, default=None, help="Output Markdown path. Defaults to report.md.")
     parser.add_argument("--top-n", type=int, default=10, help="Rows to show in top tables.")

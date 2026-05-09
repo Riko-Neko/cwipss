@@ -21,11 +21,11 @@ from ce4_period_search.batch import (
     read_batch_manifest,
     run_batch,
 )
-from ce4_period_search.config import SWTScanConfig, load_swt_config
+from ce4_period_search.config import CWTSearchConfig, load_cwt_config
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run SWT period-candidate search over multiple input files.")
+    parser = argparse.ArgumentParser(description="Run CWT period-channel candidate search over multiple input files.")
     parser.add_argument("--config", type=Path, default=None, help="Base scan JSON config.")
     parser.add_argument("--input-dir", type=Path, default=None, help="Directory to search for input files.")
     parser.add_argument("--pattern", type=str, default="*.2C", help="Input glob pattern for --input-dir.")
@@ -40,8 +40,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--f-stop", type=float, default=None, help="Frequency/channel-coordinate stop.")
     parser.add_argument("--t-start", type=int, default=None, help="Record start index.")
     parser.add_argument("--t-stop", type=int, default=None, help="Record stop index.")
-    parser.add_argument("--wavelet", type=str, default=None, help="Discrete wavelet used by SWT.")
-    parser.add_argument("--levels", type=int, default=None, help="SWT levels.")
+    parser.add_argument("--wavelet", type=str, default=None, help="PyWavelets CWT wavelet.")
+    parser.add_argument("--cwt-method", choices=["conv", "fft"], default=None, help="PyWavelets CWT computation method.")
+    parser.add_argument("--period-min-records", type=float, default=None, help="Minimum CWT period in records.")
+    parser.add_argument("--period-max-records", type=float, default=None, help="Maximum CWT period in records.")
+    parser.add_argument("--period-count", type=int, default=None, help="Number of CWT periods.")
+    parser.add_argument("--period-spacing", choices=["log", "linear"], default=None, help="CWT period spacing.")
+    parser.add_argument("--time-aggregation", type=str, default=None, help="Time aggregation for period-channel response.")
+    parser.add_argument("--aggregation-percentile", type=float, default=None, help="Percentile for percentile aggregation.")
     parser.add_argument("--block-channels", type=int, default=None, help="Frequency channels per block.")
     parser.add_argument("--threshold", type=float, default=None, help="Local robust S/N threshold.")
     parser.add_argument("--min-pixels", type=int, default=None, help="Minimum connected-component size.")
@@ -56,9 +62,21 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--visualize", action="store_true", default=None, help="Write staged visualization PNGs for each file run.")
     parser.add_argument("--viz-max-blocks", type=int, default=None, help="Maximum blocks to visualize per file; 0 means all.")
-    parser.add_argument("--viz-max-levels", type=int, default=None, help="Maximum SWT levels per block to visualize; 0 means all.")
+    parser.add_argument("--viz-max-channels", type=int, default=None, help="Representative channels per block for period-time CWT plots.")
     parser.add_argument("--viz-top-candidates", type=int, default=None, help="Maximum candidate overlays/scatter points.")
     parser.add_argument("--viz-dpi", type=int, default=None, help="Visualization image DPI.")
+    parser.add_argument(
+        "--progress",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Show CWT channel-progress tqdm for each file.",
+    )
+    parser.add_argument(
+        "--progress-leave",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Leave CWT progress bars on screen when each file finishes.",
+    )
     return parser.parse_args()
 
 
@@ -76,8 +94,14 @@ def _scan_overrides(args: argparse.Namespace) -> dict:
         "t_start",
         "t_stop",
         "wavelet",
-        "levels",
+        "cwt_method",
+        "period_min_records",
+        "period_max_records",
+        "period_count",
+        "period_spacing",
         "block_channels",
+        "time_aggregation",
+        "aggregation_percentile",
         "threshold",
         "min_pixels",
         "max_candidates_per_block",
@@ -86,16 +110,20 @@ def _scan_overrides(args: argparse.Namespace) -> dict:
         "validation_include_vetoed",
         "visualization_enabled",
         "visualization_max_blocks",
-        "visualization_max_levels",
+        "visualization_max_channels",
         "visualization_top_candidates",
         "visualization_dpi",
+        "progress_enabled",
+        "progress_leave",
     ]
     mapped = {
         "visualize": "visualization_enabled",
         "viz_max_blocks": "visualization_max_blocks",
-        "viz_max_levels": "visualization_max_levels",
+        "viz_max_channels": "visualization_max_channels",
         "viz_top_candidates": "visualization_top_candidates",
         "viz_dpi": "visualization_dpi",
+        "progress": "progress_enabled",
+        "progress_leave": "progress_leave",
     }
     values = vars(args)
     overrides = {name: values[name] for name in names if name in values and values[name] is not None}
@@ -105,8 +133,8 @@ def _scan_overrides(args: argparse.Namespace) -> dict:
     return overrides
 
 
-def _load_base_config(args: argparse.Namespace) -> SWTScanConfig:
-    config = load_swt_config(args.config, overrides=_scan_overrides(args))
+def _load_base_config(args: argparse.Namespace) -> CWTSearchConfig:
+    config = load_cwt_config(args.config, overrides=_scan_overrides(args))
     return replace(config, input=None, run_id=None)
 
 

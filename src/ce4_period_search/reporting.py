@@ -94,14 +94,14 @@ def _candidate_table(rows: list[dict[str, str]], limit: int) -> str:
                 _short_path(row.get("source_file")),
                 row.get("candidate_status", "-"),
                 _fmt(row.get("peak_score")),
-                _fmt(row.get("approx_scale_records")),
+                _fmt(row.get("peak_period_records")),
                 _fmt(row.get("peak_record")),
                 _fmt(row.get("peak_freq_mhz")),
                 row.get("veto_flags", "") or "-",
             ]
         )
     return _markdown_table(
-        ["candidate_id", "source", "status", "peak_score", "scale_rec", "peak_record", "peak_mhz", "veto_flags"],
+        ["candidate_id", "source", "status", "peak_score", "period_rec", "peak_record", "peak_mhz", "veto_flags"],
         table_rows,
     )
 
@@ -220,7 +220,7 @@ def generate_single_run_report(run_dir: str | Path, top_n: int = 10) -> str:
     runtime = summary.get("runtime", injection_summary.get("runtime", {}))
     visualization_index = run_dir / "visualization" / "index.md"
     lines = [
-        f"# SWT Period Search Report: {run_dir.name}",
+        f"# CWT Period Search Report: {run_dir.name}",
         "",
         "This report summarizes candidate evidence for review. It does not claim a confirmed periodic signal.",
         "",
@@ -257,7 +257,7 @@ def generate_single_run_report(run_dir: str | Path, top_n: int = 10) -> str:
         )
     lines.extend(
         [
-            f"## Top {top_n} Candidates By SWT Score",
+            f"## Top {top_n} Candidates By CWT Score",
             "",
             _candidate_table(candidates, limit=top_n),
             "",
@@ -319,7 +319,7 @@ def generate_batch_report(run_dir: str | Path, top_n: int = 10) -> str:
     complete_count = sum(1 for row in manifest if row.get("status") == "complete")
     error_count = sum(1 for row in manifest if row.get("status") == "error")
     lines = [
-        f"# SWT Period Search Batch Report: {run_dir.name}",
+        f"# CWT Period Search Batch Report: {run_dir.name}",
         "",
         "This report summarizes candidate evidence for review. It does not claim a confirmed periodic signal.",
         "",
@@ -345,7 +345,7 @@ def generate_batch_report(run_dir: str | Path, top_n: int = 10) -> str:
         "",
         _veto_table(candidates),
         "",
-        f"## Top {top_n} Candidates By SWT Score",
+        f"## Top {top_n} Candidates By CWT Score",
         "",
         _candidate_table(candidates, limit=top_n),
         "",

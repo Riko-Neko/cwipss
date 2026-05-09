@@ -1,69 +1,75 @@
-# SWT Period Search Pipeline
+# CWT Period Search Pipeline
 
-## Claim Discipline
+This project generates period candidates from `time x channel` data using a
+per-channel continuous wavelet transform.
 
-A bright point or bright band in an SWT power map is a candidate, not a signal
-claim. It becomes a credible periodicity candidate only after it survives:
-
-- local robust S/N thresholding;
-- component-level shape statistics;
-- broadband / fixed-channel / edge veto;
-- validation in the original time series;
-- null tests for the scan's multiple-comparison burden.
-
-## First Production Target
-
-Run 1D SWT along the time axis for each channel in a time-channel matrix. This
-preserves the channel interpretation and avoids the higher memory multiplier of
-a full 2D SWT. The channel axis is used during post-processing to identify
-localized components and reject broadband interference.
-
-CE-4 LFRS `.2C/.2CL` support is an application adapter for the first science
-target. It is not part of the core SWT period search definition.
-
-## Data Flow
+## Core Flow
 
 ```text
-dynamic spectrum / time-channel source
-  -> application reader
-  -> selected time/channel block
-  -> robust per-channel normalization
-  -> time-axis SWT detail coefficients
-  -> log power maps per SWT level
-  -> SciPy local median / MAD S/N
-  -> SciPy connected components
-  -> raw candidate table
-  -> auditable veto labels
-  -> original time-series validation evidence
-  -> config.resolved.json + manifest.csv + candidates_raw.csv + candidates_reviewed.csv + summary.json
+time x channel data
+  -> per-channel CWT over explicit period grid
+  -> period x time x channel power cube
+  -> representative period x time scalograms for visual review
+  -> time aggregation
+  -> period x channel response map
+  -> local robust S/N
+  -> connected-component period candidates
+  -> veto, validation, statistics, report
 ```
 
-## Candidate Fields
+The candidate map is directly interpretable:
 
-Each connected component stores:
+- x-axis: observation channel or MHz coordinate;
+- y-axis: period in records or seconds;
+- value: aggregated CWT power or local robust S/N.
 
-- SWT level and approximate scale in records;
-- channel coordinate range and peak channel coordinate;
-- record range and peak record;
-- area, duration, channel span;
-- peak and mean local S/N.
+## Candidate Meaning
 
-The machine-readable schema is documented in `docs/schema.md`. The raw table is
-still a candidate-generation product only. Veto rules append review status in
-`candidates_reviewed.csv` without overwriting raw candidate facts.
+A connected component in the period-channel map is only a candidate. It is not a
+confirmed periodic signal. Final review still requires original time-series
+validation, null tests, RFI veto, and multiple-testing correction.
 
-The validation stage is run separately with `scripts/run_validation.py`. It
-extracts a candidate channel span from the original source data, searches
-around the approximate SWT scale, and writes ACF, periodogram, folding, and
-shuffle evidence to `validation_summary.csv`.
+## Candidate Sensitivity
 
-## Known Limitations Of The Current Prototype
+The default detector is set for low sensitivity and higher review purity:
 
-- Components crossing frequency-block boundaries may be split.
-- Local median/MAD uses a rectangular window; production scans should compare
-  multiple window sizes.
-- SciPy is a required dependency; there is no global-baseline fallback for
-  production scans.
-- SWT level is a scale index, not a precise physical period. Candidate periods
-  must be refined later with folding, autocorrelation, or periodograms.
-- Validation currently searches integer record periods near the SWT scale.
+- local robust S/N `threshold=6.0`;
+- connected-component area `min_pixels=6`;
+- retained components capped at `max_candidates_per_block=50`;
+- validation capped at `validation.max_candidates=25`.
+
+Lower thresholds such as `1.4` and `min_pixels=1` are debug/high-recall
+settings. They are useful for inspecting the response map, but they can create
+many visually plausible candidates and should not be used as the default review
+configuration.
+
+## Progress Reporting
+
+CLI scans enable a CWT channel-progress tqdm by default. The pipeline still
+computes CWT in frequency blocks for performance; the progress unit is the
+number of selected frequency channels completed. Use `--no-progress` to silence
+the bar or `--progress-leave` to keep it in terminal logs.
+
+## Time Aggregation
+
+CWT first produces `period x time x channel`. The default aggregation is `p95`,
+which is more stable than max while still preserving localized strong responses.
+Supported aggregation methods are `max`, `mean`, `median`, `pNN`, and
+`percentile`.
+
+Before aggregation, visualization can write representative-channel
+`period x time` scalograms. This is the required middleware view for inspecting
+whether a period response is persistent, burst-like, or contaminated.
+
+## Outputs
+
+Each run writes:
+
+- `candidates_raw.csv`
+- `candidates_reviewed.csv`
+- `manifest.csv`
+- `summary.json`
+- optional `visualization/index.md`
+
+Candidate rows include `peak_period_records`, `period_start_records`,
+`period_stop_records`, `peak_freq_mhz`, and `peak_record`.

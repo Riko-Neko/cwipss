@@ -14,15 +14,19 @@ RAW_CANDIDATE_FIELDNAMES = [
     "source_file",
     "candidate_id",
     "block_id",
-    "swt_level",
-    "approx_scale_records",
-    "approx_scale_seconds",
+    "cwt_wavelet",
+    "time_aggregation",
     "component_id",
     "area_pixels",
     "record_start",
     "record_stop",
     "duration_records",
     "duration_seconds",
+    "period_start_records",
+    "period_stop_records",
+    "period_width_records",
+    "peak_period_records",
+    "peak_period_seconds",
     "freq_start_mhz",
     "freq_stop_mhz",
     "bandwidth_mhz",
@@ -192,7 +196,7 @@ def normalize_candidate_row(
 ) -> dict[str, Any]:
     """Attach stable metadata and derived physical units to one raw candidate."""
     candidate = dict(row)
-    scale_records = int(candidate.get("approx_scale_records") or 0)
+    peak_period_records = float(candidate.get("peak_period_records") or 0.0)
     duration_records = int(candidate.get("duration_records") or 0)
     peak_record = int(candidate.get("peak_record") or 0)
 
@@ -200,7 +204,7 @@ def normalize_candidate_row(
     candidate["run_id"] = run_id
     candidate["source_file"] = str(source_file)
     candidate["block_id"] = block_id
-    candidate["approx_scale_seconds"] = float(scale_records * tsamp_seconds)
+    candidate["peak_period_seconds"] = float(peak_period_records * tsamp_seconds)
     candidate["duration_seconds"] = float(duration_records * tsamp_seconds)
     candidate["peak_time_seconds"] = float(peak_record * tsamp_seconds)
     return candidate

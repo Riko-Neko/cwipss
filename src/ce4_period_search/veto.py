@@ -9,10 +9,10 @@ from typing import Any
 @dataclass(frozen=True)
 class VetoConfig:
     enabled: bool = True
-    edge_time_records: int = 0
+    edge_time_records: int = -1
     edge_freq_mhz: float = 0.0
     max_bandwidth_fraction: float = 0.75
-    max_fixed_channel_bandwidth_fraction: float = 0.01
+    max_fixed_channel_bandwidth_fraction: float = -1.0
     min_fixed_channel_duration_fraction: float = 0.25
     max_burst_duration_fraction: float = 0.02
     min_burst_bandwidth_fraction: float = 0.25
@@ -115,7 +115,7 @@ def evaluate_vetoes(
             "threshold": config.max_bandwidth_fraction,
         }
 
-    if metrics["time_edge_distance_records"] <= max(0, config.edge_time_records):
+    if config.edge_time_records >= 0 and metrics["time_edge_distance_records"] <= config.edge_time_records:
         flags.append("time_edge")
         details["time_edge"] = {
             "reason": "candidate touches or lies too close to the scanned time boundary",
@@ -132,7 +132,8 @@ def evaluate_vetoes(
         }
 
     if (
-        metrics["bandwidth_fraction"] <= config.max_fixed_channel_bandwidth_fraction
+        config.max_fixed_channel_bandwidth_fraction >= 0.0
+        and metrics["bandwidth_fraction"] <= config.max_fixed_channel_bandwidth_fraction
         and metrics["duration_fraction"] >= config.min_fixed_channel_duration_fraction
     ):
         flags.append("fixed_channel")

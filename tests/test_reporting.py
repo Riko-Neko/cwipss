@@ -46,14 +46,14 @@ def test_generate_single_run_report(tmp_path: Path) -> None:
     )
     _write_csv(
         run_dir / "candidates_reviewed.csv",
-        ["candidate_id", "source_file", "candidate_status", "peak_score", "approx_scale_records", "peak_record", "peak_freq_mhz", "veto_flags"],
+        ["candidate_id", "source_file", "candidate_status", "peak_score", "peak_period_records", "peak_record", "peak_freq_mhz", "veto_flags"],
         [
             {
                 "candidate_id": "1",
                 "source_file": "data/example.2C",
                 "candidate_status": "needs_validation",
                 "peak_score": "9.0",
-                "approx_scale_records": "8",
+                "peak_period_records": "8",
                 "peak_record": "100",
                 "peak_freq_mhz": "38.1",
                 "veto_flags": "",
@@ -80,7 +80,7 @@ def test_generate_single_run_report(tmp_path: Path) -> None:
 
     markdown = generate_report_markdown(run_dir, top_n=5)
 
-    assert "# SWT Period Search Report: run_a" in markdown
+    assert "# CWT Period Search Report: run_a" in markdown
     assert "## Veto Distribution" in markdown
     assert "example.2C" in markdown
     assert "does not claim a confirmed periodic signal" in markdown
@@ -102,7 +102,7 @@ def test_generate_batch_report_and_write_file(tmp_path: Path) -> None:
 
     assert report_path == batch_dir / "report.md"
     text = report_path.read_text()
-    assert "# SWT Period Search Batch Report: batch_a" in text
+    assert "# CWT Period Search Batch Report: batch_a" in text
     assert "## File Summary" in text
     assert "run_a" in text
 

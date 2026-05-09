@@ -4,9 +4,11 @@ import csv
 import json
 from pathlib import Path
 
+import numpy as np
+
 from ce4_period_search.benchmark import (
     MatchConfig,
-    MatrixSearchConfig,
+    CWTBenchmarkConfig,
     aggregate_injection_performance,
     evaluate_injections,
     make_default_injections,
@@ -38,6 +40,26 @@ def test_injection_truth_clamps_channel_span() -> None:
     assert truth["channel_start"] == 7
     assert truth["channel_stop"] == 8
     assert truth["record_stop"] == 32
+
+
+def test_single_channel_periodic_injection_only_modulates_one_channel() -> None:
+    data = np.zeros((32, 6), dtype=np.float32)
+    spec = InjectionSpec(
+        injection_id="single",
+        signal_model="single_channel_periodic",
+        period_records=8,
+        amplitude=5,
+        channel_center=3,
+        bandwidth_channels=4,
+    )
+
+    matrix, truth = inject_periodic_signal(data, spec)
+
+    active_channels = np.flatnonzero(np.nanmax(np.abs(matrix), axis=0) > 0)
+    assert active_channels.tolist() == [3]
+    assert truth["channel_start"] == 3
+    assert truth["channel_stop"] == 4
+    assert truth["bandwidth_channels"] == 1.0
 
 
 def test_evaluate_injections_reports_validated_match() -> None:
@@ -131,6 +153,8 @@ def test_default_injections_can_build_period_amplitude_grid() -> None:
     assert len(specs) == 8
     assert {spec.period_records for spec in specs} == {8.0, 16.0}
     assert {spec.amplitude for spec in specs} == {4.0, 6.0}
+    assert {spec.signal_model for spec in specs} == {"single_channel_periodic"}
+    assert {spec.bandwidth_channels for spec in specs} == {1.0}
 
 
 def test_aggregate_injection_performance_groups_recovery_rates() -> None:
@@ -165,13 +189,15 @@ def test_run_injection_benchmark_writes_expected_outputs(tmp_path: Path) -> None
         injections=injections,
         output_dir=tmp_path / "bench",
         run_id="bench",
-        search_config=MatrixSearchConfig(
-            wavelet="haar",
-            levels=3,
+        search_config=CWTBenchmarkConfig(
+            wavelet="cmor1.5-1.0",
+            period_min_records=2,
+            period_max_records=16,
+            period_count=8,
             block_channels=16,
             threshold=1.5,
             min_pixels=1,
-            local_time=33,
+            local_period=5,
             local_freq=5,
             max_candidates_per_block=20,
         ),

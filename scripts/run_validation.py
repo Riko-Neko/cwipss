@@ -12,7 +12,7 @@ SRC_DIR = PROJECT_DIR / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from ce4_period_search.config import SWTScanConfig, load_swt_config
+from ce4_period_search.config import CWTSearchConfig, load_cwt_config
 from ce4_period_search.validation import (
     ValidationConfig,
     read_csv_rows,
@@ -23,7 +23,7 @@ from ce4_period_search.validation import (
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Validate SWT period candidates in the original time series.")
+    parser = argparse.ArgumentParser(description="Validate CWT period candidates in the original time series.")
     parser.add_argument("--run-dir", type=Path, required=True, help="Run directory containing candidate CSV files.")
     parser.add_argument("--config", type=Path, default=None, help="Optional config JSON. Defaults to run config.")
     parser.add_argument("--candidates", type=Path, default=None, help="Candidate CSV. Defaults to candidates_reviewed.csv.")
@@ -38,7 +38,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--window-periods", type=int, default=None, help="Validation window size in approximate periods.")
     parser.add_argument("--min-window-records", type=int, default=None, help="Minimum validation window records.")
     parser.add_argument("--max-window-records", type=int, default=None, help="Maximum validation window records.")
-    parser.add_argument("--period-search-radius", type=float, default=None, help="Search +/- factor around SWT scale.")
+    parser.add_argument("--period-search-radius", type=float, default=None, help="Search +/- factor around CWT candidate period.")
     parser.add_argument("--fold-bins", type=int, default=None, help="Maximum phase bins used during folding.")
     parser.add_argument("--shuffle-trials", type=int, default=None, help="Shuffle/null trials per candidate.")
     parser.add_argument("--random-seed", type=int, default=None, help="Base random seed for shuffle/null tests.")
@@ -52,12 +52,12 @@ def _default_candidate_path(run_dir: Path) -> Path:
     return run_dir / "candidates_raw.csv"
 
 
-def _load_scan_config(args: argparse.Namespace) -> SWTScanConfig:
+def _load_scan_config(args: argparse.Namespace) -> CWTSearchConfig:
     config_path = args.config
     if config_path is None:
         default_path = args.run_dir / "config.resolved.json"
         config_path = default_path if default_path.exists() else None
-    return load_swt_config(config_path)
+    return load_cwt_config(config_path)
 
 
 def _resolve_validation_config(args: argparse.Namespace) -> ValidationConfig:

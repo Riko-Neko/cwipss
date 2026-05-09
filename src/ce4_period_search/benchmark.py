@@ -9,7 +9,8 @@ from typing import Any
 
 import numpy as np
 
-from .detection import add_candidate_ids, robust_score_2d, summarize_components
+from .cwt import aggregate_cwt_time, cwt_power_cube, period_grid_records
+from .detection import add_candidate_ids, robust_score_2d, summarize_period_components
 from .injection import BackgroundData, ce4_background, inject_many, synthetic_background
 from .models import (
     INJECTION_PERFORMANCE_FIELDNAMES,
@@ -24,7 +25,6 @@ from .models import (
 from .runtime import runtime_info
 from .simulation import InjectionSpec
 from .stats import review_validation_rows
-from .swt import approximate_scale_records, swt_detail_power_matrix
 from .validation import (
     ValidationConfig,
     aggregate_frequency_series,
@@ -32,6 +32,7 @@ from .validation import (
     best_fold_period,
     fft_periodogram_peak,
     period_grid,
+    refined_period_from_metrics,
     shuffle_null_pvalue,
     validation_period_bounds,
 )
@@ -39,15 +40,23 @@ from .veto import VetoConfig, VetoContext, review_candidates
 
 
 @dataclass(frozen=True)
-class MatrixSearchConfig:
-    wavelet: str = "db4"
-    levels: int = 5
+class CWTBenchmarkConfig:
+    wavelet: str = "cmor1.5-1.0"
+    cwt_method: str = "fft"
+    period_min_records: float = 2.0
+    period_max_records: float = 512.0
+    period_count: int = 96
+    period_spacing: str = "log"
     block_channels: int = 128
-    threshold: float = 5.0
-    min_pixels: int = 12
-    local_time: int = 513
+    time_aggregation: str = "p95"
+    aggregation_percentile: float = 95.0
+    threshold: float = 6.0
+    min_pixels: int = 6
+    local_period: int = 9
     local_freq: int = 9
-    max_candidates_per_block: int = 200
+    max_candidates_per_block: int = 50
+    progress_enabled: bool = True
+    progress_leave: bool = False
 
 
 @dataclass(frozen=True)
@@ -93,45 +102,79 @@ def _span_overlap(start_a: float, stop_a: float, start_b: float, stop_b: float) 
     return overlap / denom
 
 
-def run_matrix_candidate_search(
+def _channel_progress(total: int, run_id: str, enabled: bool, leave: bool):
+    if not enabled:
+        return None
+    from tqdm.auto import tqdm
+
+    return tqdm(
+        total=max(0, int(total)),
+        desc=f"CWT channels {run_id}",
+        unit="ch",
+        leave=bool(leave),
+        dynamic_ncols=True,
+    )
+
+
+def run_cwt_candidate_search(
     data: np.ndarray,
     freqs_mhz: np.ndarray,
     source_name: str,
     tsamp_seconds: float,
     run_id: str,
-    search_config: MatrixSearchConfig,
+    search_config: CWTBenchmarkConfig,
     veto_config: VetoConfig,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     matrix = np.asarray(data, dtype=np.float32)
+    periods = period_grid_records(
+        search_config.period_min_records,
+        search_config.period_max_records,
+        search_config.period_count,
+        search_config.period_spacing,
+    )
     all_candidates: list[dict[str, Any]] = []
-    for block_index, block_start in enumerate(range(0, matrix.shape[1], search_config.block_channels), start=1):
-        block_stop = min(block_start + int(search_config.block_channels), matrix.shape[1])
-        block_data = matrix[:, block_start:block_stop]
-        block_freqs = freqs_mhz[block_start:block_stop]
-        powers, level_numbers = swt_detail_power_matrix(
-            block_data,
-            wavelet=search_config.wavelet,
-            levels=search_config.levels,
-            normalize_channels=True,
-        )
-        for level_idx, level_number in enumerate(level_numbers):
-            log_power = np.log10(powers[level_idx] + 1e-12)
+    progress = _channel_progress(
+        total=matrix.shape[1],
+        run_id=run_id,
+        enabled=search_config.progress_enabled,
+        leave=search_config.progress_leave,
+    )
+    try:
+        for block_index, block_start in enumerate(range(0, matrix.shape[1], search_config.block_channels), start=1):
+            block_stop = min(block_start + int(search_config.block_channels), matrix.shape[1])
+            block_data = matrix[:, block_start:block_stop]
+            block_freqs = freqs_mhz[block_start:block_stop]
+            power = cwt_power_cube(
+                block_data,
+                wavelet=search_config.wavelet,
+                periods=periods,
+                method=search_config.cwt_method,
+                normalize_channels=True,
+            )
+            response = aggregate_cwt_time(
+                power,
+                method=search_config.time_aggregation,
+                percentile=search_config.aggregation_percentile,
+            )
             score = robust_score_2d(
-                log_power,
-                local_time=search_config.local_time,
+                np.log10(response + 1e-12),
+                local_time=search_config.local_period,
                 local_freq=min(search_config.local_freq, max(3, block_freqs.size | 1)),
             )
-            candidates = summarize_components(
+            candidates = summarize_period_components(
                 score=score,
+                power_cube=power,
+                periods=periods,
                 freqs_mhz=block_freqs,
                 record_start=0,
-                level_number=int(level_number),
+                record_stop=matrix.shape[0],
                 threshold=search_config.threshold,
                 min_pixels=search_config.min_pixels,
                 max_components=search_config.max_candidates_per_block,
             )
             for row in candidates:
-                row["approx_scale_records"] = approximate_scale_records(int(level_number))
+                row["cwt_wavelet"] = search_config.wavelet
+                row["time_aggregation"] = search_config.time_aggregation
                 row["block_channel_start"] = block_start
                 row["block_channel_stop"] = block_stop
                 all_candidates.append(
@@ -143,6 +186,11 @@ def run_matrix_candidate_search(
                         tsamp_seconds=tsamp_seconds,
                     )
                 )
+            if progress is not None:
+                progress.update(int(block_stop - block_start))
+    finally:
+        if progress is not None:
+            progress.close()
     raw = add_candidate_ids(all_candidates)
     context = VetoContext(
         record_start=0,
@@ -170,7 +218,7 @@ def _freq_slice_for_row(freqs_mhz: np.ndarray, row: dict[str, Any]) -> slice:
 
 def _record_window_for_row(row: dict[str, Any], records: int, config: ValidationConfig) -> slice:
     peak = int(_float(row, "peak_record", _float(row, "record_start", 0)))
-    approx = max(float(config.min_period_records), _float(row, "approx_scale_records", 2.0))
+    approx = max(float(config.min_period_records), _float(row, "peak_period_records", 2.0))
     target = int(np.ceil(approx * max(1, config.window_periods)))
     target = max(int(config.min_window_records), min(int(config.max_window_records), target, int(records)))
     start = max(0, peak - target // 2)
@@ -179,7 +227,7 @@ def _record_window_for_row(row: dict[str, Any], records: int, config: Validation
     return slice(start, max(start + 1, stop))
 
 
-def validate_matrix_candidates(
+def validate_cwt_candidates(
     data: np.ndarray,
     freqs_mhz: np.ndarray,
     reviewed_candidates: list[dict[str, Any]],
@@ -197,7 +245,7 @@ def validate_matrix_candidates(
         record_slice = _record_window_for_row(row, data.shape[0], validation_config)
         freq_slice = _freq_slice_for_row(freqs_mhz, row)
         series = aggregate_frequency_series(data[record_slice, freq_slice])
-        approx_period = max(float(validation_config.min_period_records), _float(row, "approx_scale_records", 2.0))
+        approx_period = max(float(validation_config.min_period_records), _float(row, "peak_period_records", 2.0))
         min_period, max_period = validation_period_bounds(approx_period, series.size, validation_config)
         periods = period_grid(min_period, max_period)
         if series.size < max(8, 3 * min_period) or periods.size == 0:
@@ -226,7 +274,7 @@ def validate_matrix_candidates(
             validation_config.shuffle_trials,
             rng,
         )
-        refined_period = _float(fold_metrics, "folding_best_period_records")
+        refined_period = refined_period_from_metrics(approx_period, acf_metrics, periodogram_metrics, fold_metrics)
         results.append(
             {
                 "schema_version": 1,
@@ -411,7 +459,7 @@ def run_injection_benchmark(
     injections: list[InjectionSpec],
     output_dir: str | Path,
     run_id: str,
-    search_config: MatrixSearchConfig,
+    search_config: CWTBenchmarkConfig,
     veto_config: VetoConfig,
     validation_config: ValidationConfig,
     match_config: MatchConfig,
@@ -420,7 +468,7 @@ def run_injection_benchmark(
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     injected_background, truths = inject_many(background, injections)
-    raw, reviewed = run_matrix_candidate_search(
+    raw, reviewed = run_cwt_candidate_search(
         injected_background.data,
         injected_background.freqs_mhz,
         source_name=injected_background.source_name,
@@ -429,7 +477,7 @@ def run_injection_benchmark(
         search_config=search_config,
         veto_config=veto_config,
     )
-    validation_rows = validate_matrix_candidates(
+    validation_rows = validate_cwt_candidates(
         injected_background.data,
         injected_background.freqs_mhz,
         reviewed,
@@ -478,19 +526,29 @@ def run_injection_benchmark(
     }
     (output_dir / "injection_summary.json").write_text(json.dumps(summary, indent=2, ensure_ascii=True))
     if visualization_config is not None and getattr(visualization_config, "enabled", False):
-        from .visualization import SearchVisualizationConfig, visualize_matrix_stages
+        from .visualization import CWTVisualizationConfig, SearchVisualizationConfig, visualize_cwt_stages
 
-        visualize_matrix_stages(
+        periods = period_grid_records(
+            search_config.period_min_records,
+            search_config.period_max_records,
+            search_config.period_count,
+            search_config.period_spacing,
+        )
+
+        visualize_cwt_stages(
             injected_background.data,
             injected_background.freqs_mhz,
             output_dir / "visualization",
             SearchVisualizationConfig(
                 wavelet=search_config.wavelet,
-                levels=search_config.levels,
+                cwt_method=search_config.cwt_method,
+                periods=periods,
                 block_channels=search_config.block_channels,
                 threshold=search_config.threshold,
-                local_time=search_config.local_time,
+                local_period=search_config.local_period,
                 local_freq=search_config.local_freq,
+                time_aggregation=search_config.time_aggregation,
+                aggregation_percentile=search_config.aggregation_percentile,
             ),
             raw_candidates=raw,
             reviewed_candidates=reviewed,
@@ -500,7 +558,13 @@ def run_injection_benchmark(
             run_id=run_id,
             source_name=injected_background.source_name,
             record_offset=0,
-            config=visualization_config,
+            config=visualization_config if isinstance(visualization_config, CWTVisualizationConfig) else CWTVisualizationConfig(
+                enabled=True,
+                max_blocks=getattr(visualization_config, "max_blocks", 2),
+                max_channels=getattr(visualization_config, "max_channels", 4),
+                top_candidates=getattr(visualization_config, "top_candidates", 50),
+                dpi=getattr(visualization_config, "dpi", 140),
+            ),
         )
     return output_dir
 
@@ -510,7 +574,7 @@ def make_default_injections(
     amplitudes: list[float],
     records: int,
     channels: int,
-    model: str = "pulsed_periodic",
+    model: str = "single_channel_periodic",
     grid: bool = False,
     repeats: int = 1,
 ) -> list[InjectionSpec]:
@@ -542,7 +606,7 @@ def make_default_injections(
                 record_start=max(0, records // 4),
                 duration_records=max(1, records // 2),
                 channel_center=max(0.0, (channels - 1) * (idx + 1) / (len(combos) + 1)),
-                bandwidth_channels=max(3.0, channels * 0.08),
+                bandwidth_channels=1.0 if model == "single_channel_periodic" else max(3.0, channels * 0.08),
                 phase=(repeat_idx / repeats) % 1.0,
             )
         )

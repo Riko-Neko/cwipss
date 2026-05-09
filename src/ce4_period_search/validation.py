@@ -12,7 +12,7 @@ import numpy as np
 
 from .io import CE4Reader
 from .models import VALIDATION_FIELDNAMES
-from .swt import robust_zscore
+from .cwt import robust_zscore, robust_zscore_channels
 
 
 VALIDATION_SCHEMA_VERSION = 1
@@ -102,7 +102,9 @@ def autocorrelation(values: np.ndarray, max_lag: int) -> np.ndarray:
     if series.size == 0:
         return np.zeros(0, dtype=np.float64)
     max_lag = max(0, min(int(max_lag), series.size - 1))
-    corr = np.correlate(series, series, mode="full")[series.size - 1 : series.size + max_lag]
+    fft_size = 1 << int(2 * series.size - 1).bit_length()
+    spectrum = np.fft.rfft(series, n=fft_size)
+    corr = np.fft.irfft(spectrum * np.conj(spectrum), n=fft_size)[: max_lag + 1]
     norm = corr[0] if corr[0] > 0 else 1.0
     return (corr / norm).astype(np.float64)
 
@@ -150,9 +152,11 @@ def fft_periodogram_peak(values: np.ndarray, min_period: int, max_period: int) -
     }
 
 
-def fold_profile_snr(values: np.ndarray, period_records: float, fold_bins: int = 16) -> dict[str, float]:
-    series = robust_zscore(values)
-    series = np.nan_to_num(series, nan=0.0)
+def _normalized_series(values: np.ndarray) -> np.ndarray:
+    return np.nan_to_num(robust_zscore(values), nan=0.0).astype(np.float64, copy=False)
+
+
+def _fold_profile_snr_from_series(series: np.ndarray, period_records: float, fold_bins: int = 16) -> dict[str, float]:
     period = max(2.0, float(period_records))
     n_bins = max(2, min(int(fold_bins), int(np.floor(period))))
     phases = (np.arange(series.size, dtype=np.float64) / period) % 1.0
@@ -177,13 +181,17 @@ def fold_profile_snr(values: np.ndarray, period_records: float, fold_bins: int =
     }
 
 
+def fold_profile_snr(values: np.ndarray, period_records: float, fold_bins: int = 16) -> dict[str, float]:
+    return _fold_profile_snr_from_series(_normalized_series(values), period_records, fold_bins)
+
+
 def period_grid(min_period: int, max_period: int) -> np.ndarray:
     if max_period < min_period:
         return np.zeros(0, dtype=np.float64)
     return np.arange(int(min_period), int(max_period) + 1, dtype=np.float64)
 
 
-def best_fold_period(values: np.ndarray, periods: np.ndarray, fold_bins: int) -> dict[str, float]:
+def _best_fold_period_from_series(series: np.ndarray, periods: np.ndarray, fold_bins: int) -> dict[str, float]:
     if periods.size == 0:
         return {
             "folding_best_period_records": np.nan,
@@ -194,7 +202,7 @@ def best_fold_period(values: np.ndarray, periods: np.ndarray, fold_bins: int) ->
     best_score = -np.inf
     best_bins = np.nan
     for period in periods:
-        metrics = fold_profile_snr(values, period, fold_bins)
+        metrics = _fold_profile_snr_from_series(series, period, fold_bins)
         score = float(metrics["fold_profile_snr"])
         if np.isfinite(score) and score > best_score:
             best_period = float(period)
@@ -209,6 +217,10 @@ def best_fold_period(values: np.ndarray, periods: np.ndarray, fold_bins: int) ->
     }
 
 
+def best_fold_period(values: np.ndarray, periods: np.ndarray, fold_bins: int) -> dict[str, float]:
+    return _best_fold_period_from_series(_normalized_series(values), periods, fold_bins)
+
+
 def shuffle_null_pvalue(
     values: np.ndarray,
     periods: np.ndarray,
@@ -216,7 +228,8 @@ def shuffle_null_pvalue(
     shuffle_trials: int,
     rng: np.random.Generator,
 ) -> dict[str, float]:
-    observed = best_fold_period(values, periods, fold_bins)
+    series = _normalized_series(values)
+    observed = _best_fold_period_from_series(series, periods, fold_bins)
     observed_metric = float(observed["fold_profile_snr"])
     if shuffle_trials <= 0 or not np.isfinite(observed_metric):
         return {
@@ -228,8 +241,8 @@ def shuffle_null_pvalue(
     null_metrics: list[float] = []
     count_ge = 0
     for _ in range(int(shuffle_trials)):
-        shuffled = rng.permutation(values)
-        metric = float(best_fold_period(shuffled, periods, fold_bins)["fold_profile_snr"])
+        shuffled = rng.permutation(series)
+        metric = float(_best_fold_period_from_series(shuffled, periods, fold_bins)["fold_profile_snr"])
         if np.isfinite(metric):
             null_metrics.append(metric)
             if metric >= observed_metric:
@@ -259,13 +272,58 @@ def validation_period_bounds(
     return min_period, max_period
 
 
+def candidate_period_seed(row: Mapping[str, Any], config: ValidationConfig) -> float:
+    for key in ("peak_period_records", "period_start_records", "approx_period_records"):
+        value = row.get(key)
+        if value not in ("", None):
+            return max(float(config.min_period_records), float(value))
+    return float(config.min_period_records)
+
+
+def _relative_period_error(value: float, target: float) -> float:
+    if not np.isfinite(value) or not np.isfinite(target) or target <= 0:
+        return np.inf
+    return abs(value - target) / target
+
+
+def refined_period_from_metrics(
+    approx_period_records: float,
+    acf_metrics: Mapping[str, Any],
+    periodogram_metrics: Mapping[str, Any],
+    fold_metrics: Mapping[str, Any],
+    max_seed_error_fraction: float = 0.35,
+) -> float:
+    """Choose a conservative refined period from independent validation metrics.
+
+    Folding S/N is useful but can prefer harmonics/subharmonics for short-period
+    pulse trains. If folding moves far from the CWT seed while ACF or the FFT
+    periodogram stays near it, keep the seed-consistent independent estimate.
+    """
+    approx = float(approx_period_records)
+    fold = _float(fold_metrics, "folding_best_period_records", np.nan)
+    periodogram = _float(periodogram_metrics, "periodogram_best_period_records", np.nan)
+    acf = _float(acf_metrics, "acf_best_lag_records", np.nan)
+    tolerance = max(0.0, float(max_seed_error_fraction))
+    if _relative_period_error(fold, approx) <= tolerance:
+        return float(fold)
+    if _relative_period_error(periodogram, approx) <= tolerance:
+        if _relative_period_error(acf, periodogram) <= tolerance or not np.isfinite(acf):
+            return float(periodogram)
+    if _relative_period_error(acf, approx) <= tolerance:
+        return float(acf)
+    for value in (fold, periodogram, acf, approx):
+        if np.isfinite(value):
+            return float(value)
+    return np.nan
+
+
 def candidate_record_window(
     row: Mapping[str, Any],
     reader: CE4Reader,
     config: ValidationConfig,
 ) -> slice:
     peak = int(_float(row, "peak_record", _float(row, "record_start", 0)))
-    approx_period = max(float(config.min_period_records), _float(row, "approx_scale_records", 2.0))
+    approx_period = candidate_period_seed(row, config)
     target = int(np.ceil(approx_period * max(1, config.window_periods)))
     target = max(int(config.min_window_records), min(int(config.max_window_records), target))
     target = min(target, reader.n_records)
@@ -305,9 +363,7 @@ def aggregate_frequency_series(data: np.ndarray) -> np.ndarray:
         raise ValueError("data must have shape (records, channels)")
     if matrix.shape[1] == 1:
         return robust_zscore(matrix[:, 0]).astype(np.float64)
-    normalized = np.empty(matrix.shape, dtype=np.float32)
-    for channel_idx in range(matrix.shape[1]):
-        normalized[:, channel_idx] = robust_zscore(matrix[:, channel_idx])
+    normalized = robust_zscore_channels(matrix)
     return np.nanmean(normalized, axis=1).astype(np.float64)
 
 
@@ -346,7 +402,7 @@ def validate_candidate(
     }
     try:
         series, meta = extract_candidate_series(reader, row, config)
-        approx_period = max(float(config.min_period_records), _float(row, "approx_scale_records", 2.0))
+        approx_period = candidate_period_seed(row, config)
         min_period, max_period = validation_period_bounds(approx_period, series.size, config)
         periods = period_grid(min_period, max_period)
         min_required = max(8, 3 * min_period)
@@ -371,7 +427,7 @@ def validate_candidate(
             config.shuffle_trials,
             rng,
         )
-        refined_period = float(fold_metrics["folding_best_period_records"])
+        refined_period = refined_period_from_metrics(approx_period, acf_metrics, periodogram_metrics, fold_metrics)
         refined_seconds = refined_period * float(reader.tsamp_seconds) if np.isfinite(refined_period) else np.nan
         return {
             **base,

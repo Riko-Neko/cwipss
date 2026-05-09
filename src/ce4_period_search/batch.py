@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from .config import SWTScanConfig, swt_config_to_nested_dict
+from .config import CWTSearchConfig, cwt_config_to_nested_dict
 from .models import (
     BATCH_MANIFEST_FIELDNAMES,
     RAW_CANDIDATE_FIELDNAMES,
@@ -16,7 +16,7 @@ from .models import (
     VALIDATION_FIELDNAMES,
     VALIDATION_REVIEWED_FIELDNAMES,
 )
-from .pipeline import run_swt_scan
+from .pipeline import run_cwt_search
 from .stats import run_stats
 from .validation import (
     read_csv_rows,
@@ -148,7 +148,7 @@ def _summary_counts(run_dir: Path) -> dict[str, int]:
     }
 
 
-def _job_scan_config(base_config: SWTScanConfig, job: BatchJob, batch_files_dir: Path) -> SWTScanConfig:
+def _job_scan_config(base_config: CWTSearchConfig, job: BatchJob, batch_files_dir: Path) -> CWTSearchConfig:
     return replace(
         base_config,
         input=job.input,
@@ -161,7 +161,7 @@ def _job_scan_config(base_config: SWTScanConfig, job: BatchJob, batch_files_dir:
     )
 
 
-def _run_validation_for_dir(run_dir: Path, scan_config: SWTScanConfig, project_dir: Path) -> list[dict[str, Any]]:
+def _run_validation_for_dir(run_dir: Path, scan_config: CWTSearchConfig, project_dir: Path) -> list[dict[str, Any]]:
     candidate_path = run_dir / "candidates_reviewed.csv"
     rows = read_csv_rows(candidate_path)
     validation_config = validation_config_from_scan_config(scan_config)
@@ -175,10 +175,10 @@ def _run_validation_for_dir(run_dir: Path, scan_config: SWTScanConfig, project_d
     return validation_rows
 
 
-def _write_batch_config(batch_dir: Path, batch_config: BatchConfig, base_config: SWTScanConfig, jobs: list[BatchJob]) -> None:
+def _write_batch_config(batch_dir: Path, batch_config: BatchConfig, base_config: CWTSearchConfig, jobs: list[BatchJob]) -> None:
     payload = {
         "batch": asdict(batch_config),
-        "scan_config": swt_config_to_nested_dict(base_config),
+        "scan_config": cwt_config_to_nested_dict(base_config),
         "jobs": [asdict(job) for job in jobs],
     }
     (batch_dir / "batch_config.resolved.json").write_text(json.dumps(payload, indent=2, ensure_ascii=True))
@@ -186,7 +186,7 @@ def _write_batch_config(batch_dir: Path, batch_config: BatchConfig, base_config:
 
 def run_batch(
     jobs: list[BatchJob],
-    base_config: SWTScanConfig,
+    base_config: CWTSearchConfig,
     batch_config: BatchConfig,
     project_dir: str | Path,
 ) -> Path:
@@ -208,7 +208,7 @@ def run_batch(
         stats_count = 0
         try:
             scan_config = _job_scan_config(base_config, job, files_dir)
-            run_dir = run_swt_scan(scan_config)
+            run_dir = run_cwt_search(scan_config)
             successful_run_dirs.append(run_dir)
             if batch_config.validate:
                 validation_rows = _run_validation_for_dir(run_dir, scan_config, project_dir=project_dir)

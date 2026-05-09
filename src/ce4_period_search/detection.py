@@ -6,10 +6,10 @@ import numpy as np
 from scipy import ndimage as ndi
 
 
-def robust_score_2d(image: np.ndarray, local_time: int = 513, local_freq: int = 9) -> np.ndarray:
+def robust_score_2d(image: np.ndarray, local_time: int = 9, local_freq: int = 9) -> np.ndarray:
     """Local robust S/N using median and MAD.
 
-    The input is expected to be a log-power map with shape `(records, channels)`.
+    The input is expected to be a log-power map with shape `(periods, channels)`.
     A local baseline is important because large bright areas should not become
     candidates solely due to absolute intensity.
     """
@@ -31,44 +31,64 @@ def label_components(mask: np.ndarray) -> tuple[np.ndarray, int]:
     return labels.astype(np.int32, copy=False), int(count)
 
 
-def summarize_components(
+def summarize_period_components(
     score: np.ndarray,
+    power_cube: np.ndarray,
+    periods: np.ndarray,
     freqs_mhz: np.ndarray,
     record_start: int,
-    level_number: int,
+    record_stop: int,
     threshold: float,
     min_pixels: int,
     max_components: int | None = None,
 ) -> list[dict]:
+    """Summarize connected components on a `(period, channel)` score map."""
     mask = np.asarray(score >= float(threshold), dtype=bool)
     labels, count = label_components(mask)
+    component_slices = ndi.find_objects(labels)
+    period_values = np.asarray(periods, dtype=np.float64)
     rows: list[dict] = []
-    for component_id in range(1, count + 1):
-        coords = np.argwhere(labels == component_id)
-        area = int(coords.shape[0])
+    for component_id, component_slice in enumerate(component_slices, start=1):
+        if component_slice is None:
+            continue
+        label_view = labels[component_slice]
+        local_period_idx, local_channel_idx = np.nonzero(label_view == component_id)
+        area = int(local_period_idx.size)
         if area < min_pixels:
             continue
-        values = score[coords[:, 0], coords[:, 1]]
+        period_offset = int(component_slice[0].start or 0)
+        channel_offset = int(component_slice[1].start or 0)
+        period_idx = local_period_idx + period_offset
+        channel_idx = local_channel_idx + channel_offset
+        values = score[period_idx, channel_idx]
         peak_local = int(np.nanargmax(values))
-        peak_y = int(coords[peak_local, 0])
-        peak_x = int(coords[peak_local, 1])
-        t0 = int(coords[:, 0].min())
-        t1 = int(coords[:, 0].max())
-        f0 = int(coords[:, 1].min())
-        f1 = int(coords[:, 1].max())
+        peak_period_idx = int(period_idx[peak_local])
+        peak_channel_idx = int(channel_idx[peak_local])
+        period0 = int(period_idx.min())
+        period1 = int(period_idx.max())
+        freq0 = int(channel_idx.min())
+        freq1 = int(channel_idx.max())
+        time_power = power_cube[peak_period_idx, :, peak_channel_idx]
+        peak_record = int(record_start + int(np.nanargmax(time_power)))
+        period_start = float(period_values[period0])
+        period_stop = float(period_values[period1])
+        peak_period = float(period_values[peak_period_idx])
         rows.append(
             {
-                "swt_level": int(level_number),
                 "component_id": int(component_id),
                 "area_pixels": area,
-                "record_start": int(record_start + t0),
-                "record_stop": int(record_start + t1 + 1),
-                "duration_records": int(t1 - t0 + 1),
-                "freq_start_mhz": float(freqs_mhz[f0]),
-                "freq_stop_mhz": float(freqs_mhz[f1]),
-                "bandwidth_mhz": float(freqs_mhz[f1] - freqs_mhz[f0]) if f1 > f0 else 0.0,
-                "peak_record": int(record_start + peak_y),
-                "peak_freq_mhz": float(freqs_mhz[peak_x]),
+                "record_start": int(record_start),
+                "record_stop": int(record_stop),
+                "duration_records": int(record_stop - record_start),
+                "period_start_records": period_start,
+                "period_stop_records": period_stop,
+                "period_width_records": float(abs(period_stop - period_start)),
+                "peak_period_records": peak_period,
+                "freq_start_mhz": float(freqs_mhz[freq0]),
+                "freq_stop_mhz": float(freqs_mhz[freq1]),
+                "bandwidth_mhz": float(freqs_mhz[freq1] - freqs_mhz[freq0]) if freq1 > freq0 else 0.0,
+                "peak_record": peak_record,
+                "peak_freq_mhz": float(freqs_mhz[peak_channel_idx]),
                 "peak_score": float(values[peak_local]),
                 "mean_score": float(np.nanmean(values)),
             }
