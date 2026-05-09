@@ -12,8 +12,9 @@ time x channel data
   -> representative period x time scalograms for visual review
   -> time aggregation
   -> period x channel response map
-  -> local robust S/N
-  -> connected-component period candidates
+  -> channel-wise period profiles
+  -> Difference-of-Gaussians + 1D peak prominence
+  -> short vertical period-response candidates
   -> veto, validation, statistics, report
 ```
 
@@ -21,27 +22,27 @@ The candidate map is directly interpretable:
 
 - x-axis: observation channel or MHz coordinate;
 - y-axis: period in records or seconds;
-- value: aggregated CWT power or local robust S/N.
+- value: aggregated CWT power or channel-wise period-peak score.
 
 ## Candidate Meaning
 
-A connected component in the period-channel map is only a candidate. It is not a
-confirmed periodic signal. Final review still requires original time-series
-validation, null tests, RFI veto, and multiple-testing correction.
+A 1D peak in a channel period profile is only a candidate. It is not a confirmed
+periodic signal. Final review still requires original time-series validation,
+null tests, RFI veto, and multiple-testing correction.
 
 ## Candidate Sensitivity
 
 The default detector is set for low sensitivity and higher review purity:
 
-- local robust S/N `threshold=6.0`;
-- connected-component area `min_pixels=6`;
-- retained components capped at `max_candidates_per_block=50`;
+- channel-wise DoG peak score `threshold=2.5`;
+- 1D peak prominence `min_prominence=2.5`;
+- period-profile peak width capped at `max_width_bins=10`;
+- retained peaks capped at `max_candidates_per_block=50`;
 - validation capped at `validation.max_candidates=25`.
 
-Lower thresholds such as `1.4` and `min_pixels=1` are debug/high-recall
-settings. They are useful for inspecting the response map, but they can create
-many visually plausible candidates and should not be used as the default review
-configuration.
+Lower thresholds are debug/high-recall settings. They are useful for inspecting
+weak period responses, but they can create many visually plausible candidates
+and should not be used as the default review configuration.
 
 ## Progress Reporting
 

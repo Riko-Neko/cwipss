@@ -15,10 +15,11 @@ The candidate generator is:
 3. keep full `period x time` scalograms for representative channels when
    visualization is enabled;
 4. aggregate time to a `period x channel` response map;
-5. estimate local robust S/N on that response map;
-6. detect connected components as period-channel candidates.
+5. split that map by frequency channel into 1D period profiles;
+6. use a Difference-of-Gaussians period-profile filter plus peak prominence to
+   detect short vertical period-response bands.
 
-Detected components are candidates only. Validation in the original time series
+Detected period-profile peaks are candidates only. Validation in the original time series
 is still required before any signal interpretation.
 
 Single-channel period candidates are valid targets. The legacy-style
@@ -60,12 +61,13 @@ arguments override matching config values.
 
 Default candidate generation is intentionally conservative:
 
-- `threshold=6.0`: local robust S/N cutoff on the period-channel map.
-- `min_pixels=6`: minimum connected-component area.
-- `max_candidates_per_block=50`: cap retained components per frequency block.
+- `threshold=2.5`: minimum channel-wise DoG peak score.
+- `min_prominence=2.5`: minimum 1D period-profile peak prominence.
+- `max_width_bins=10`: reject broad period-profile structures.
+- `max_candidates_per_block=50`: cap retained peaks per frequency block.
 - `validation.max_candidates=25`: cap rows passed to validation by default.
 
-For diagnostic/high-recall sweeps, lower `--threshold` and `--min-pixels`
+For diagnostic/high-recall sweeps, lower `--threshold` or `--min-prominence`
 explicitly. Do not use low thresholds as the default review mode.
 
 CLI scans show a CWT channel-progress bar by default. Use `--no-progress` to
@@ -135,7 +137,7 @@ This writes `visualization/index.md` plus PNG diagnostics for:
 - raw time-channel matrix;
 - representative-channel `period x time` CWT scalograms before time aggregation;
 - aggregated `period x channel` response maps;
-- local robust S/N and candidate overlays;
+- channel-wise period-peak score maps and candidate overlays;
 - veto review and optional validation/injection summaries.
 
 ## Injection Benchmark
@@ -145,15 +147,18 @@ This writes `visualization/index.md` plus PNG diagnostics for:
   --background synthetic \
   --records 1024 \
   --channels 64 \
-  --period-records 8 16 32 \
-  --amplitudes 4 6 8 \
-  --grid \
+  --injection-config configs/injection_synthetic_smoke.json \
   --visualize \
   --run-id injection_smoke
 ```
 
-The default injection is a single-channel, time-modulated periodic signal.
-Cross-channel injection models remain available only as explicit stress tests.
+The smoke config uses single-channel, time-modulated periodic signals.
+Cross-channel injection models remain available only as explicit stress tests
+inside injection configs.
+Injection benchmark settings are always loaded from JSON; use
+`configs/injection_lowfreq_random_weak.json` for a weak randomized suite with
+sampled periods, modulation, time spans, frequencies, and same-signal frequency
+copies.
 
 ## Report
 

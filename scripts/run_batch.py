@@ -49,9 +49,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--time-aggregation", type=str, default=None, help="Time aggregation for period-channel response.")
     parser.add_argument("--aggregation-percentile", type=float, default=None, help="Percentile for percentile aggregation.")
     parser.add_argument("--block-channels", type=int, default=None, help="Frequency channels per block.")
-    parser.add_argument("--threshold", type=float, default=None, help="Local robust S/N threshold.")
-    parser.add_argument("--min-pixels", type=int, default=None, help="Minimum connected-component size.")
-    parser.add_argument("--max-candidates-per-block", type=int, default=None, help="Cap components per block and level.")
+    parser.add_argument("--threshold", type=float, default=None, help="Minimum channel-wise period peak score.")
+    parser.add_argument("--min-prominence", type=float, default=None, help="Minimum 1D period-peak prominence.")
+    parser.add_argument("--dog-sigma-peak", type=float, default=None, help="Narrow Gaussian sigma for period-profile DoG.")
+    parser.add_argument("--dog-sigma-background", type=float, default=None, help="Broad Gaussian sigma for period-profile DoG.")
+    parser.add_argument("--min-width-bins", type=float, default=None, help="Minimum 1D peak width in period bins.")
+    parser.add_argument("--max-width-bins", type=float, default=None, help="Maximum 1D peak width in period bins.")
+    parser.add_argument("--min-distance-bins", type=int, default=None, help="Minimum separation between peaks in period bins.")
+    parser.add_argument("--max-candidates-per-channel", type=int, default=None, help="Cap retained peaks per frequency channel.")
+    parser.add_argument("--max-candidates-per-block", type=int, default=None, help="Cap peaks retained per block.")
     parser.add_argument("--validation-max-candidates", type=int, default=None, help="Maximum candidates to validate per file.")
     parser.add_argument("--validation-shuffle-trials", type=int, default=None, help="Shuffle/null trials per candidate.")
     parser.add_argument(
@@ -103,7 +109,13 @@ def _scan_overrides(args: argparse.Namespace) -> dict:
         "time_aggregation",
         "aggregation_percentile",
         "threshold",
-        "min_pixels",
+        "min_prominence",
+        "dog_sigma_peak",
+        "dog_sigma_background",
+        "min_width_bins",
+        "max_width_bins",
+        "min_distance_bins",
+        "max_candidates_per_channel",
         "max_candidates_per_block",
         "validation_max_candidates",
         "validation_shuffle_trials",

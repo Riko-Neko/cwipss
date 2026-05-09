@@ -8,7 +8,7 @@ import numpy as np
 
 from .config import CWTSearchConfig, cwt_config_to_nested_dict
 from .cwt import aggregate_cwt_time, cwt_power_cube, period_grid_records
-from .detection import add_candidate_ids, robust_score_2d, summarize_period_components
+from .detection import add_candidate_ids, channel_period_peak_score, summarize_channel_period_peaks
 from .io import CE4Reader
 from .models import (
     MANIFEST_FIELDNAMES,
@@ -88,7 +88,7 @@ def write_summary_json(
         },
         "top_candidates": candidates[:20],
         "notes": [
-            "CWT period-channel components are candidates, not signal claims.",
+            "CWT channel-wise period-profile peaks are candidates, not signal claims.",
             "CWT power is computed per channel; time aggregation creates the period-channel response map.",
             "Candidate periods require validation in the original time series.",
         ],
@@ -162,12 +162,12 @@ def run_cwt_search(config: CWTSearchConfig) -> Path:
                 percentile=config.aggregation_percentile,
             )
             log_response = np.log10(response + 1e-12)
-            score = robust_score_2d(
+            score = channel_period_peak_score(
                 log_response,
-                local_time=config.local_period,
-                local_freq=min(config.local_freq, max(3, block.freqs_mhz.size | 1)),
+                sigma_peak=config.dog_sigma_peak,
+                sigma_background=config.dog_sigma_background,
             )
-            candidates = summarize_period_components(
+            candidates = summarize_channel_period_peaks(
                 score=score,
                 power_cube=power,
                 periods=periods,
@@ -175,7 +175,11 @@ def run_cwt_search(config: CWTSearchConfig) -> Path:
                 record_start=block.record_range[0],
                 record_stop=block.record_range[1],
                 threshold=config.threshold,
-                min_pixels=config.min_pixels,
+                min_prominence=config.min_prominence,
+                min_width_bins=config.min_width_bins,
+                max_width_bins=config.max_width_bins,
+                min_distance_bins=config.min_distance_bins,
+                max_candidates_per_channel=config.max_candidates_per_channel,
                 max_components=config.max_candidates_per_block,
             )
             for row in candidates:
@@ -248,8 +252,9 @@ def run_cwt_search(config: CWTSearchConfig) -> Path:
                 periods=periods,
                 block_channels=config.block_channels,
                 threshold=config.threshold,
-                local_period=config.local_period,
-                local_freq=config.local_freq,
+                min_prominence=config.min_prominence,
+                dog_sigma_peak=config.dog_sigma_peak,
+                dog_sigma_background=config.dog_sigma_background,
                 time_aggregation=config.time_aggregation,
                 aggregation_percentile=config.aggregation_percentile,
             ),

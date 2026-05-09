@@ -10,7 +10,7 @@ from typing import Any
 import numpy as np
 
 from .cwt import aggregate_cwt_time, cwt_power_cube, period_grid_records
-from .detection import add_candidate_ids, robust_score_2d, summarize_period_components
+from .detection import add_candidate_ids, channel_period_peak_score, summarize_channel_period_peaks
 from .injection import BackgroundData, ce4_background, inject_many, synthetic_background
 from .models import (
     INJECTION_PERFORMANCE_FIELDNAMES,
@@ -50,10 +50,14 @@ class CWTBenchmarkConfig:
     block_channels: int = 128
     time_aggregation: str = "p95"
     aggregation_percentile: float = 95.0
-    threshold: float = 6.0
-    min_pixels: int = 6
-    local_period: int = 9
-    local_freq: int = 9
+    threshold: float = 2.5
+    min_prominence: float = 2.5
+    dog_sigma_peak: float = 1.0
+    dog_sigma_background: float = 10.0
+    min_width_bins: float = 1.0
+    max_width_bins: float = 10.0
+    min_distance_bins: int = 3
+    max_candidates_per_channel: int = 2
     max_candidates_per_block: int = 50
     progress_enabled: bool = True
     progress_leave: bool = False
@@ -156,12 +160,12 @@ def run_cwt_candidate_search(
                 method=search_config.time_aggregation,
                 percentile=search_config.aggregation_percentile,
             )
-            score = robust_score_2d(
+            score = channel_period_peak_score(
                 np.log10(response + 1e-12),
-                local_time=search_config.local_period,
-                local_freq=min(search_config.local_freq, max(3, block_freqs.size | 1)),
+                sigma_peak=search_config.dog_sigma_peak,
+                sigma_background=search_config.dog_sigma_background,
             )
-            candidates = summarize_period_components(
+            candidates = summarize_channel_period_peaks(
                 score=score,
                 power_cube=power,
                 periods=periods,
@@ -169,7 +173,11 @@ def run_cwt_candidate_search(
                 record_start=0,
                 record_stop=matrix.shape[0],
                 threshold=search_config.threshold,
-                min_pixels=search_config.min_pixels,
+                min_prominence=search_config.min_prominence,
+                min_width_bins=search_config.min_width_bins,
+                max_width_bins=search_config.max_width_bins,
+                min_distance_bins=search_config.min_distance_bins,
+                max_candidates_per_channel=search_config.max_candidates_per_channel,
                 max_components=search_config.max_candidates_per_block,
             )
             for row in candidates:
@@ -545,8 +553,9 @@ def run_injection_benchmark(
                 periods=periods,
                 block_channels=search_config.block_channels,
                 threshold=search_config.threshold,
-                local_period=search_config.local_period,
-                local_freq=search_config.local_freq,
+                min_prominence=search_config.min_prominence,
+                dog_sigma_peak=search_config.dog_sigma_peak,
+                dog_sigma_background=search_config.dog_sigma_background,
                 time_aggregation=search_config.time_aggregation,
                 aggregation_percentile=search_config.aggregation_percentile,
             ),
@@ -567,51 +576,6 @@ def run_injection_benchmark(
             ),
         )
     return output_dir
-
-
-def make_default_injections(
-    periods: list[float],
-    amplitudes: list[float],
-    records: int,
-    channels: int,
-    model: str = "single_channel_periodic",
-    grid: bool = False,
-    repeats: int = 1,
-) -> list[InjectionSpec]:
-    specs: list[InjectionSpec] = []
-    if not periods:
-        periods = [16.0]
-    if not amplitudes:
-        amplitudes = [5.0]
-    repeats = max(1, int(repeats))
-    combos: list[tuple[float, float, int]] = []
-    if grid:
-        for period in periods:
-            for amplitude in amplitudes:
-                for repeat_idx in range(repeats):
-                    combos.append((float(period), float(amplitude), repeat_idx))
-    else:
-        for idx, period in enumerate(periods):
-            amplitude = amplitudes[min(idx, len(amplitudes) - 1)]
-            for repeat_idx in range(repeats):
-                combos.append((float(period), float(amplitude), repeat_idx))
-
-    for idx, (period, amplitude, repeat_idx) in enumerate(combos):
-        specs.append(
-            InjectionSpec(
-                injection_id=f"inj_{idx + 1:04d}",
-                signal_model=model,
-                period_records=period,
-                amplitude=amplitude,
-                record_start=max(0, records // 4),
-                duration_records=max(1, records // 2),
-                channel_center=max(0.0, (channels - 1) * (idx + 1) / (len(combos) + 1)),
-                bandwidth_channels=1.0 if model == "single_channel_periodic" else max(3.0, channels * 0.08),
-                phase=(repeat_idx / repeats) % 1.0,
-            )
-        )
-    return specs
-
 
 def make_background_from_args(
     mode: str,

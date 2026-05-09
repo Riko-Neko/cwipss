@@ -22,7 +22,7 @@ from matplotlib import pyplot as plt
 from matplotlib.patches import Rectangle
 
 from .cwt import aggregate_cwt_time, cwt_power_cube
-from .detection import robust_score_2d
+from .detection import channel_period_peak_score
 
 
 @dataclass(frozen=True)
@@ -40,9 +40,10 @@ class SearchVisualizationConfig:
     periods: np.ndarray
     cwt_method: str = "fft"
     block_channels: int = 128
-    threshold: float = 6.0
-    local_period: int = 9
-    local_freq: int = 9
+    threshold: float = 2.5
+    min_prominence: float = 2.5
+    dog_sigma_peak: float = 1.0
+    dog_sigma_background: float = 10.0
     time_aggregation: str = "p95"
     aggregation_percentile: float = 95.0
 
@@ -418,10 +419,10 @@ def visualize_cwt_stages(
             method=search_config.time_aggregation,
             percentile=search_config.aggregation_percentile,
         )
-        score = robust_score_2d(
+        score = channel_period_peak_score(
             np.log10(response + 1e-12),
-            local_time=search_config.local_period,
-            local_freq=min(search_config.local_freq, max(3, block_freqs.size | 1)),
+            sigma_peak=search_config.dog_sigma_peak,
+            sigma_background=search_config.dog_sigma_background,
         )
         block_rows = [row for row in raw_candidates if str(row.get("block_id", "")) == block_id]
         representative = _representative_channels(block_start, block_stop, block_freqs, block_rows, max_channels)
@@ -481,11 +482,11 @@ def visualize_cwt_stages(
             score,
             _linear_edges_from_centers(block_freqs),
             _period_edges(periods),
-            title=f"Stage 04 local robust S/N: {block_id}",
+                title=f"Stage 04 channel period-peak score: {block_id}",
             xlabel="Frequency / channel coordinate",
             ylabel="Period / records",
             cmap="viridis",
-            cbar_label="local robust S/N",
+                cbar_label="channel DoG robust score",
             yscale="log",
         )
         ax.contour(
@@ -502,7 +503,7 @@ def visualize_cwt_stages(
             ax.legend(loc="best")
         path = output_dir / f"stage_04_{block_id}_period_channel_candidates.png"
         _save(fig, path, config.dpi)
-        images.append((f"Stage 04 Period-Channel Candidate Overlay {block_id}", path, "Local S/N period-channel map with threshold contour, candidates, and optional truth."))
+        images.append((f"Stage 04 Period-Channel Candidate Overlay {block_id}", path, "Channel-wise period-peak score map with threshold contour, candidates, and optional truth."))
 
     if reviewed:
         top_rows = _sort_candidates(reviewed, config.top_candidates)
@@ -616,8 +617,9 @@ def visualize_cwt_stages(
                     "period_max_records": float(np.nanmax(periods)),
                     "block_channels": search_config.block_channels,
                     "threshold": search_config.threshold,
-                    "local_period": search_config.local_period,
-                    "local_freq": search_config.local_freq,
+                    "min_prominence": search_config.min_prominence,
+                    "dog_sigma_peak": search_config.dog_sigma_peak,
+                    "dog_sigma_background": search_config.dog_sigma_background,
                     "time_aggregation": search_config.time_aggregation,
                 },
             },

@@ -3,9 +3,9 @@
 The injection benchmark tests whether the CWT period-search pipeline recovers
 controlled synthetic periodic signals.
 
-The default injected signal is `single_channel_periodic`: a time-modulated
-periodic signal added to one channel only. Cross-channel models are explicit
-stress tests, not the default scientific assumption.
+The standard injected signal model is `single_channel_periodic`: a
+time-modulated periodic signal added to one channel only. Cross-channel models
+are explicit stress tests, not the default scientific assumption.
 
 ## Command
 
@@ -14,16 +14,54 @@ stress tests, not the default scientific assumption.
   --background synthetic \
   --records 1024 \
   --channels 64 \
-  --period-records 8 16 32 \
-  --amplitudes 8 16 \
-  --grid \
+  --injection-config configs/injection_synthetic_smoke.json \
   --visualize
 ```
 
-The benchmark uses the same conservative candidate defaults as the main
-pipeline: `threshold=6.0`, `min_pixels=6`, and
+All injection suites are declared in JSON and passed with `--injection-config`:
+
+```bash
+/opt/miniconda3/envs/pytorch/bin/python scripts/run_injection_benchmark.py \
+  --background ce4 \
+  --input data/CE4/example.2C \
+  --f-start 0.1 \
+  --f-stop 2.0 \
+  --t-start 0 \
+  --t-stop 4096 \
+  --injection-config configs/injection_lowfreq_random_weak.json \
+  --visualize
+```
+
+When a config is supplied, it is copied to `injection_config.json` inside the
+run directory. The command line controls background selection, search,
+validation, and visualization only; injection parameters live in the simulation
+config.
+
+The benchmark uses the same channel-wise period-profile detector as the main
+pipeline: `threshold=2.5`, `min_prominence=2.5`, and
 `max_candidates_per_block=50`. Lower these only for high-recall diagnostic
 sweeps.
+
+## Injection Config
+
+The config is a reproducible simulation plan. A top-level `seed` controls all
+sampling. Each entry in `sets` defines a group of base signals with `count` and
+sampled parameters:
+
+- `signal_model`: usually `single_channel_periodic` for channel-local tests.
+- `period_records`: fixed value, list, or sampled range.
+- `amplitude`: fixed value or sampled range, including `log_uniform`.
+- `frequency_mhz` or `channel_center`: sampled injection channel.
+- `time.duration_records` or `time.duration_fraction`: random time span; the
+  start is random unless `time.record_start` is specified.
+- `modulation.phase` and `modulation.duty_cycle`: random temporal modulation
+  shape.
+- `replication`: probability and maximum number of same-signal copies at other
+  channels or frequencies.
+
+Sampler fields accept a raw value, a list, `{ "values": [...] }`,
+`{ "value": ... }`, or `{ "distribution": "uniform|log_uniform|integer_uniform",
+"min": ..., "max": ... }`.
 
 ## Outputs
 
@@ -39,7 +77,7 @@ sweeps.
 
 ## Failure Stages
 
-- `missed_detection`: no CWT period-channel component overlaps the injection.
+- `missed_detection`: no channel-wise CWT period-profile peak overlaps the injection.
 - `vetoed`: the best matching raw candidate did not survive veto.
 - `not_validated`: the matched candidate was not in the validation table.
 - `period_mismatch`: validation refined period is too far from truth.

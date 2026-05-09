@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "seed": 12345,
+  "description": "Small reproducible synthetic injection smoke suite.",
+  "sets": [
+    {
+      "name": "synthetic_smoke",
+      "count": 3,
+      "signal_model": "single_channel_periodic",
+      "period_records": {
+        "values": [
+          8,
+          16,
+          32
+        ]
+      },
+      "amplitude": {
+        "values": [
+          6,
+          8,
+          10
+        ]
+      },
+      "channel_center": {
+        "distribution": "integer_uniform",
+        "min": 8,
+        "max": 55
+      },
+      "time": {
+        "duration_fraction": {
+          "distribution": "uniform",
+          "min": 0.5,
+          "max": 0.9
+        }
+      },
+      "modulation": {
+        "phase": {
+          "distribution": "uniform",
+          "min": 0.0,
+          "max": 1.0
+        },
+        "duty_cycle": {
+          "distribution": "uniform",
+          "min": 0.08,
+          "max": 0.2
+        }
+      },
+      "replication": {
+        "probability": 0.0,
+        "max_copies": 1
+      }
+    }
+  ]
+}

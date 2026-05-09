@@ -19,10 +19,14 @@
     "aggregation_percentile": 95.0
   },
   "detection": {
-    "threshold": 6.0,
-    "min_pixels": 6,
-    "local_period": 9,
-    "local_freq": 9,
+    "threshold": 2.5,
+    "min_prominence": 2.5,
+    "dog_sigma_peak": 1.0,
+    "dog_sigma_background": 10.0,
+    "min_width_bins": 1.0,
+    "max_width_bins": 10.0,
+    "min_distance_bins": 3,
+    "max_candidates_per_channel": 2,
     "max_candidates_per_block": 50
   },
   "veto": {

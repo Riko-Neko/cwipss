@@ -11,10 +11,10 @@ from ce4_period_search.benchmark import (
     CWTBenchmarkConfig,
     aggregate_injection_performance,
     evaluate_injections,
-    make_default_injections,
     run_injection_benchmark,
 )
 from ce4_period_search.injection import synthetic_background
+from ce4_period_search.injection_config import make_injections_from_config
 from ce4_period_search.simulation import InjectionSpec, inject_periodic_signal
 from ce4_period_search.validation import ValidationConfig
 from ce4_period_search.veto import VetoConfig
@@ -140,21 +140,39 @@ def test_evaluate_injections_matches_after_veto_candidates_only() -> None:
     assert rows[0]["matched_candidate_id"] == 2
 
 
-def test_default_injections_can_build_period_amplitude_grid() -> None:
-    specs = make_default_injections(
-        periods=[8, 16],
-        amplitudes=[4, 6],
+def test_injection_config_randomizes_long_time_spans_and_replicates() -> None:
+    payload = {
+        "seed": 7,
+        "sets": [
+            {
+                "name": "weak",
+                "count": 2,
+                "signal_model": "single_channel_periodic",
+                "period_records": {"values": [8, 16]},
+                "amplitude": {"min": 0.1, "max": 0.2},
+                "frequency_mhz": {"min": 0.0, "max": 15.0},
+                "time": {"duration_fraction": {"min": 0.5, "max": 0.8}},
+                "modulation": {
+                    "phase": {"min": 0.0, "max": 1.0},
+                    "duty_cycle": {"min": 0.08, "max": 0.2},
+                },
+                "replication": {"probability": 1.0, "max_copies": 2},
+            }
+        ],
+    }
+
+    specs = make_injections_from_config(
+        payload,
         records=128,
         channels=16,
-        grid=True,
-        repeats=2,
+        freqs_mhz=np.arange(16, dtype=np.float64),
     )
 
-    assert len(specs) == 8
-    assert {spec.period_records for spec in specs} == {8.0, 16.0}
-    assert {spec.amplitude for spec in specs} == {4.0, 6.0}
-    assert {spec.signal_model for spec in specs} == {"single_channel_periodic"}
-    assert {spec.bandwidth_channels for spec in specs} == {1.0}
+    assert len(specs) == 4
+    assert all(spec.duration_records is not None and spec.duration_records >= 64 for spec in specs)
+    assert all(0 <= spec.record_start <= 128 - int(spec.duration_records or 0) for spec in specs)
+    assert len({spec.channel_center for spec in specs}) > 1
+    assert len({(spec.period_records, spec.record_start, spec.duration_records) for spec in specs}) == 2
 
 
 def test_aggregate_injection_performance_groups_recovery_rates() -> None:
@@ -196,9 +214,13 @@ def test_run_injection_benchmark_writes_expected_outputs(tmp_path: Path) -> None
             period_count=8,
             block_channels=16,
             threshold=1.5,
-            min_pixels=1,
-            local_period=5,
-            local_freq=5,
+            min_prominence=1.0,
+            dog_sigma_peak=0.5,
+            dog_sigma_background=3.0,
+            min_width_bins=1.0,
+            max_width_bins=5.0,
+            min_distance_bins=1,
+            max_candidates_per_channel=2,
             max_candidates_per_block=20,
         ),
         veto_config=VetoConfig(enabled=False),

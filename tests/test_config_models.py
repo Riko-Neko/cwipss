@@ -12,7 +12,12 @@ def test_structured_config_maps_to_resolved_dataclass() -> None:
             "schema_version": 1,
             "input": {"path": "data/example.2C"},
             "scan": {"f_start": 38.0, "f_stop": 39.0, "period_count": 40},
-            "detection": {"threshold": 6.5, "min_pixels": 8, "local_period": 7},
+            "detection": {
+                "threshold": 3.0,
+                "min_prominence": 2.0,
+                "dog_sigma_background": 12.0,
+                "max_candidates_per_channel": 1,
+            },
             "veto": {"enabled": True, "max_bandwidth_fraction": 0.8},
             "validation": {"max_candidates": 12, "shuffle_trials": 20},
             "visualization": {"enabled": True, "max_blocks": 1, "max_channels": 2, "top_candidates": 10},
@@ -25,8 +30,10 @@ def test_structured_config_maps_to_resolved_dataclass() -> None:
     assert config.f_start == 38.0
     assert config.f_stop == 39.0
     assert config.period_count == 40
-    assert config.threshold == 6.5
-    assert config.min_pixels == 8
+    assert config.threshold == 3.0
+    assert config.min_prominence == 2.0
+    assert config.dog_sigma_background == 12.0
+    assert config.max_candidates_per_channel == 1
     assert config.veto_enabled is True
     assert config.veto_max_bandwidth_fraction == 0.8
     assert config.validation_max_candidates == 12
@@ -42,7 +49,8 @@ def test_structured_config_maps_to_resolved_dataclass() -> None:
     nested = cwt_config_to_nested_dict(config)
     assert nested["input"]["path"] == "data/example.2C"
     assert nested["scan"]["period_count"] == 40
-    assert nested["detection"]["threshold"] == 6.5
+    assert nested["detection"]["threshold"] == 3.0
+    assert nested["detection"]["min_prominence"] == 2.0
     assert nested["veto"]["max_bandwidth_fraction"] == 0.8
     assert nested["validation"]["shuffle_trials"] == 20
     assert nested["visualization"]["enabled"] is True
@@ -71,8 +79,8 @@ def test_normalize_candidate_row_adds_schema_and_seconds() -> None:
         {
             "cwt_wavelet": "cmor1.5-1.0",
             "time_aggregation": "p95",
-            "component_id": 1,
-            "area_pixels": 12,
+            "detection_method": "channel_period_peak_dog",
+            "channel_index": 3,
             "record_start": 10,
             "record_stop": 16,
             "duration_records": 6,
@@ -87,6 +95,9 @@ def test_normalize_candidate_row_adds_schema_and_seconds() -> None:
             "peak_freq_mhz": 38.1,
             "peak_score": 8.0,
             "mean_score": 6.0,
+            "peak_prominence": 4.0,
+            "peak_width_bins": 2.0,
+            "peak_width_records": 0.5,
             "block_channel_start": 0,
             "block_channel_stop": 8,
         },

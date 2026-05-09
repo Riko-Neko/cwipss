@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -15,9 +16,9 @@ from ce4_period_search.benchmark import (
     CWTBenchmarkConfig,
     MatchConfig,
     make_background_from_args,
-    make_default_injections,
     run_injection_benchmark,
 )
+from ce4_period_search.injection_config import load_injection_config, make_injections_from_config
 from ce4_period_search.validation import ValidationConfig
 from ce4_period_search.visualization import CWTVisualizationConfig
 from ce4_period_search.veto import VetoConfig
@@ -39,23 +40,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--t-start", type=int, default=None, help="Record start for CE-4 background.")
     parser.add_argument("--t-stop", type=int, default=None, help="Record stop for CE-4 background.")
 
-    parser.add_argument("--period-records", type=float, nargs="+", default=[16.0], help="Injected periods in records.")
-    parser.add_argument("--amplitudes", type=float, nargs="+", default=[6.0], help="Injected amplitudes.")
-    parser.add_argument("--grid", action="store_true", help="Inject the full period x amplitude grid.")
-    parser.add_argument("--repeats", type=int, default=1, help="Repeat each injection setting.")
-    parser.add_argument(
-        "--signal-model",
-        choices=[
-            "pulsed_periodic",
-            "single_channel_periodic",
-            "intermittent_periodic",
-            "sinusoidal_narrowband",
-            "band_limited_periodic",
-            "drifting_ridge",
-        ],
-        default="single_channel_periodic",
-        help="Injected signal morphology.",
-    )
+    parser.add_argument("--injection-config", type=Path, required=True, help="JSON config for simulation injections.")
 
     parser.add_argument("--wavelet", type=str, default="cmor1.5-1.0", help="PyWavelets CWT wavelet.")
     parser.add_argument("--cwt-method", choices=["conv", "fft"], default="fft", help="PyWavelets CWT computation method.")
@@ -66,10 +51,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--block-channels", type=int, default=128, help="Frequency channels per block.")
     parser.add_argument("--time-aggregation", type=str, default="p95", help="Time aggregation for period-channel response.")
     parser.add_argument("--aggregation-percentile", type=float, default=95.0, help="Percentile for percentile aggregation.")
-    parser.add_argument("--threshold", type=float, default=6.0, help="Local robust S/N threshold.")
-    parser.add_argument("--min-pixels", type=int, default=6, help="Minimum connected-component size.")
-    parser.add_argument("--local-period", type=int, default=9, help="Median/MAD local period-bin window.")
-    parser.add_argument("--local-freq", type=int, default=9, help="Median/MAD local frequency window.")
+    parser.add_argument("--threshold", type=float, default=2.5, help="Minimum channel-wise period peak score.")
+    parser.add_argument("--min-prominence", type=float, default=2.5, help="Minimum 1D period-peak prominence.")
+    parser.add_argument("--dog-sigma-peak", type=float, default=1.0, help="Narrow Gaussian sigma for period-profile DoG.")
+    parser.add_argument("--dog-sigma-background", type=float, default=10.0, help="Broad Gaussian sigma for period-profile DoG.")
+    parser.add_argument("--min-width-bins", type=float, default=1.0, help="Minimum 1D peak width in period bins.")
+    parser.add_argument("--max-width-bins", type=float, default=10.0, help="Maximum 1D peak width in period bins.")
+    parser.add_argument("--min-distance-bins", type=int, default=3, help="Minimum separation between peaks in period bins.")
+    parser.add_argument("--max-candidates-per-channel", type=int, default=2, help="Candidate cap per frequency channel.")
     parser.add_argument("--max-candidates-per-block", type=int, default=50, help="Candidate cap per block.")
     parser.add_argument(
         "--progress",
@@ -117,6 +106,7 @@ def _output_dir(args: argparse.Namespace) -> Path:
 
 def main() -> None:
     args = parse_args()
+    output_dir = _output_dir(args)
     background = make_background_from_args(
         mode=args.background,
         input_path=args.input,
@@ -129,14 +119,13 @@ def main() -> None:
         t_start=args.t_start,
         t_stop=args.t_stop,
     )
-    injections = make_default_injections(
-        periods=list(args.period_records),
-        amplitudes=list(args.amplitudes),
+    injection_payload = load_injection_config(args.injection_config)
+    injections = make_injections_from_config(
+        injection_payload,
         records=background.data.shape[0],
         channels=background.data.shape[1],
-        model=args.signal_model,
-        grid=args.grid,
-        repeats=args.repeats,
+        freqs_mhz=background.freqs_mhz,
+        default_seed=args.seed,
     )
     search_config = CWTBenchmarkConfig(
         wavelet=args.wavelet,
@@ -149,9 +138,13 @@ def main() -> None:
         time_aggregation=args.time_aggregation,
         aggregation_percentile=args.aggregation_percentile,
         threshold=args.threshold,
-        min_pixels=args.min_pixels,
-        local_period=args.local_period,
-        local_freq=args.local_freq,
+        min_prominence=args.min_prominence,
+        dog_sigma_peak=args.dog_sigma_peak,
+        dog_sigma_background=args.dog_sigma_background,
+        min_width_bins=args.min_width_bins,
+        max_width_bins=args.max_width_bins,
+        min_distance_bins=args.min_distance_bins,
+        max_candidates_per_channel=args.max_candidates_per_channel,
         max_candidates_per_block=args.max_candidates_per_block,
         progress_enabled=args.progress,
         progress_leave=args.progress_leave,
@@ -175,7 +168,7 @@ def main() -> None:
     output_dir = run_injection_benchmark(
         background=background,
         injections=injections,
-        output_dir=_output_dir(args),
+        output_dir=output_dir,
         run_id=args.run_id,
         search_config=search_config,
         veto_config=VetoConfig(),
@@ -189,6 +182,14 @@ def main() -> None:
             dpi=args.viz_dpi,
         ),
     )
+    (output_dir / "injection_config.json").write_text(json.dumps(injection_payload, indent=2, ensure_ascii=True))
+    summary_path = output_dir / "injection_summary.json"
+    summary = json.loads(summary_path.read_text()) if summary_path.exists() else {}
+    summary["injection_config"] = {
+        "source_path": str(args.injection_config),
+        "resolved_path": str(output_dir / "injection_config.json"),
+    }
+    summary_path.write_text(json.dumps(summary, indent=2, ensure_ascii=True))
     print(f"Injection benchmark directory: {output_dir}")
     print(f"Truth: {output_dir / 'injection_truth.csv'}")
     print(f"Results: {output_dir / 'injection_results.csv'}")

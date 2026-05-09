@@ -32,10 +32,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--block-channels", type=int, default=None, help="Frequency channels per block.")
     parser.add_argument("--time-aggregation", type=str, default=None, help="Time aggregation for period-channel response.")
     parser.add_argument("--aggregation-percentile", type=float, default=None, help="Percentile for percentile aggregation.")
-    parser.add_argument("--threshold", type=float, default=None, help="Local robust S/N threshold.")
-    parser.add_argument("--min-pixels", type=int, default=None, help="Minimum connected-component size.")
-    parser.add_argument("--local-period", type=int, default=None, help="Local median window in period bins.")
-    parser.add_argument("--local-freq", type=int, default=None, help="Local median window in channels.")
+    parser.add_argument("--threshold", type=float, default=None, help="Minimum channel-wise period peak score.")
+    parser.add_argument("--min-prominence", type=float, default=None, help="Minimum 1D period-peak prominence.")
+    parser.add_argument("--dog-sigma-peak", type=float, default=None, help="Narrow Gaussian sigma for period-profile DoG.")
+    parser.add_argument("--dog-sigma-background", type=float, default=None, help="Broad Gaussian sigma for period-profile DoG.")
+    parser.add_argument("--min-width-bins", type=float, default=None, help="Minimum 1D peak width in period bins.")
+    parser.add_argument("--max-width-bins", type=float, default=None, help="Maximum 1D peak width in period bins.")
+    parser.add_argument("--min-distance-bins", type=int, default=None, help="Minimum separation between peaks in period bins.")
+    parser.add_argument("--max-candidates-per-channel", type=int, default=None, help="Cap retained peaks per frequency channel.")
     parser.add_argument(
         "--veto-enabled",
         action=argparse.BooleanOptionalAction,
@@ -48,7 +52,7 @@ def parse_args() -> argparse.Namespace:
         "--max-candidates-per-block",
         type=int,
         default=None,
-        help="Cap components retained per block.",
+        help="Cap peaks retained per block.",
     )
     parser.add_argument("--visualize", action="store_true", default=None, help="Write staged visualization PNGs.")
     parser.add_argument("--viz-max-blocks", type=int, default=None, help="Maximum blocks to visualize; 0 means all.")

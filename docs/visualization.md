@@ -21,7 +21,7 @@ Stage visualization is optional and writes PNG diagnostics plus
 - Stage 02: representative-channel `period x time` CWT scalograms before time
   aggregation.
 - Stage 03: aggregated `period x channel` response map.
-- Stage 04: local robust S/N and candidate overlays.
+- Stage 04: channel-wise period-profile DoG peak score and candidate overlays.
 - Stage 05: candidate review overview colored by veto status.
 - Stage 06: validation/statistics overview when available.
 - Stage 07: injection recovery rates when available.
@@ -29,8 +29,9 @@ Stage visualization is optional and writes PNG diagnostics plus
 
 ## Controls
 
-- `--threshold`: local robust S/N cutoff. Default `6.0` is conservative.
-- `--min-pixels`: minimum connected-component area. Default `6`.
+- `--threshold`: minimum channel-wise DoG peak score. Default `2.5`.
+- `--min-prominence`: minimum 1D period-profile peak prominence. Default `2.5`.
+- `--max-width-bins`: maximum peak width in period bins. Default `10`.
 - `--viz-max-blocks`: maximum blocks to visualize; `0` renders all.
 - `--viz-max-channels`: representative channels per block for period-time CWT
   scalograms.
@@ -38,5 +39,5 @@ Stage visualization is optional and writes PNG diagnostics plus
 - `--viz-dpi`: PNG resolution.
 
 Use small time/channel windows first. Full-file visualization can be expensive.
-Avoid debug settings such as `--threshold 1.4 --min-pixels 1` unless the goal is
-high-recall visual exploration rather than candidate review.
+Avoid low-score debug settings unless the goal is high-recall visual exploration
+rather than candidate review.
