@@ -1,4 +1,4 @@
-# CWT Period Search Pipeline
+# CScout: A CWT Period Search Pipeline
 
 Reproducible CWT period-channel candidate search for time-channel data.
 
