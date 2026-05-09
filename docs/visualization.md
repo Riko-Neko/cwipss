@@ -21,8 +21,8 @@ Stage visualization is optional and writes PNG diagnostics plus
 - Stage 02: representative-channel `period x time` CWT scalograms before time
   aggregation.
 - Stage 03: aggregated `period x channel` overview response map.
-- Stage 04: projected per-channel scalogram score and candidate overlays; line
-  width encodes candidate duration.
+- Stage 04: projected per-channel scalogram score inside the candidate period
+  domain and recorded-candidate overlays; line width encodes candidate duration.
 - Stage 05: candidate review overview colored by veto status.
 - Stage 06: validation/statistics overview when available.
 - Stage 07: injection recovery rates when available.
@@ -31,6 +31,10 @@ Stage visualization is optional and writes PNG diagnostics plus
 ## Controls
 
 - `--threshold`: minimum per-channel scalogram region score. Default `2.5`.
+- `--candidate-period-min-records`: reject candidates below this period.
+  Default `10`.
+- `--candidate-period-max-records`: reject candidates above this period.
+  Default `200`.
 - `--min-duration-records`: minimum candidate time span. Default `8`.
 - `--max-width-bins`: maximum period-band width in bins. Default `10`.
 - `--viz-max-blocks`: maximum blocks to visualize; `0` renders all.

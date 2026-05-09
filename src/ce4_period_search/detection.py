@@ -59,6 +59,19 @@ def _period_width(periods: np.ndarray, p0: int, p1: int) -> float:
     return float(abs(float(periods[p1]) - float(periods[p0])))
 
 
+def _period_domain_mask(
+    periods: np.ndarray,
+    min_period_records: float | None,
+    max_period_records: float | None,
+) -> np.ndarray:
+    values = np.asarray(periods, dtype=np.float64)
+    lo = -np.inf if min_period_records is None else float(min_period_records)
+    hi = np.inf if max_period_records is None else float(max_period_records)
+    if hi < lo:
+        lo, hi = hi, lo
+    return np.asarray((values >= lo) & (values <= hi), dtype=bool)
+
+
 def _region_time_integral(score: np.ndarray, p0: int, p1: int, t0: int, t1: int) -> tuple[float, float]:
     window = np.asarray(score[p0:p1 + 1, t0:t1 + 1], dtype=np.float32)
     if window.size == 0:
@@ -83,8 +96,12 @@ def _region_rows_for_channel(
     min_width_bins: float,
     max_width_bins: float,
     max_candidates_per_channel: int,
+    candidate_period_min_records: float | None,
+    candidate_period_max_records: float | None,
 ) -> list[dict]:
     mask = np.asarray(score >= float(threshold), dtype=bool)
+    period_mask = _period_domain_mask(periods, candidate_period_min_records, candidate_period_max_records)
+    mask &= period_mask[:, np.newaxis]
     labels, count = ndi.label(mask, structure=np.ones((3, 3), dtype=np.uint8))
     slices = ndi.find_objects(labels)
     rows: list[dict] = []
@@ -155,6 +172,8 @@ def summarize_scalogram_regions(
     min_width_bins: float,
     max_width_bins: float,
     max_candidates_per_channel: int,
+    candidate_period_min_records: float | None = None,
+    candidate_period_max_records: float | None = None,
     max_candidates: int | None = None,
 ) -> tuple[list[dict], np.ndarray]:
     """Detect candidate regions in each channel's first-hand `(period, time)` scalogram."""
@@ -189,6 +208,8 @@ def summarize_scalogram_regions(
                 min_width_bins,
                 max_width_bins,
                 max_candidates_per_channel,
+                candidate_period_min_records,
+                candidate_period_max_records,
             )
         )
 

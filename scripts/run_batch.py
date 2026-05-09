@@ -56,6 +56,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--min-duration-records", type=int, default=None, help="Minimum candidate time length in records.")
     parser.add_argument("--min-width-bins", type=float, default=None, help="Minimum candidate period width in bins.")
     parser.add_argument("--max-width-bins", type=float, default=None, help="Maximum candidate period width in bins.")
+    parser.add_argument("--candidate-period-min-records", type=float, default=None, help="Reject candidates below this period in records.")
+    parser.add_argument("--candidate-period-max-records", type=float, default=None, help="Reject candidates above this period in records.")
     parser.add_argument("--max-candidates-per-channel", type=int, default=None, help="Cap retained regions per frequency channel.")
     parser.add_argument("--max-candidates-per-block", type=int, default=None, help="Cap regions retained per block.")
     parser.add_argument("--validation-max-candidates", type=int, default=None, help="Maximum candidates to validate per file.")
@@ -115,6 +117,8 @@ def _scan_overrides(args: argparse.Namespace) -> dict:
         "min_duration_records",
         "min_width_bins",
         "max_width_bins",
+        "candidate_period_min_records",
+        "candidate_period_max_records",
         "max_candidates_per_channel",
         "max_candidates_per_block",
         "validation_max_candidates",

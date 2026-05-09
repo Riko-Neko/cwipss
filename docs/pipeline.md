@@ -11,6 +11,7 @@ time x channel data
   -> period x time x channel power cube
   -> period-axis Difference-of-Gaussians per channel
   -> time-bounded period-response regions
+  -> candidate period-domain filter
   -> time-integrated region ranking
   -> period x channel candidate projection for visual review
   -> veto, validation, statistics, report
@@ -34,6 +35,7 @@ correction.
 The default detector is set for low sensitivity and higher review purity:
 
 - per-channel scalogram score `threshold=2.5`;
+- candidate period domain `10..200` records;
 - minimum time span `min_duration_records=8`;
 - period-band width capped at `max_width_bins=10`;
 - retained regions capped at `max_candidates_per_block=50`;
@@ -42,6 +44,36 @@ The default detector is set for low sensitivity and higher review purity:
 Lower thresholds are debug/high-recall settings. They are useful for inspecting
 weak period responses, but they can create many visually plausible candidates
 and should not be used as the default review configuration.
+
+## Feasible Period Domain
+
+The default candidate domain rejects periods below 10 records and above 200
+records. This is a detection-domain filter, not a CWT-grid limit.
+
+For CE-4 files with labels, one record is about one second. In the current
+4096-record low-frequency review windows, the assumed minimum real signal span
+is at least half the window:
+
+```text
+N_window = 4096 records
+L_min = 0.5 * N_window = 2048 records
+N_cycles_min = 10
+P_max = floor(L_min / N_cycles_min) ~= 204 records -> 200 records
+```
+
+The lower cutoff is not the mathematical Nyquist limit. Nyquist only gives
+`P > 2` records. For this detector, periods below roughly 10 records have too
+few samples per cycle for stable CWT/folding evidence and are where persistent
+instrument-like stripes dominate. The practical domain is therefore:
+
+```text
+P_min = 10 records
+P_max = floor(min_expected_signal_span_records / 10)
+```
+
+For other scan lengths or signal-duration assumptions, recompute `P_max` with
+that formula and override `candidate_period_min_records` /
+`candidate_period_max_records`.
 
 ## Progress Reporting
 

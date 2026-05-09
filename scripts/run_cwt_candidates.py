@@ -39,6 +39,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--min-duration-records", type=int, default=None, help="Minimum candidate time length in records.")
     parser.add_argument("--min-width-bins", type=float, default=None, help="Minimum candidate period width in bins.")
     parser.add_argument("--max-width-bins", type=float, default=None, help="Maximum candidate period width in bins.")
+    parser.add_argument("--candidate-period-min-records", type=float, default=None, help="Reject candidates below this period in records.")
+    parser.add_argument("--candidate-period-max-records", type=float, default=None, help="Reject candidates above this period in records.")
     parser.add_argument("--max-candidates-per-channel", type=int, default=None, help="Cap retained peaks per frequency channel.")
     parser.add_argument(
         "--veto-enabled",

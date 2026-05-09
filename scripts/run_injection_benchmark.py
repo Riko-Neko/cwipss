@@ -58,6 +58,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--min-duration-records", type=int, default=8, help="Minimum candidate time length in records.")
     parser.add_argument("--min-width-bins", type=float, default=1.0, help="Minimum candidate period width in bins.")
     parser.add_argument("--max-width-bins", type=float, default=10.0, help="Maximum candidate period width in bins.")
+    parser.add_argument("--candidate-period-min-records", type=float, default=10.0, help="Reject candidates below this period in records.")
+    parser.add_argument("--candidate-period-max-records", type=float, default=200.0, help="Reject candidates above this period in records.")
     parser.add_argument("--max-candidates-per-channel", type=int, default=2, help="Candidate cap per frequency channel.")
     parser.add_argument("--max-candidates-per-block", type=int, default=50, help="Candidate cap per block.")
     parser.add_argument(
@@ -144,6 +146,8 @@ def main() -> None:
         min_duration_records=args.min_duration_records,
         min_width_bins=args.min_width_bins,
         max_width_bins=args.max_width_bins,
+        candidate_period_min_records=args.candidate_period_min_records,
+        candidate_period_max_records=args.candidate_period_max_records,
         max_candidates_per_channel=args.max_candidates_per_channel,
         max_candidates_per_block=args.max_candidates_per_block,
         progress_enabled=args.progress,

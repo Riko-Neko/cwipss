@@ -56,6 +56,8 @@ def test_visualize_cwt_stages_writes_index_and_pngs(tmp_path: Path) -> None:
             dog_sigma_peak=1.0,
             dog_sigma_background=4.0,
             time_smooth_sigma=1.0,
+            candidate_period_min_records=2.0,
+            candidate_period_max_records=16.0,
         ),
         raw_candidates=candidates,
         reviewed_candidates=candidates,
@@ -67,4 +69,4 @@ def test_visualize_cwt_stages_writes_index_and_pngs(tmp_path: Path) -> None:
     assert index_path.exists()
     assert (tmp_path / "viz" / "stage_01_input_matrix.png").exists()
     assert (tmp_path / "viz" / "stage_07_injection_recovery.png").exists()
-    assert "Stage 04 Period-Channel Candidate Projection" in index_path.read_text()
+    assert "Stage 04 Candidate-Domain Projection" in index_path.read_text()

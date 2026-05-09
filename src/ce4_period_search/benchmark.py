@@ -57,6 +57,8 @@ class CWTBenchmarkConfig:
     min_duration_records: int = 8
     min_width_bins: float = 1.0
     max_width_bins: float = 10.0
+    candidate_period_min_records: float = 10.0
+    candidate_period_max_records: float = 200.0
     max_candidates_per_channel: int = 2
     max_candidates_per_block: int = 50
     progress_enabled: bool = True
@@ -168,6 +170,8 @@ def run_cwt_candidate_search(
                 min_width_bins=search_config.min_width_bins,
                 max_width_bins=search_config.max_width_bins,
                 max_candidates_per_channel=search_config.max_candidates_per_channel,
+                candidate_period_min_records=search_config.candidate_period_min_records,
+                candidate_period_max_records=search_config.candidate_period_max_records,
                 max_candidates=search_config.max_candidates_per_block,
             )
             for row in candidates:
@@ -547,6 +551,8 @@ def run_injection_benchmark(
                 dog_sigma_peak=search_config.dog_sigma_peak,
                 dog_sigma_background=search_config.dog_sigma_background,
                 time_smooth_sigma=search_config.time_smooth_sigma,
+                candidate_period_min_records=search_config.candidate_period_min_records,
+                candidate_period_max_records=search_config.candidate_period_max_records,
                 time_aggregation=search_config.time_aggregation,
                 aggregation_percentile=search_config.aggregation_percentile,
             ),
@@ -556,7 +562,7 @@ def run_injection_benchmark(
             validation_rows=validation_reviewed,
             injection_results=results,
             run_id=run_id,
-            source_name=injected_background.source_name,
+            source_name=f"{injected_background.source_name} + {len(truths)} injections",
             record_offset=0,
             config=visualization_config if isinstance(visualization_config, CWTVisualizationConfig) else CWTVisualizationConfig(
                 enabled=True,

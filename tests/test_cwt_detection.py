@@ -60,3 +60,34 @@ def test_scalogram_region_detector_finds_time_bounded_period_band() -> None:
     assert 53 <= rows[0]["record_stop"] <= 60
     assert rows[0]["duration_records"] >= 20
     assert rows[0]["integrated_score"] > 0
+
+
+def test_scalogram_region_detector_rejects_out_of_domain_periods() -> None:
+    periods = period_grid_records(2, 128, 48)
+    low_idx = int(np.argmin(np.abs(periods - 5.0)))
+    high_idx = int(np.argmin(np.abs(periods - 64.0)))
+    power = np.ones((periods.size, 64, 2), dtype=np.float32)
+    power[low_idx - 1:low_idx + 2, 12:48, 0] = 100.0
+    power[high_idx - 1:high_idx + 2, 12:48, 1] = 100.0
+
+    rows, _score_cube = summarize_scalogram_regions(
+        power_cube=power,
+        periods=periods,
+        freqs_mhz=np.arange(2, dtype=np.float64),
+        record_start=0,
+        threshold=2.0,
+        sigma_period_peak=1.0,
+        sigma_period_background=8.0,
+        sigma_time=1.0,
+        min_duration_records=8,
+        min_width_bins=1.0,
+        max_width_bins=8.0,
+        max_candidates_per_channel=1,
+        candidate_period_min_records=10.0,
+        candidate_period_max_records=200.0,
+        max_candidates=10,
+    )
+
+    assert len(rows) == 1
+    assert rows[0]["channel_index"] == 1
+    assert rows[0]["peak_period_records"] >= 10.0

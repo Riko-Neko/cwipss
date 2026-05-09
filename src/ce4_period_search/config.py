@@ -32,6 +32,8 @@ class CWTSearchConfig:
     min_duration_records: int = 8
     min_width_bins: float = 1.0
     max_width_bins: float = 10.0
+    candidate_period_min_records: float = 10.0
+    candidate_period_max_records: float = 200.0
     max_candidates_per_channel: int = 2
     output_dir: str = "runs"
     max_candidates_per_block: int = 50
@@ -97,6 +99,8 @@ _SECTION_KEY_MAP: dict[str, dict[str, str]] = {
         "min_duration_records": "min_duration_records",
         "min_width_bins": "min_width_bins",
         "max_width_bins": "max_width_bins",
+        "candidate_period_min_records": "candidate_period_min_records",
+        "candidate_period_max_records": "candidate_period_max_records",
         "max_candidates_per_channel": "max_candidates_per_channel",
         "max_candidates_per_block": "max_candidates_per_block",
     },
@@ -226,6 +230,8 @@ def cwt_config_to_nested_dict(config: CWTSearchConfig) -> dict[str, Any]:
             "min_duration_records": config.min_duration_records,
             "min_width_bins": config.min_width_bins,
             "max_width_bins": config.max_width_bins,
+            "candidate_period_min_records": config.candidate_period_min_records,
+            "candidate_period_max_records": config.candidate_period_max_records,
             "max_candidates_per_channel": config.max_candidates_per_channel,
             "max_candidates_per_block": config.max_candidates_per_block,
         },

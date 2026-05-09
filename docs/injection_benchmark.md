@@ -38,9 +38,9 @@ validation, and visualization only; injection parameters live in the simulation
 config.
 
 The benchmark uses the same per-channel scalogram-region detector as the main
-pipeline: `threshold=2.5`, `min_duration_records=8`, and
-`max_candidates_per_block=50`. Lower these only for high-recall diagnostic
-sweeps.
+pipeline: `threshold=2.5`, candidate period domain `10..200` records,
+`min_duration_records=8`, and `max_candidates_per_block=50`. Lower these only
+for high-recall diagnostic sweeps.
 
 ## Injection Config
 

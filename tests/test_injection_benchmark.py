@@ -220,6 +220,8 @@ def test_run_injection_benchmark_writes_expected_outputs(tmp_path: Path) -> None
             min_duration_records=4,
             min_width_bins=1.0,
             max_width_bins=5.0,
+            candidate_period_min_records=2.0,
+            candidate_period_max_records=16.0,
             max_candidates_per_channel=2,
             max_candidates_per_block=20,
         ),

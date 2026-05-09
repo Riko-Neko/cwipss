@@ -17,6 +17,8 @@ def test_structured_config_maps_to_resolved_dataclass() -> None:
                 "dog_sigma_background": 12.0,
                 "time_smooth_sigma": 1.5,
                 "min_duration_records": 12,
+                "candidate_period_min_records": 10,
+                "candidate_period_max_records": 200,
                 "max_candidates_per_channel": 1,
             },
             "veto": {"enabled": True, "max_bandwidth_fraction": 0.8},
@@ -35,6 +37,8 @@ def test_structured_config_maps_to_resolved_dataclass() -> None:
     assert config.dog_sigma_background == 12.0
     assert config.time_smooth_sigma == 1.5
     assert config.min_duration_records == 12
+    assert config.candidate_period_min_records == 10
+    assert config.candidate_period_max_records == 200
     assert config.max_candidates_per_channel == 1
     assert config.veto_enabled is True
     assert config.veto_max_bandwidth_fraction == 0.8
@@ -53,6 +57,8 @@ def test_structured_config_maps_to_resolved_dataclass() -> None:
     assert nested["scan"]["period_count"] == 40
     assert nested["detection"]["threshold"] == 3.0
     assert nested["detection"]["min_duration_records"] == 12
+    assert nested["detection"]["candidate_period_min_records"] == 10
+    assert nested["detection"]["candidate_period_max_records"] == 200
     assert nested["veto"]["max_bandwidth_fraction"] == 0.8
     assert nested["validation"]["shuffle_trials"] == 20
     assert nested["visualization"]["enabled"] is True

@@ -90,6 +90,7 @@ def write_summary_json(
         "notes": [
             "CWT per-channel scalogram regions are candidates, not signal claims.",
             "Time aggregation creates only the period-channel overview map, not the primary detector input.",
+            "Candidate period-domain filtering is applied during per-channel region detection.",
             "Candidate periods require validation in the original time series.",
         ],
     }
@@ -169,6 +170,8 @@ def run_cwt_search(config: CWTSearchConfig) -> Path:
                 min_width_bins=config.min_width_bins,
                 max_width_bins=config.max_width_bins,
                 max_candidates_per_channel=config.max_candidates_per_channel,
+                candidate_period_min_records=config.candidate_period_min_records,
+                candidate_period_max_records=config.candidate_period_max_records,
                 max_candidates=config.max_candidates_per_block,
             )
             for row in candidates:
@@ -242,9 +245,11 @@ def run_cwt_search(config: CWTSearchConfig) -> Path:
                 block_channels=config.block_channels,
                 threshold=config.threshold,
                 dog_sigma_peak=config.dog_sigma_peak,
-                dog_sigma_background=config.dog_sigma_background,
-                time_smooth_sigma=config.time_smooth_sigma,
-                time_aggregation=config.time_aggregation,
+            dog_sigma_background=config.dog_sigma_background,
+            time_smooth_sigma=config.time_smooth_sigma,
+            candidate_period_min_records=config.candidate_period_min_records,
+            candidate_period_max_records=config.candidate_period_max_records,
+            time_aggregation=config.time_aggregation,
                 aggregation_percentile=config.aggregation_percentile,
             ),
             raw_candidates=final_candidates,

@@ -14,7 +14,8 @@ The candidate generator is:
 2. run per-channel CWT over an explicit period grid;
 3. score each full `period x time` scalogram with a period-axis
    Difference-of-Gaussians filter;
-4. extract time-bounded period-response regions per frequency channel;
+4. extract time-bounded period-response regions per frequency channel inside
+   the configured candidate period domain;
 5. rank regions by time-integrated score;
 6. project candidates onto a `period x channel` overview map for review.
 
@@ -61,6 +62,8 @@ arguments override matching config values.
 Default candidate generation is intentionally conservative:
 
 - `threshold=2.5`: minimum per-channel scalogram region score.
+- `candidate_period_min_records=10` and `candidate_period_max_records=200`:
+  reject low-period instrument-like stripes and long-period trend-like domains.
 - `min_duration_records=8`: minimum candidate time span.
 - `max_width_bins=10`: reject broad period bands.
 - `max_candidates_per_block=50`: cap retained regions per frequency block.
@@ -69,6 +72,12 @@ Default candidate generation is intentionally conservative:
 For diagnostic/high-recall sweeps, lower `--threshold` or
 `--min-duration-records` explicitly. Do not use low thresholds as the default
 review mode.
+
+The default candidate period domain assumes local scans of roughly 4096 records
+and target responses lasting at least half that window: with at least 10 cycles
+required for stable CWT/folding evidence, `0.5 * 4096 / 10 ~= 200` records.
+The lower cutoff of 10 records is a practical samples-per-cycle floor above the
+Nyquist limit and suppresses persistent short-period artifacts.
 
 CLI scans show a CWT channel-progress bar by default. Use `--no-progress` to
 disable it, or `--progress-leave` to keep the finished bar in terminal logs.

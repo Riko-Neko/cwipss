@@ -26,6 +26,8 @@
     "min_duration_records": 8,
     "min_width_bins": 1.0,
     "max_width_bins": 10.0,
+    "candidate_period_min_records": 10.0,
+    "candidate_period_max_records": 200.0,
     "max_candidates_per_channel": 2,
     "max_candidates_per_block": 50
   },
