@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "seed": 20260510,
+  "description": "Small weak randomized single-channel low-frequency injection suite for visualization review.",
+  "sets": [
+    {
+      "name": "weak_lowfreq_small",
+      "count": 3,
+      "signal_model": "single_channel_periodic",
+      "period_records": {
+        "values": [
+          16,
+          32,
+          64,
+          128
+        ]
+      },
+      "amplitude": {
+        "distribution": "log_uniform",
+        "min": 1.5e-7,
+        "max": 3.5e-7
+      },
+      "frequency_mhz": {
+        "distribution": "uniform",
+        "min": 0.15,
+        "max": 1.9
+      },
+      "time": {
+        "duration_fraction": {
+          "distribution": "uniform",
+          "min": 0.5,
+          "max": 0.9
+        }
+      },
+      "modulation": {
+        "phase": {
+          "distribution": "uniform",
+          "min": 0.0,
+          "max": 1.0
+        },
+        "duty_cycle": {
+          "distribution": "uniform",
+          "min": 0.08,
+          "max": 0.2
+        }
+      },
+      "replication": {
+        "probability": 0.35,
+        "max_copies": 2,
+        "frequency_mhz": {
+          "distribution": "uniform",
+          "min": 0.15,
+          "max": 1.9
+        }
+      }
+    }
+  ]
+}

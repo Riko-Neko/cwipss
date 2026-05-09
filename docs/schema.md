@@ -1,29 +1,30 @@
 # CWT Period Search Output Schema
 
-Schema version 1 covers the current CWT period-channel candidate generator.
+Schema version 1 covers the current per-channel CWT scalogram region candidate generator.
 
 ## Candidate Tables
 
 `candidates_raw.csv` and `candidates_reviewed.csv` contain one row per detected
-channel-wise period-profile peak.
+time-bounded region in one channel's `period x time` scalogram.
 
 Important fields:
 
-- `candidate_id`: run-local candidate id sorted by descending `peak_score`.
+- `candidate_id`: run-local candidate id sorted by descending `integrated_score`.
 - `block_id`: frequency-block id.
 - `cwt_wavelet`: PyWavelets CWT wavelet.
-- `time_aggregation`: method used to collapse time before detection.
-- `detection_method`: current detector, usually `channel_period_peak_dog`.
+- `time_aggregation`: method used only for overview maps.
+- `detection_method`: current detector, usually `per_channel_scalogram_region`.
 - `channel_index`: frequency-channel index within the current block.
-- `period_start_records`, `period_stop_records`: 1D peak width span.
-- `peak_period_records`: strongest period bin in the profile peak.
+- `record_start`, `record_stop`, `duration_records`: detected time span.
+- `period_start_records`, `period_stop_records`: detected period-band span.
+- `peak_period_records`: strongest period bin in the region.
 - `peak_period_seconds`: `peak_period_records * tsamp_seconds`.
 - `freq_start_mhz`, `freq_stop_mhz`: candidate channel/frequency coordinate.
 - `peak_freq_mhz`: strongest channel/frequency coordinate.
-- `peak_record`: strongest time location from the unaggregated CWT power cube.
-- `peak_score`: robust score after channel-wise period-profile DoG filtering.
-- `peak_prominence`: 1D prominence of the period-profile peak.
-- `peak_width_bins`: peak width in period-grid bins.
+- `peak_record`: strongest time location inside the detected region.
+- `peak_score`: maximum robust scalogram-region score.
+- `mean_score`: mean score over the detected region bounds.
+- `integrated_score`: time-integrated region score normalized by duration.
 - `candidate_status`, `veto_flags`, `veto_reason`: present in reviewed tables.
 
 ## Validation Tables

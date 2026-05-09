@@ -37,8 +37,8 @@ run directory. The command line controls background selection, search,
 validation, and visualization only; injection parameters live in the simulation
 config.
 
-The benchmark uses the same channel-wise period-profile detector as the main
-pipeline: `threshold=2.5`, `min_prominence=2.5`, and
+The benchmark uses the same per-channel scalogram-region detector as the main
+pipeline: `threshold=2.5`, `min_duration_records=8`, and
 `max_candidates_per_block=50`. Lower these only for high-recall diagnostic
 sweeps.
 
@@ -77,7 +77,7 @@ Sampler fields accept a raw value, a list, `{ "values": [...] }`,
 
 ## Failure Stages
 
-- `missed_detection`: no channel-wise CWT period-profile peak overlaps the injection.
+- `missed_detection`: no per-channel CWT scalogram region overlaps the injection.
 - `vetoed`: the best matching raw candidate did not survive veto.
 - `not_validated`: the matched candidate was not in the validation table.
 - `period_mismatch`: validation refined period is too far from truth.

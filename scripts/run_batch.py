@@ -25,7 +25,7 @@ from ce4_period_search.config import CWTSearchConfig, load_cwt_config
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run CWT period-channel candidate search over multiple input files.")
+    parser = argparse.ArgumentParser(description="Run CWT period-candidate search over multiple input files.")
     parser.add_argument("--config", type=Path, default=None, help="Base scan JSON config.")
     parser.add_argument("--input-dir", type=Path, default=None, help="Directory to search for input files.")
     parser.add_argument("--pattern", type=str, default="*.2C", help="Input glob pattern for --input-dir.")
@@ -49,15 +49,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--time-aggregation", type=str, default=None, help="Time aggregation for period-channel response.")
     parser.add_argument("--aggregation-percentile", type=float, default=None, help="Percentile for percentile aggregation.")
     parser.add_argument("--block-channels", type=int, default=None, help="Frequency channels per block.")
-    parser.add_argument("--threshold", type=float, default=None, help="Minimum channel-wise period peak score.")
-    parser.add_argument("--min-prominence", type=float, default=None, help="Minimum 1D period-peak prominence.")
-    parser.add_argument("--dog-sigma-peak", type=float, default=None, help="Narrow Gaussian sigma for period-profile DoG.")
-    parser.add_argument("--dog-sigma-background", type=float, default=None, help="Broad Gaussian sigma for period-profile DoG.")
-    parser.add_argument("--min-width-bins", type=float, default=None, help="Minimum 1D peak width in period bins.")
-    parser.add_argument("--max-width-bins", type=float, default=None, help="Maximum 1D peak width in period bins.")
-    parser.add_argument("--min-distance-bins", type=int, default=None, help="Minimum separation between peaks in period bins.")
-    parser.add_argument("--max-candidates-per-channel", type=int, default=None, help="Cap retained peaks per frequency channel.")
-    parser.add_argument("--max-candidates-per-block", type=int, default=None, help="Cap peaks retained per block.")
+    parser.add_argument("--threshold", type=float, default=None, help="Minimum per-channel scalogram region score.")
+    parser.add_argument("--dog-sigma-peak", type=float, default=None, help="Narrow period-axis Gaussian sigma for scalogram DoG.")
+    parser.add_argument("--dog-sigma-background", type=float, default=None, help="Broad period-axis Gaussian sigma for scalogram DoG.")
+    parser.add_argument("--time-smooth-sigma", type=float, default=None, help="Time-axis smoothing sigma for scalogram region scoring.")
+    parser.add_argument("--min-duration-records", type=int, default=None, help="Minimum candidate time length in records.")
+    parser.add_argument("--min-width-bins", type=float, default=None, help="Minimum candidate period width in bins.")
+    parser.add_argument("--max-width-bins", type=float, default=None, help="Maximum candidate period width in bins.")
+    parser.add_argument("--max-candidates-per-channel", type=int, default=None, help="Cap retained regions per frequency channel.")
+    parser.add_argument("--max-candidates-per-block", type=int, default=None, help="Cap regions retained per block.")
     parser.add_argument("--validation-max-candidates", type=int, default=None, help="Maximum candidates to validate per file.")
     parser.add_argument("--validation-shuffle-trials", type=int, default=None, help="Shuffle/null trials per candidate.")
     parser.add_argument(
@@ -109,12 +109,12 @@ def _scan_overrides(args: argparse.Namespace) -> dict:
         "time_aggregation",
         "aggregation_percentile",
         "threshold",
-        "min_prominence",
         "dog_sigma_peak",
         "dog_sigma_background",
+        "time_smooth_sigma",
+        "min_duration_records",
         "min_width_bins",
         "max_width_bins",
-        "min_distance_bins",
         "max_candidates_per_channel",
         "max_candidates_per_block",
         "validation_max_candidates",

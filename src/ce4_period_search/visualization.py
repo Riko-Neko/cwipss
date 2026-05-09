@@ -22,7 +22,7 @@ from matplotlib import pyplot as plt
 from matplotlib.patches import Rectangle
 
 from .cwt import aggregate_cwt_time, cwt_power_cube
-from .detection import channel_period_peak_score
+from .detection import project_scalogram_score, scalogram_region_score
 
 
 @dataclass(frozen=True)
@@ -41,9 +41,9 @@ class SearchVisualizationConfig:
     cwt_method: str = "fft"
     block_channels: int = 128
     threshold: float = 2.5
-    min_prominence: float = 2.5
     dog_sigma_peak: float = 1.0
     dog_sigma_background: float = 10.0
+    time_smooth_sigma: float = 1.0
     time_aggregation: str = "p95"
     aggregation_percentile: float = 95.0
 
@@ -212,6 +212,95 @@ def _draw_period_rows(
         ax.plot([], [], color=color, linewidth=linewidth, label=label)
 
 
+def _draw_period_rows_with_duration(
+    ax: plt.Axes,
+    rows: list[dict[str, Any]],
+    *,
+    color: str,
+    label: str,
+    max_rows: int = 100,
+) -> None:
+    durations = [_float(row, "duration_records", 0.0) for row in rows[:max_rows]]
+    max_duration = max([value for value in durations if math.isfinite(value)] or [1.0])
+    drawn = 0
+    for row in rows[:max_rows]:
+        f0 = _float(row, "freq_start_mhz")
+        f1 = _float(row, "freq_stop_mhz", f0)
+        p0 = _float(row, "period_start_records", _float(row, "period_records", _float(row, "peak_period_records")))
+        p1 = _float(row, "period_stop_records", p0)
+        if not all(math.isfinite(value) for value in [f0, f1, p0, p1]):
+            continue
+        f0, f1 = sorted([f0, f1])
+        p0, p1 = sorted([p0, p1])
+        if f1 <= f0:
+            x0, x1 = ax.get_xlim()
+            width = max(1e-9, abs(x1 - x0) * 0.01)
+            f0 -= 0.5 * width
+            f1 += 0.5 * width
+        if p1 <= p0:
+            y0, y1 = ax.get_ylim()
+            height = max(1e-9, abs(y1 - y0) * 0.01)
+            p0 -= 0.5 * height
+            p1 += 0.5 * height
+        duration = _float(row, "duration_records", 0.0)
+        linewidth = 0.8 + 3.2 * max(0.0, duration) / max(max_duration, 1.0)
+        ax.add_patch(
+            Rectangle(
+                (f0, p0),
+                f1 - f0,
+                p1 - p0,
+                fill=False,
+                edgecolor=color,
+                linewidth=linewidth,
+                alpha=0.9,
+            )
+        )
+        drawn += 1
+    if drawn:
+        ax.plot([], [], color=color, linewidth=2.4, label=f"{label} (line width ~ duration)")
+
+
+def _draw_time_period_rows(
+    ax: plt.Axes,
+    rows: list[dict[str, Any]],
+    *,
+    color: str,
+    label: str,
+    linewidth: float = 1.2,
+    max_rows: int = 100,
+) -> None:
+    drawn = 0
+    for row in rows[:max_rows]:
+        r0 = _float(row, "record_start")
+        r1 = _float(row, "record_stop", r0)
+        p0 = _float(row, "period_start_records", _float(row, "peak_period_records"))
+        p1 = _float(row, "period_stop_records", p0)
+        if not all(math.isfinite(value) for value in [r0, r1, p0, p1]):
+            continue
+        p0, p1 = sorted([p0, p1])
+        if r1 <= r0:
+            r1 = r0 + 1.0
+        if p1 <= p0:
+            y0, y1 = ax.get_ylim()
+            height = max(1e-9, abs(y1 - y0) * 0.01)
+            p0 -= 0.5 * height
+            p1 += 0.5 * height
+        ax.add_patch(
+            Rectangle(
+                (r0, p0),
+                r1 - r0,
+                p1 - p0,
+                fill=False,
+                edgecolor=color,
+                linewidth=linewidth,
+                alpha=0.95,
+            )
+        )
+        drawn += 1
+    if drawn:
+        ax.plot([], [], color=color, linewidth=linewidth, label=label)
+
+
 def _draw_time_truth(
     ax: plt.Axes,
     rows: list[dict[str, Any]],
@@ -309,7 +398,13 @@ def _candidate_status_colors(rows: list[dict[str, Any]]) -> list[str]:
 
 
 def _sort_candidates(rows: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
-    return sorted(rows, key=lambda row: _float(row, "peak_score", -math.inf), reverse=True)[: max(0, limit)]
+    def sort_key(row: dict[str, Any]) -> tuple[float, float]:
+        return (
+            _float(row, "integrated_score", -math.inf),
+            _float(row, "peak_score", -math.inf),
+        )
+
+    return sorted(rows, key=sort_key, reverse=True)[: max(0, limit)]
 
 
 def _representative_channels(
@@ -362,6 +457,11 @@ def visualize_cwt_stages(
     periods = np.asarray(search_config.periods, dtype=np.float64)
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    for stale in output_dir.glob("stage_*.png"):
+        stale.unlink()
+    stale_index = output_dir / "index.md"
+    if stale_index.exists():
+        stale_index.unlink()
     reviewed = reviewed_candidates or raw_candidates
     truths = truths or []
     validation_rows = validation_rows or []
@@ -419,11 +519,15 @@ def visualize_cwt_stages(
             method=search_config.time_aggregation,
             percentile=search_config.aggregation_percentile,
         )
-        score = channel_period_peak_score(
-            np.log10(response + 1e-12),
-            sigma_peak=search_config.dog_sigma_peak,
-            sigma_background=search_config.dog_sigma_background,
-        )
+        score_cube = np.zeros_like(power, dtype=np.float32)
+        for local_channel in range(block_freqs.size):
+            score_cube[:, :, local_channel] = scalogram_region_score(
+                np.log10(power[:, :, local_channel] + 1e-12),
+                sigma_period_peak=search_config.dog_sigma_peak,
+                sigma_period_background=search_config.dog_sigma_background,
+                sigma_time=search_config.time_smooth_sigma,
+            )
+        score_projection = project_scalogram_score(score_cube, method="max")
         block_rows = [row for row in raw_candidates if str(row.get("block_id", "")) == block_id]
         representative = _representative_channels(block_start, block_stop, block_freqs, block_rows, max_channels)
 
@@ -432,6 +536,10 @@ def visualize_cwt_stages(
             if local_channel < 0 or local_channel >= block_freqs.size:
                 continue
             scalogram = np.log10(power[:, :, local_channel] + 1e-12)
+            channel_rows = [
+                row for row in block_rows
+                if int(_float(row, "channel_index", -9999)) == local_channel
+            ]
             fig, ax = _new_figure()
             _pcolormesh(
                 ax,
@@ -445,12 +553,13 @@ def visualize_cwt_stages(
                 cbar_label="log10(CWT power)",
                 yscale="log",
             )
+            _draw_time_period_rows(ax, channel_rows, color="#ffdf4d", label="candidate", linewidth=1.5)
             channel_truths = [
                 row for row in truths
                 if _float(row, "channel_start", -1) <= global_channel < _float(row, "channel_stop", -1)
             ]
             _draw_time_truth(ax, channel_truths, color="#00e5ff", label="truth period", linewidth=1.5)
-            if channel_truths:
+            if channel_rows or channel_truths:
                 ax.legend(loc="best")
             path = output_dir / f"stage_02_{block_id}_channel_{global_channel:04d}_scalogram.png"
             _save(fig, path, config.dpi)
@@ -474,42 +583,42 @@ def visualize_cwt_stages(
             ax.legend(loc="best")
         path = output_dir / f"stage_03_{block_id}_period_channel_response.png"
         _save(fig, path, config.dpi)
-        images.append((f"Stage 03 Period-Channel Response {block_id}", path, "CWT power after time aggregation, forming the period-channel candidate map."))
+        images.append((f"Stage 03 Period-Channel Response {block_id}", path, "CWT power after time aggregation for overview only; detection uses full per-channel scalograms."))
 
         fig, ax = _new_figure()
         _pcolormesh(
             ax,
-            score,
+            score_projection,
             _linear_edges_from_centers(block_freqs),
             _period_edges(periods),
-                title=f"Stage 04 channel period-peak score: {block_id}",
+            title=f"Stage 04 scalogram score projection: {block_id}",
             xlabel="Frequency / channel coordinate",
             ylabel="Period / records",
             cmap="viridis",
-                cbar_label="channel DoG robust score",
+            cbar_label="max scalogram region score over time",
             yscale="log",
         )
         ax.contour(
             block_freqs,
             periods,
-            score,
+            score_projection,
             levels=[float(search_config.threshold)],
             colors="white",
             linewidths=0.7,
         )
-        _draw_period_rows(ax, _sort_candidates(block_rows, config.top_candidates), color="#ffdf4d", label="candidate")
+        _draw_period_rows_with_duration(ax, _sort_candidates(block_rows, config.top_candidates), color="#ffdf4d", label="candidate")
         _draw_period_rows(ax, truths, color="#00e5ff", label="truth", linewidth=1.5)
         if block_rows or truths:
             ax.legend(loc="best")
         path = output_dir / f"stage_04_{block_id}_period_channel_candidates.png"
         _save(fig, path, config.dpi)
-        images.append((f"Stage 04 Period-Channel Candidate Overlay {block_id}", path, "Channel-wise period-peak score map with threshold contour, candidates, and optional truth."))
+        images.append((f"Stage 04 Period-Channel Candidate Projection {block_id}", path, "Projection of per-channel scalogram scores with candidate period/frequency overlays; candidate line width encodes duration."))
 
     if reviewed:
         top_rows = _sort_candidates(reviewed, config.top_candidates)
         x = [_float(row, "peak_freq_mhz") for row in top_rows]
         y = [_float(row, "peak_period_records") for row in top_rows]
-        size = [max(15.0, 12.0 * _float(row, "peak_score", 1.0)) for row in top_rows]
+        size = [max(15.0, 1.5 * _float(row, "integrated_score", _float(row, "peak_score", 1.0))) for row in top_rows]
         colors = _candidate_status_colors(top_rows)
         fig, ax = _new_figure()
         ax.scatter(x, y, s=size, c=colors, alpha=0.75, edgecolors="black", linewidths=0.3)
@@ -526,7 +635,7 @@ def visualize_cwt_stages(
         ax.legend(loc="best")
         path = output_dir / "stage_05_candidate_review_overview.png"
         _save(fig, path, config.dpi)
-        images.append(("Stage 05 Candidate Review Overview", path, "Top period-channel candidates after veto review, colored by candidate status and scaled by peak score."))
+        images.append(("Stage 05 Candidate Review Overview", path, "Top per-channel scalogram-region candidates after veto review, colored by candidate status and scaled by integrated score."))
 
     if validation_rows:
         rows = sorted(validation_rows, key=lambda row: _float(row, "evidence_rank", math.inf))
@@ -617,9 +726,9 @@ def visualize_cwt_stages(
                     "period_max_records": float(np.nanmax(periods)),
                     "block_channels": search_config.block_channels,
                     "threshold": search_config.threshold,
-                    "min_prominence": search_config.min_prominence,
                     "dog_sigma_peak": search_config.dog_sigma_peak,
                     "dog_sigma_background": search_config.dog_sigma_background,
+                    "time_smooth_sigma": search_config.time_smooth_sigma,
                     "time_aggregation": search_config.time_aggregation,
                 },
             },

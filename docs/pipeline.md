@@ -9,35 +9,34 @@ per-channel continuous wavelet transform.
 time x channel data
   -> per-channel CWT over explicit period grid
   -> period x time x channel power cube
-  -> representative period x time scalograms for visual review
-  -> time aggregation
-  -> period x channel response map
-  -> channel-wise period profiles
-  -> Difference-of-Gaussians + 1D peak prominence
-  -> short vertical period-response candidates
+  -> period-axis Difference-of-Gaussians per channel
+  -> time-bounded period-response regions
+  -> time-integrated region ranking
+  -> period x channel candidate projection for visual review
   -> veto, validation, statistics, report
 ```
 
-The candidate map is directly interpretable:
+The overview projection is directly interpretable:
 
 - x-axis: observation channel or MHz coordinate;
 - y-axis: period in records or seconds;
-- value: aggregated CWT power or channel-wise period-peak score.
+- value: projected per-channel scalogram score or candidate duration marker.
 
 ## Candidate Meaning
 
-A 1D peak in a channel period profile is only a candidate. It is not a confirmed
-periodic signal. Final review still requires original time-series validation,
-null tests, RFI veto, and multiple-testing correction.
+A time-bounded region in one channel's `period x time` scalogram is only a
+candidate. It is not a confirmed periodic signal. Final review still requires
+original time-series validation, null tests, RFI veto, and multiple-testing
+correction.
 
 ## Candidate Sensitivity
 
 The default detector is set for low sensitivity and higher review purity:
 
-- channel-wise DoG peak score `threshold=2.5`;
-- 1D peak prominence `min_prominence=2.5`;
-- period-profile peak width capped at `max_width_bins=10`;
-- retained peaks capped at `max_candidates_per_block=50`;
+- per-channel scalogram score `threshold=2.5`;
+- minimum time span `min_duration_records=8`;
+- period-band width capped at `max_width_bins=10`;
+- retained regions capped at `max_candidates_per_block=50`;
 - validation capped at `validation.max_candidates=25`.
 
 Lower thresholds are debug/high-recall settings. They are useful for inspecting
@@ -53,8 +52,9 @@ the bar or `--progress-leave` to keep it in terminal logs.
 
 ## Time Aggregation
 
-CWT first produces `period x time x channel`. The default aggregation is `p95`,
-which is more stable than max while still preserving localized strong responses.
+CWT first produces `period x time x channel`. Detection uses this first-hand
+cube directly. The default aggregation is `p95` and is now used only for overview
+maps, not candidate generation.
 Supported aggregation methods are `max`, `mean`, `median`, `pNN`, and
 `percentile`.
 

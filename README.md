@@ -1,6 +1,6 @@
 # CScout: A CWT Period Search Pipeline
 
-Reproducible CWT period-channel candidate search for time-channel data.
+Reproducible CWT period-candidate search for time-channel data.
 
 The core pipeline treats input as a dynamic spectrum or equivalent
 `time x channel` matrix. Mission- or instrument-specific file formats belong to
@@ -12,19 +12,18 @@ The candidate generator is:
 
 1. read time-channel data through an adapter;
 2. run per-channel CWT over an explicit period grid;
-3. keep full `period x time` scalograms for representative channels when
-   visualization is enabled;
-4. aggregate time to a `period x channel` response map;
-5. split that map by frequency channel into 1D period profiles;
-6. use a Difference-of-Gaussians period-profile filter plus peak prominence to
-   detect short vertical period-response bands.
+3. score each full `period x time` scalogram with a period-axis
+   Difference-of-Gaussians filter;
+4. extract time-bounded period-response regions per frequency channel;
+5. rank regions by time-integrated score;
+6. project candidates onto a `period x channel` overview map for review.
 
-Detected period-profile peaks are candidates only. Validation in the original time series
+Detected scalogram regions are candidates only. Validation in the original time series
 is still required before any signal interpretation.
 
 Single-channel period candidates are valid targets. The legacy-style
 `fixed_channel` and time-edge vetoes are disabled by default because they are
-not meaningful for the time-aggregated CWT candidate map.
+not meaningful for the time-aggregated CWT overview projection.
 
 ## Layout
 
@@ -61,14 +60,15 @@ arguments override matching config values.
 
 Default candidate generation is intentionally conservative:
 
-- `threshold=2.5`: minimum channel-wise DoG peak score.
-- `min_prominence=2.5`: minimum 1D period-profile peak prominence.
-- `max_width_bins=10`: reject broad period-profile structures.
-- `max_candidates_per_block=50`: cap retained peaks per frequency block.
+- `threshold=2.5`: minimum per-channel scalogram region score.
+- `min_duration_records=8`: minimum candidate time span.
+- `max_width_bins=10`: reject broad period bands.
+- `max_candidates_per_block=50`: cap retained regions per frequency block.
 - `validation.max_candidates=25`: cap rows passed to validation by default.
 
-For diagnostic/high-recall sweeps, lower `--threshold` or `--min-prominence`
-explicitly. Do not use low thresholds as the default review mode.
+For diagnostic/high-recall sweeps, lower `--threshold` or
+`--min-duration-records` explicitly. Do not use low thresholds as the default
+review mode.
 
 CLI scans show a CWT channel-progress bar by default. Use `--no-progress` to
 disable it, or `--progress-leave` to keep the finished bar in terminal logs.
@@ -137,7 +137,7 @@ This writes `visualization/index.md` plus PNG diagnostics for:
 - raw time-channel matrix;
 - representative-channel `period x time` CWT scalograms before time aggregation;
 - aggregated `period x channel` response maps;
-- channel-wise period-peak score maps and candidate overlays;
+- projected per-channel scalogram score maps and candidate overlays;
 - veto review and optional validation/injection summaries.
 
 ## Injection Benchmark

@@ -15,7 +15,7 @@ def runtime_info() -> dict:
         "scipy": scipy.__version__,
         "local_filter": {
             "enabled": True,
-            "period_profile_filter": "scipy.ndimage.gaussian_filter1d",
-            "peak_finder": "scipy.signal.find_peaks",
+            "scalogram_filter": "scipy.ndimage.gaussian_filter1d",
+            "region_labeler": "scipy.ndimage.label",
         },
     }

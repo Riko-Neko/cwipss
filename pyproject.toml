@@ -1,7 +1,7 @@
 [project]
 name = "cwt-period-search"
 version = "0.1.0"
-description = "Reproducible CWT period-channel candidate search pipeline for time-channel data"
+description = "Reproducible CWT period-candidate search pipeline for time-channel data"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 dependencies = [

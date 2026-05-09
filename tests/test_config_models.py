@@ -14,8 +14,9 @@ def test_structured_config_maps_to_resolved_dataclass() -> None:
             "scan": {"f_start": 38.0, "f_stop": 39.0, "period_count": 40},
             "detection": {
                 "threshold": 3.0,
-                "min_prominence": 2.0,
                 "dog_sigma_background": 12.0,
+                "time_smooth_sigma": 1.5,
+                "min_duration_records": 12,
                 "max_candidates_per_channel": 1,
             },
             "veto": {"enabled": True, "max_bandwidth_fraction": 0.8},
@@ -31,8 +32,9 @@ def test_structured_config_maps_to_resolved_dataclass() -> None:
     assert config.f_stop == 39.0
     assert config.period_count == 40
     assert config.threshold == 3.0
-    assert config.min_prominence == 2.0
     assert config.dog_sigma_background == 12.0
+    assert config.time_smooth_sigma == 1.5
+    assert config.min_duration_records == 12
     assert config.max_candidates_per_channel == 1
     assert config.veto_enabled is True
     assert config.veto_max_bandwidth_fraction == 0.8
@@ -50,7 +52,7 @@ def test_structured_config_maps_to_resolved_dataclass() -> None:
     assert nested["input"]["path"] == "data/example.2C"
     assert nested["scan"]["period_count"] == 40
     assert nested["detection"]["threshold"] == 3.0
-    assert nested["detection"]["min_prominence"] == 2.0
+    assert nested["detection"]["min_duration_records"] == 12
     assert nested["veto"]["max_bandwidth_fraction"] == 0.8
     assert nested["validation"]["shuffle_trials"] == 20
     assert nested["visualization"]["enabled"] is True
@@ -79,14 +81,16 @@ def test_normalize_candidate_row_adds_schema_and_seconds() -> None:
         {
             "cwt_wavelet": "cmor1.5-1.0",
             "time_aggregation": "p95",
-            "detection_method": "channel_period_peak_dog",
+            "detection_method": "per_channel_scalogram_region",
             "channel_index": 3,
+            "region_pixels": 12,
             "record_start": 10,
             "record_stop": 16,
             "duration_records": 6,
             "period_start_records": 4,
             "period_stop_records": 4,
             "period_width_records": 0,
+            "period_width_bins": 1,
             "peak_period_records": 4,
             "freq_start_mhz": 38.0,
             "freq_stop_mhz": 38.2,
@@ -95,9 +99,7 @@ def test_normalize_candidate_row_adds_schema_and_seconds() -> None:
             "peak_freq_mhz": 38.1,
             "peak_score": 8.0,
             "mean_score": 6.0,
-            "peak_prominence": 4.0,
-            "peak_width_bins": 2.0,
-            "peak_width_records": 0.5,
+            "integrated_score": 12.0,
             "block_channel_start": 0,
             "block_channel_stop": 8,
         },

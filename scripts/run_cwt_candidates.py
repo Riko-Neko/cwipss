@@ -16,7 +16,7 @@ from ce4_period_search.config import CWTSearchConfig, load_cwt_config, resolve_o
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run CWT period-channel candidate detection.")
+    parser = argparse.ArgumentParser(description="Run CWT period-candidate detection.")
     parser.add_argument("--config", type=Path, default=None, help="Optional JSON config.")
     parser.add_argument("--input", type=str, default=None, help="Input data path supported by the active reader.")
     parser.add_argument("--f-start", type=float, default=None, help="Frequency start in MHz.")
@@ -32,13 +32,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--block-channels", type=int, default=None, help="Frequency channels per block.")
     parser.add_argument("--time-aggregation", type=str, default=None, help="Time aggregation for period-channel response.")
     parser.add_argument("--aggregation-percentile", type=float, default=None, help="Percentile for percentile aggregation.")
-    parser.add_argument("--threshold", type=float, default=None, help="Minimum channel-wise period peak score.")
-    parser.add_argument("--min-prominence", type=float, default=None, help="Minimum 1D period-peak prominence.")
-    parser.add_argument("--dog-sigma-peak", type=float, default=None, help="Narrow Gaussian sigma for period-profile DoG.")
-    parser.add_argument("--dog-sigma-background", type=float, default=None, help="Broad Gaussian sigma for period-profile DoG.")
-    parser.add_argument("--min-width-bins", type=float, default=None, help="Minimum 1D peak width in period bins.")
-    parser.add_argument("--max-width-bins", type=float, default=None, help="Maximum 1D peak width in period bins.")
-    parser.add_argument("--min-distance-bins", type=int, default=None, help="Minimum separation between peaks in period bins.")
+    parser.add_argument("--threshold", type=float, default=None, help="Minimum per-channel scalogram region score.")
+    parser.add_argument("--dog-sigma-peak", type=float, default=None, help="Narrow period-axis Gaussian sigma for scalogram DoG.")
+    parser.add_argument("--dog-sigma-background", type=float, default=None, help="Broad period-axis Gaussian sigma for scalogram DoG.")
+    parser.add_argument("--time-smooth-sigma", type=float, default=None, help="Time-axis smoothing sigma for scalogram region scoring.")
+    parser.add_argument("--min-duration-records", type=int, default=None, help="Minimum candidate time length in records.")
+    parser.add_argument("--min-width-bins", type=float, default=None, help="Minimum candidate period width in bins.")
+    parser.add_argument("--max-width-bins", type=float, default=None, help="Maximum candidate period width in bins.")
     parser.add_argument("--max-candidates-per-channel", type=int, default=None, help="Cap retained peaks per frequency channel.")
     parser.add_argument(
         "--veto-enabled",

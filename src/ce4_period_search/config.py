@@ -26,12 +26,12 @@ class CWTSearchConfig:
     time_aggregation: str = "p95"
     aggregation_percentile: float = 95.0
     threshold: float = 2.5
-    min_prominence: float = 2.5
     dog_sigma_peak: float = 1.0
     dog_sigma_background: float = 10.0
+    time_smooth_sigma: float = 1.0
+    min_duration_records: int = 8
     min_width_bins: float = 1.0
     max_width_bins: float = 10.0
-    min_distance_bins: int = 3
     max_candidates_per_channel: int = 2
     output_dir: str = "runs"
     max_candidates_per_block: int = 50
@@ -91,12 +91,12 @@ _SECTION_KEY_MAP: dict[str, dict[str, str]] = {
     },
     "detection": {
         "threshold": "threshold",
-        "min_prominence": "min_prominence",
         "dog_sigma_peak": "dog_sigma_peak",
         "dog_sigma_background": "dog_sigma_background",
+        "time_smooth_sigma": "time_smooth_sigma",
+        "min_duration_records": "min_duration_records",
         "min_width_bins": "min_width_bins",
         "max_width_bins": "max_width_bins",
-        "min_distance_bins": "min_distance_bins",
         "max_candidates_per_channel": "max_candidates_per_channel",
         "max_candidates_per_block": "max_candidates_per_block",
     },
@@ -220,12 +220,12 @@ def cwt_config_to_nested_dict(config: CWTSearchConfig) -> dict[str, Any]:
         },
         "detection": {
             "threshold": config.threshold,
-            "min_prominence": config.min_prominence,
             "dog_sigma_peak": config.dog_sigma_peak,
             "dog_sigma_background": config.dog_sigma_background,
+            "time_smooth_sigma": config.time_smooth_sigma,
+            "min_duration_records": config.min_duration_records,
             "min_width_bins": config.min_width_bins,
             "max_width_bins": config.max_width_bins,
-            "min_distance_bins": config.min_distance_bins,
             "max_candidates_per_channel": config.max_candidates_per_channel,
             "max_candidates_per_block": config.max_candidates_per_block,
         },

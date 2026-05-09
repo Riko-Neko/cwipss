@@ -70,7 +70,11 @@ def veto_distribution(rows: list[dict[str, str]]) -> Counter[str]:
 
 
 def top_candidates(rows: list[dict[str, str]], limit: int = 10) -> list[dict[str, str]]:
-    return sorted(rows, key=lambda row: _float(row.get("peak_score"), -math.inf), reverse=True)[:limit]
+    return sorted(
+        rows,
+        key=lambda row: _float(row.get("integrated_score"), _float(row.get("peak_score"), -math.inf)),
+        reverse=True,
+    )[:limit]
 
 
 def top_validation_rows(rows: list[dict[str, str]], limit: int = 10) -> list[dict[str, str]]:
@@ -93,15 +97,17 @@ def _candidate_table(rows: list[dict[str, str]], limit: int) -> str:
                 row.get("candidate_id", "-"),
                 _short_path(row.get("source_file")),
                 row.get("candidate_status", "-"),
+                _fmt(row.get("integrated_score")),
                 _fmt(row.get("peak_score")),
                 _fmt(row.get("peak_period_records")),
+                _fmt(row.get("duration_records")),
                 _fmt(row.get("peak_record")),
                 _fmt(row.get("peak_freq_mhz")),
                 row.get("veto_flags", "") or "-",
             ]
         )
     return _markdown_table(
-        ["candidate_id", "source", "status", "peak_score", "period_rec", "peak_record", "peak_mhz", "veto_flags"],
+        ["candidate_id", "source", "status", "integrated", "peak_score", "period_rec", "duration", "peak_record", "peak_mhz", "veto_flags"],
         table_rows,
     )
 

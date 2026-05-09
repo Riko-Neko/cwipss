@@ -9,8 +9,8 @@ from typing import Any
 
 import numpy as np
 
-from .cwt import aggregate_cwt_time, cwt_power_cube, period_grid_records
-from .detection import add_candidate_ids, channel_period_peak_score, summarize_channel_period_peaks
+from .cwt import cwt_power_cube, period_grid_records
+from .detection import add_candidate_ids, summarize_scalogram_regions
 from .injection import BackgroundData, ce4_background, inject_many, synthetic_background
 from .models import (
     INJECTION_PERFORMANCE_FIELDNAMES,
@@ -51,12 +51,12 @@ class CWTBenchmarkConfig:
     time_aggregation: str = "p95"
     aggregation_percentile: float = 95.0
     threshold: float = 2.5
-    min_prominence: float = 2.5
     dog_sigma_peak: float = 1.0
     dog_sigma_background: float = 10.0
+    time_smooth_sigma: float = 1.0
+    min_duration_records: int = 8
     min_width_bins: float = 1.0
     max_width_bins: float = 10.0
-    min_distance_bins: int = 3
     max_candidates_per_channel: int = 2
     max_candidates_per_block: int = 50
     progress_enabled: bool = True
@@ -155,30 +155,20 @@ def run_cwt_candidate_search(
                 method=search_config.cwt_method,
                 normalize_channels=True,
             )
-            response = aggregate_cwt_time(
-                power,
-                method=search_config.time_aggregation,
-                percentile=search_config.aggregation_percentile,
-            )
-            score = channel_period_peak_score(
-                np.log10(response + 1e-12),
-                sigma_peak=search_config.dog_sigma_peak,
-                sigma_background=search_config.dog_sigma_background,
-            )
-            candidates = summarize_channel_period_peaks(
-                score=score,
+            candidates, _score_cube = summarize_scalogram_regions(
                 power_cube=power,
                 periods=periods,
                 freqs_mhz=block_freqs,
                 record_start=0,
-                record_stop=matrix.shape[0],
                 threshold=search_config.threshold,
-                min_prominence=search_config.min_prominence,
+                sigma_period_peak=search_config.dog_sigma_peak,
+                sigma_period_background=search_config.dog_sigma_background,
+                sigma_time=search_config.time_smooth_sigma,
+                min_duration_records=search_config.min_duration_records,
                 min_width_bins=search_config.min_width_bins,
                 max_width_bins=search_config.max_width_bins,
-                min_distance_bins=search_config.min_distance_bins,
                 max_candidates_per_channel=search_config.max_candidates_per_channel,
-                max_components=search_config.max_candidates_per_block,
+                max_candidates=search_config.max_candidates_per_block,
             )
             for row in candidates:
                 row["cwt_wavelet"] = search_config.wavelet
@@ -333,7 +323,8 @@ def best_truth_match(candidates: list[dict[str, Any]], truth: dict[str, Any], ma
     for candidate in candidates:
         time_overlap, freq_overlap = _candidate_overlap(candidate, truth)
         if time_overlap >= match_config.min_time_overlap and freq_overlap >= match_config.min_freq_overlap:
-            score = time_overlap + freq_overlap + _float(candidate, "peak_score", 0.0) * 0.01
+            candidate_score = _float(candidate, "integrated_score", _float(candidate, "peak_score", 0.0))
+            score = time_overlap + freq_overlap + candidate_score * 0.01
             matches.append((score, candidate, time_overlap, freq_overlap))
     if not matches:
         return None
@@ -553,9 +544,9 @@ def run_injection_benchmark(
                 periods=periods,
                 block_channels=search_config.block_channels,
                 threshold=search_config.threshold,
-                min_prominence=search_config.min_prominence,
                 dog_sigma_peak=search_config.dog_sigma_peak,
                 dog_sigma_background=search_config.dog_sigma_background,
+                time_smooth_sigma=search_config.time_smooth_sigma,
                 time_aggregation=search_config.time_aggregation,
                 aggregation_percentile=search_config.aggregation_percentile,
             ),

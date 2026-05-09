@@ -10,5 +10,5 @@ def test_runtime_info_records_required_filter_stack() -> None:
     assert info["pywavelets"]
     assert info["scipy"]
     assert info["local_filter"]["enabled"] is True
-    assert info["local_filter"]["period_profile_filter"] == "scipy.ndimage.gaussian_filter1d"
-    assert info["local_filter"]["peak_finder"] == "scipy.signal.find_peaks"
+    assert info["local_filter"]["scalogram_filter"] == "scipy.ndimage.gaussian_filter1d"
+    assert info["local_filter"]["region_labeler"] == "scipy.ndimage.label"

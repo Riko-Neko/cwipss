@@ -7,8 +7,8 @@ from pathlib import Path
 import numpy as np
 
 from .config import CWTSearchConfig, cwt_config_to_nested_dict
-from .cwt import aggregate_cwt_time, cwt_power_cube, period_grid_records
-from .detection import add_candidate_ids, channel_period_peak_score, summarize_channel_period_peaks
+from .cwt import cwt_power_cube, period_grid_records
+from .detection import add_candidate_ids, summarize_scalogram_regions
 from .io import CE4Reader
 from .models import (
     MANIFEST_FIELDNAMES,
@@ -88,8 +88,8 @@ def write_summary_json(
         },
         "top_candidates": candidates[:20],
         "notes": [
-            "CWT channel-wise period-profile peaks are candidates, not signal claims.",
-            "CWT power is computed per channel; time aggregation creates the period-channel response map.",
+            "CWT per-channel scalogram regions are candidates, not signal claims.",
+            "Time aggregation creates only the period-channel overview map, not the primary detector input.",
             "Candidate periods require validation in the original time series.",
         ],
     }
@@ -156,31 +156,20 @@ def run_cwt_search(config: CWTSearchConfig) -> Path:
                 method=config.cwt_method,
                 normalize_channels=True,
             )
-            response = aggregate_cwt_time(
-                power,
-                method=config.time_aggregation,
-                percentile=config.aggregation_percentile,
-            )
-            log_response = np.log10(response + 1e-12)
-            score = channel_period_peak_score(
-                log_response,
-                sigma_peak=config.dog_sigma_peak,
-                sigma_background=config.dog_sigma_background,
-            )
-            candidates = summarize_channel_period_peaks(
-                score=score,
+            candidates, _score_cube = summarize_scalogram_regions(
                 power_cube=power,
                 periods=periods,
                 freqs_mhz=block.freqs_mhz,
                 record_start=block.record_range[0],
-                record_stop=block.record_range[1],
                 threshold=config.threshold,
-                min_prominence=config.min_prominence,
+                sigma_period_peak=config.dog_sigma_peak,
+                sigma_period_background=config.dog_sigma_background,
+                sigma_time=config.time_smooth_sigma,
+                min_duration_records=config.min_duration_records,
                 min_width_bins=config.min_width_bins,
                 max_width_bins=config.max_width_bins,
-                min_distance_bins=config.min_distance_bins,
                 max_candidates_per_channel=config.max_candidates_per_channel,
-                max_components=config.max_candidates_per_block,
+                max_candidates=config.max_candidates_per_block,
             )
             for row in candidates:
                 row["cwt_wavelet"] = config.wavelet
@@ -252,9 +241,9 @@ def run_cwt_search(config: CWTSearchConfig) -> Path:
                 periods=periods,
                 block_channels=config.block_channels,
                 threshold=config.threshold,
-                min_prominence=config.min_prominence,
                 dog_sigma_peak=config.dog_sigma_peak,
                 dog_sigma_background=config.dog_sigma_background,
+                time_smooth_sigma=config.time_smooth_sigma,
                 time_aggregation=config.time_aggregation,
                 aggregation_percentile=config.aggregation_percentile,
             ),

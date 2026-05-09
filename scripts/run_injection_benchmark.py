@@ -51,13 +51,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--block-channels", type=int, default=128, help="Frequency channels per block.")
     parser.add_argument("--time-aggregation", type=str, default="p95", help="Time aggregation for period-channel response.")
     parser.add_argument("--aggregation-percentile", type=float, default=95.0, help="Percentile for percentile aggregation.")
-    parser.add_argument("--threshold", type=float, default=2.5, help="Minimum channel-wise period peak score.")
-    parser.add_argument("--min-prominence", type=float, default=2.5, help="Minimum 1D period-peak prominence.")
-    parser.add_argument("--dog-sigma-peak", type=float, default=1.0, help="Narrow Gaussian sigma for period-profile DoG.")
-    parser.add_argument("--dog-sigma-background", type=float, default=10.0, help="Broad Gaussian sigma for period-profile DoG.")
-    parser.add_argument("--min-width-bins", type=float, default=1.0, help="Minimum 1D peak width in period bins.")
-    parser.add_argument("--max-width-bins", type=float, default=10.0, help="Maximum 1D peak width in period bins.")
-    parser.add_argument("--min-distance-bins", type=int, default=3, help="Minimum separation between peaks in period bins.")
+    parser.add_argument("--threshold", type=float, default=2.5, help="Minimum per-channel scalogram region score.")
+    parser.add_argument("--dog-sigma-peak", type=float, default=1.0, help="Narrow period-axis Gaussian sigma for scalogram DoG.")
+    parser.add_argument("--dog-sigma-background", type=float, default=10.0, help="Broad period-axis Gaussian sigma for scalogram DoG.")
+    parser.add_argument("--time-smooth-sigma", type=float, default=1.0, help="Time-axis smoothing sigma for scalogram region scoring.")
+    parser.add_argument("--min-duration-records", type=int, default=8, help="Minimum candidate time length in records.")
+    parser.add_argument("--min-width-bins", type=float, default=1.0, help="Minimum candidate period width in bins.")
+    parser.add_argument("--max-width-bins", type=float, default=10.0, help="Maximum candidate period width in bins.")
     parser.add_argument("--max-candidates-per-channel", type=int, default=2, help="Candidate cap per frequency channel.")
     parser.add_argument("--max-candidates-per-block", type=int, default=50, help="Candidate cap per block.")
     parser.add_argument(
@@ -138,12 +138,12 @@ def main() -> None:
         time_aggregation=args.time_aggregation,
         aggregation_percentile=args.aggregation_percentile,
         threshold=args.threshold,
-        min_prominence=args.min_prominence,
         dog_sigma_peak=args.dog_sigma_peak,
         dog_sigma_background=args.dog_sigma_background,
+        time_smooth_sigma=args.time_smooth_sigma,
+        min_duration_records=args.min_duration_records,
         min_width_bins=args.min_width_bins,
         max_width_bins=args.max_width_bins,
-        min_distance_bins=args.min_distance_bins,
         max_candidates_per_channel=args.max_candidates_per_channel,
         max_candidates_per_block=args.max_candidates_per_block,
         progress_enabled=args.progress,
