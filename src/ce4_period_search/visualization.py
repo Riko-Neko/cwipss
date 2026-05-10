@@ -21,8 +21,16 @@ matplotlib.use("Agg")
 from matplotlib import pyplot as plt
 from matplotlib.patches import Rectangle
 
+from .activity import (
+    crop_valid_periods,
+    low_fraction_noise_floor,
+    relative_excess,
+    robust_standardize,
+    signed_trimmed_period_activity,
+    smooth_activity,
+)
 from .cwt import aggregate_cwt_time, cwt_power_cube
-from .detection import project_scalogram_score, scalogram_region_score
+from .profile import windowed_period_profile
 
 
 CANDIDATE_COLOR = "#39ff14"
@@ -44,14 +52,15 @@ class SearchVisualizationConfig:
     periods: np.ndarray
     cwt_method: str = "fft"
     block_channels: int = 128
-    threshold: float = 2.5
-    dog_sigma_peak: float = 1.0
-    dog_sigma_background: float = 10.0
-    time_smooth_sigma: float = 1.0
     candidate_period_min_records: float | None = 10.0
     candidate_period_max_records: float | None = 200.0
     time_aggregation: str = "p95"
     aggregation_percentile: float = 95.0
+    noise_floor_fraction: float = 0.20
+    excess_eps_fraction: float = 1e-6
+    activity_trim_low: float = 0.05
+    activity_trim_high: float = 0.95
+    activity_smooth_records: int = 8
 
 
 def read_csv_rows(path: str | Path) -> list[dict[str, str]]:
@@ -87,6 +96,17 @@ def _limits(values: np.ndarray) -> tuple[float | None, float | None]:
     if not np.isfinite(lo) or not np.isfinite(hi) or hi <= lo:
         return None, None
     return float(lo), float(hi)
+
+
+def _symmetric_limits(values: np.ndarray) -> tuple[float | None, float | None]:
+    finite = np.asarray(values, dtype=np.float64)
+    finite = finite[np.isfinite(finite)]
+    if finite.size == 0:
+        return None, None
+    bound = float(np.nanpercentile(np.abs(finite), 99.0))
+    if not np.isfinite(bound) or bound <= 0:
+        return None, None
+    return -bound, bound
 
 
 def _freq_step(freqs_mhz: np.ndarray) -> float:
@@ -359,6 +379,27 @@ def _draw_time_truth(
         ax.plot([], [], color=color, linewidth=linewidth, label=label)
 
 
+def _draw_time_window_spans(
+    ax: plt.Axes,
+    rows: list[dict[str, Any]],
+    *,
+    color: str,
+    label: str,
+    alpha: float = 0.18,
+    max_rows: int = 100,
+) -> None:
+    drawn = 0
+    for row in rows[:max_rows]:
+        r0 = _float(row, "record_start")
+        r1 = _float(row, "record_stop", r0)
+        if not all(math.isfinite(value) for value in [r0, r1]) or r1 <= r0:
+            continue
+        ax.axvspan(r0, r1, color=color, alpha=alpha, linewidth=0)
+        drawn += 1
+    if drawn:
+        ax.plot([], [], color=color, linewidth=4.0, alpha=min(1.0, alpha * 3.0), label=label)
+
+
 def _imshow(
     ax: plt.Axes,
     image: np.ndarray,
@@ -402,8 +443,9 @@ def _pcolormesh(
     cmap: str,
     cbar_label: str,
     yscale: str | None = None,
+    symmetric: bool = False,
 ) -> None:
-    vmin, vmax = _limits(image)
+    vmin, vmax = _symmetric_limits(image) if symmetric else _limits(image)
     mesh = ax.pcolormesh(
         x_edges,
         y_edges,
@@ -472,6 +514,42 @@ def _representative_channels(
     return unique
 
 
+def _channel_windows_from_candidates(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    windows: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        window_id = str(row.get("window_id") or f"{row.get('record_start')}_{row.get('record_stop')}")
+        if window_id not in windows:
+            windows[window_id] = {
+                "record_start": row.get("record_start"),
+                "record_stop": row.get("record_stop"),
+                "window_id": window_id,
+            }
+    return list(windows.values())
+
+
+def _relative_excess_products(
+    power_channel: np.ndarray,
+    periods: np.ndarray,
+    search_config: SearchVisualizationConfig,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, float]:
+    valid_power, valid_periods, _mask = crop_valid_periods(
+        power_channel,
+        periods,
+        search_config.candidate_period_min_records,
+        search_config.candidate_period_max_records,
+    )
+    noise_floor = low_fraction_noise_floor(valid_power, fraction=search_config.noise_floor_fraction)
+    excess = relative_excess(valid_power, noise_floor, eps_fraction=search_config.excess_eps_fraction)
+    activity = signed_trimmed_period_activity(
+        excess,
+        trim_low=search_config.activity_trim_low,
+        trim_high=search_config.activity_trim_high,
+    )
+    activity = smooth_activity(activity, smooth_records=search_config.activity_smooth_records)
+    activity_z = robust_standardize(activity)
+    return valid_periods, excess, activity_z, float(noise_floor)
+
+
 def visualize_cwt_stages(
     data: np.ndarray,
     freqs_mhz: np.ndarray,
@@ -479,6 +557,7 @@ def visualize_cwt_stages(
     search_config: SearchVisualizationConfig,
     raw_candidates: list[dict[str, Any]],
     reviewed_candidates: list[dict[str, Any]] | None = None,
+    time_windows: list[dict[str, Any]] | None = None,
     *,
     truths: list[dict[str, Any]] | None = None,
     validation_rows: list[dict[str, Any]] | None = None,
@@ -500,6 +579,7 @@ def visualize_cwt_stages(
     if stale_index.exists():
         stale_index.unlink()
     reviewed = reviewed_candidates or raw_candidates
+    time_windows = time_windows or []
     truths = truths or []
     validation_rows = validation_rows or []
     injection_results = injection_results or []
@@ -557,15 +637,6 @@ def visualize_cwt_stages(
             method=search_config.time_aggregation,
             percentile=search_config.aggregation_percentile,
         )
-        score_cube = np.zeros_like(power, dtype=np.float32)
-        for local_channel in range(block_freqs.size):
-            score_cube[:, :, local_channel] = scalogram_region_score(
-                np.log10(power[:, :, local_channel] + 1e-12),
-                sigma_period_peak=search_config.dog_sigma_peak,
-                sigma_period_background=search_config.dog_sigma_background,
-                sigma_time=search_config.time_smooth_sigma,
-            )
-        score_projection = project_scalogram_score(score_cube, method="max")
         block_rows = [row for row in raw_candidates if str(row.get("block_id", "")) == block_id]
         representative = _representative_channels(block_start, block_stop, block_freqs, block_rows, max_channels)
 
@@ -573,11 +644,21 @@ def visualize_cwt_stages(
             local_channel = global_channel - block_start
             if local_channel < 0 or local_channel >= block_freqs.size:
                 continue
-            scalogram = np.log10(power[:, :, local_channel] + 1e-12)
             channel_rows = [
                 row for row in block_rows
                 if int(_float(row, "channel_index", -9999)) == local_channel
             ]
+            channel_windows = [
+                row for row in time_windows
+                if str(row.get("block_id", "")) == block_id
+                and int(_float(row, "channel_index", -9999)) == local_channel
+            ] or _channel_windows_from_candidates(channel_rows)
+            channel_truths = [
+                row for row in truths
+                if _float(row, "channel_start", -1) <= global_channel < _float(row, "channel_stop", -1)
+            ]
+
+            scalogram = np.log10(power[:, :, local_channel] + 1e-12)
             fig, ax = _new_figure()
             _pcolormesh(
                 ax,
@@ -592,10 +673,6 @@ def visualize_cwt_stages(
                 yscale="log",
             )
             _draw_time_period_rows(ax, channel_rows, color=CANDIDATE_COLOR, label="candidate", linewidth=1.5)
-            channel_truths = [
-                row for row in truths
-                if _float(row, "channel_start", -1) <= global_channel < _float(row, "channel_stop", -1)
-            ]
             _draw_time_truth(ax, channel_truths, color=TRUTH_COLOR, label="truth period", linewidth=1.5)
             if channel_rows or channel_truths:
                 ax.legend(loc="best")
@@ -603,13 +680,85 @@ def visualize_cwt_stages(
             _save(fig, path, config.dpi)
             images.append((f"Stage 02 CWT Scalogram {block_id} Ch {global_channel}", path, "Full period-time CWT power for one representative frequency channel before time aggregation."))
 
+            valid_periods, excess, activity_z, noise_floor = _relative_excess_products(
+                power[:, :, local_channel],
+                periods,
+                search_config,
+            )
+            fig, ax = _new_figure()
+            _pcolormesh(
+                ax,
+                excess,
+                _record_edges(matrix.shape[0], record_offset),
+                _period_edges(valid_periods),
+                title=f"Stage 03 trusted relative excess: {block_id}, channel {global_channel}",
+                xlabel="Record",
+                ylabel="Period / records",
+                cmap="coolwarm",
+                cbar_label=f"CWT power / low-floor - 1 (floor={noise_floor:.4g})",
+                yscale="log",
+                symmetric=True,
+            )
+            _draw_time_period_rows(ax, channel_rows, color=CANDIDATE_COLOR, label="candidate", linewidth=1.5)
+            _draw_time_truth(ax, channel_truths, color=TRUTH_COLOR, label="truth period", linewidth=1.5)
+            if channel_rows or channel_truths:
+                ax.legend(loc="best")
+            path = output_dir / f"stage_03_{block_id}_channel_{global_channel:04d}_trusted_excess.png"
+            _save(fig, path, config.dpi)
+            images.append((f"Stage 03 Trusted Relative Excess {block_id} Ch {global_channel}", path, "Trusted period-domain CWT after single-channel low-20% floor normalization. Detection activity is derived from this map."))
+
+            records = np.arange(record_offset, record_offset + matrix.shape[0], dtype=np.float64)
+            fig, ax = _new_figure()
+            ax.plot(records, activity_z, color="#0f172a", linewidth=1.0, label="standardized activity")
+            ax.axhline(0.0, color="#6b7280", linewidth=0.8, linestyle="--")
+            _draw_time_window_spans(ax, channel_windows, color=CANDIDATE_COLOR, label="PELT window")
+            _draw_time_window_spans(ax, channel_truths, color=TRUTH_COLOR, label="truth span", alpha=0.12)
+            ax.set_title(f"Stage 04 activity windows: {block_id}, channel {global_channel}")
+            ax.set_xlabel("Record")
+            ax.set_ylabel("Signed trimmed period activity / robust z")
+            ax.grid(alpha=0.25)
+            if channel_windows or channel_truths:
+                ax.legend(loc="best")
+            path = output_dir / f"stage_04_{block_id}_channel_{global_channel:04d}_activity_windows.png"
+            _save(fig, path, config.dpi)
+            images.append((f"Stage 04 Activity Windows {block_id} Ch {global_channel}", path, "Single-channel activity curve used by PELT. Green spans are recorded time windows; cyan spans are injection truth when available."))
+
+            if channel_rows:
+                fig, ax = _new_figure()
+                for row in _sort_candidates(channel_rows, min(5, config.top_candidates)):
+                    local_start = int(max(0, _float(row, "record_start", record_offset) - record_offset))
+                    local_stop = int(min(matrix.shape[0], _float(row, "record_stop", record_offset + matrix.shape[0]) - record_offset))
+                    if local_stop <= local_start:
+                        continue
+                    profile = windowed_period_profile(excess, local_start, local_stop)
+                    label = f"cand {row.get('candidate_id', '-')}, win {row.get('window_id', '-')}"
+                    ax.plot(valid_periods, profile, linewidth=1.0, alpha=0.85, label=label)
+                    p0 = _float(row, "period_start_records")
+                    p1 = _float(row, "period_stop_records", p0)
+                    if math.isfinite(p0) and math.isfinite(p1):
+                        p0, p1 = sorted([p0, p1])
+                        ax.axvspan(p0, p1, color=CANDIDATE_COLOR, alpha=0.10, linewidth=0)
+                for truth in channel_truths:
+                    period = _float(truth, "period_records")
+                    if math.isfinite(period):
+                        ax.axvline(period, color=TRUTH_COLOR, linewidth=1.2, linestyle="--", alpha=0.9)
+                ax.set_title(f"Stage 05 windowed period profiles: {block_id}, channel {global_channel}")
+                ax.set_xlabel("Period / records")
+                ax.set_ylabel("Windowed relative-excess profile")
+                ax.set_xscale("log")
+                ax.grid(alpha=0.25)
+                ax.legend(loc="best", fontsize="small")
+                path = output_dir / f"stage_05_{block_id}_channel_{global_channel:04d}_period_profiles.png"
+                _save(fig, path, config.dpi)
+                images.append((f"Stage 05 Windowed Period Profiles {block_id} Ch {global_channel}", path, "Period profiles recomputed inside recorded PELT windows; candidate period spans are green and truth periods are cyan dashed lines."))
+
         fig, ax = _new_figure()
         _pcolormesh(
             ax,
             np.log10(response + 1e-12),
             _linear_edges_from_centers(block_freqs),
             _period_edges(periods),
-            title=f"Stage 03 period-channel response: {block_id}",
+            title=f"Stage 06 period-channel overview: {block_id}",
             xlabel="Frequency / channel coordinate",
             ylabel="Period / records",
             cmap="magma",
@@ -624,9 +773,9 @@ def visualize_cwt_stages(
         _draw_period_rows(ax, truths, color=TRUTH_COLOR, label="truth", linewidth=1.5)
         if truths:
             ax.legend(loc="best")
-        path = output_dir / f"stage_03_{block_id}_period_channel_response.png"
+        path = output_dir / f"stage_06_{block_id}_period_channel_response.png"
         _save(fig, path, config.dpi)
-        images.append((f"Stage 03 Period-Channel Response {block_id}", path, "CWT power after time aggregation for overview only; detection uses full per-channel scalograms."))
+        images.append((f"Stage 06 Period-Channel Overview {block_id}", path, "CWT power after time aggregation for overview only; detection uses full per-channel scalograms."))
 
         fig, ax = _new_figure()
         candidate_period_mask = _candidate_period_mask(
@@ -634,18 +783,18 @@ def visualize_cwt_stages(
             search_config.candidate_period_min_records,
             search_config.candidate_period_max_records,
         )
-        candidate_score_projection = score_projection.copy()
-        candidate_score_projection[~candidate_period_mask, :] = np.nan
+        candidate_domain_response = np.log10(response + 1e-12)
+        candidate_domain_response[~candidate_period_mask, :] = np.nan
         _pcolormesh(
             ax,
-            candidate_score_projection,
+            candidate_domain_response,
             _linear_edges_from_centers(block_freqs),
             _period_edges(periods),
-            title=f"Stage 04 candidate-domain score projection: {block_id}",
+            title=f"Stage 07 candidate-domain overview: {block_id}",
             xlabel="Frequency / channel coordinate",
             ylabel="Period / records",
             cmap="viridis",
-            cbar_label="max scalogram region score over time",
+            cbar_label=f"log10({search_config.time_aggregation} CWT power)",
             yscale="log",
         )
         _shade_candidate_period_domain(
@@ -657,9 +806,9 @@ def visualize_cwt_stages(
         _draw_period_rows(ax, truths, color=TRUTH_COLOR, label="truth", linewidth=1.5)
         if block_rows or truths:
             ax.legend(loc="best")
-        path = output_dir / f"stage_04_{block_id}_period_channel_candidates.png"
+        path = output_dir / f"stage_07_{block_id}_period_channel_candidates.png"
         _save(fig, path, config.dpi)
-        images.append((f"Stage 04 Candidate-Domain Projection {block_id}", path, "Per-channel scalogram score projection inside the candidate period domain only; green overlays are recorded candidates, not raw threshold contours."))
+        images.append((f"Stage 07 Candidate-Domain Overview {block_id}", path, "CWT overview inside the candidate period domain only; green overlays are recorded single-channel windowed-profile candidates."))
 
     if reviewed:
         top_rows = _sort_candidates(reviewed, config.top_candidates)
@@ -670,7 +819,7 @@ def visualize_cwt_stages(
         fig, ax = _new_figure()
         ax.scatter(x, y, s=size, c=colors, alpha=0.75, edgecolors="black", linewidths=0.3)
         _draw_period_rows(ax, truths, color=TRUTH_COLOR, label="truth", linewidth=1.4)
-        ax.set_title("Stage 05 candidate review overview")
+        ax.set_title("Stage 08 candidate review overview")
         ax.set_xlabel("Frequency / channel coordinate")
         ax.set_ylabel("Period / records")
         ax.set_yscale("log")
@@ -678,9 +827,9 @@ def visualize_cwt_stages(
         ax.plot([], [], "o", color=CANDIDATE_COLOR, label="needs_validation")
         ax.plot([], [], "o", color="#b23b2e", label="vetoed")
         ax.legend(loc="best")
-        path = output_dir / "stage_05_candidate_review_overview.png"
+        path = output_dir / "stage_08_candidate_review_overview.png"
         _save(fig, path, config.dpi)
-        images.append(("Stage 05 Candidate Review Overview", path, "Top per-channel scalogram-region candidates after veto review, colored by candidate status and scaled by integrated score."))
+        images.append(("Stage 08 Candidate Review Overview", path, "Top single-channel windowed-profile candidates after veto review, colored by candidate status and scaled by integrated score."))
 
     if validation_rows:
         rows = sorted(validation_rows, key=lambda row: _float(row, "evidence_rank", math.inf))
@@ -696,13 +845,13 @@ def visualize_cwt_stages(
         ax2 = ax1.twinx()
         ax2.scatter(candidate_ids, periods_refined, c="#e07a2f", marker="x", label="refined period")
         ax2.set_ylabel("refined period / records")
-        ax1.set_title("Stage 06 validation/statistics overview")
+        ax1.set_title("Stage 09 validation/statistics overview")
         lines, labels = ax1.get_legend_handles_labels()
         lines2, labels2 = ax2.get_legend_handles_labels()
         ax1.legend(lines + lines2, labels + labels2, loc="best")
-        path = output_dir / "stage_06_validation_overview.png"
+        path = output_dir / "stage_09_validation_overview.png"
         _save(fig, path, config.dpi)
-        images.append(("Stage 06 Validation Overview", path, "Global q-values and refined periods for reviewed validation rows."))
+        images.append(("Stage 09 Validation Overview", path, "Global q-values and refined periods for reviewed validation rows."))
 
     if injection_results:
         detected_raw = sum(1 for row in injection_results if _bool_value(row.get("detected_raw")))
@@ -715,12 +864,12 @@ def visualize_cwt_stages(
         ax.bar(labels, rates, color=["#5b8bd9", "#49a078", "#d97941"])
         ax.set_ylim(0, 1.05)
         ax.set_ylabel("recovery rate")
-        ax.set_title("Stage 07 injection recovery")
+        ax.set_title("Stage 10 injection recovery")
         for idx, rate in enumerate(rates):
             ax.text(idx, rate + 0.025, f"{rate:.2f}", ha="center", va="bottom")
-        path = output_dir / "stage_07_injection_recovery.png"
+        path = output_dir / "stage_10_injection_recovery.png"
         _save(fig, path, config.dpi)
-        images.append(("Stage 07 Injection Recovery", path, "Detection, after-veto, and validation recovery rates for the injection run."))
+        images.append(("Stage 10 Injection Recovery", path, "Detection, after-veto, and validation recovery rates for the injection run."))
 
         truth_periods = [_float(row, "period_records") for row in injection_results]
         refined_periods = [_float(row, "refined_period_records") for row in injection_results]
@@ -734,11 +883,11 @@ def visualize_cwt_stages(
             ax.plot([lo, hi], [lo, hi], color="black", linestyle="--", linewidth=1.0)
         ax.set_xlabel("injected period / records")
         ax.set_ylabel("refined period / records")
-        ax.set_title("Stage 08 injection period recovery")
+        ax.set_title("Stage 11 injection period recovery")
         ax.grid(alpha=0.25)
-        path = output_dir / "stage_08_injection_period_recovery.png"
+        path = output_dir / "stage_11_injection_period_recovery.png"
         _save(fig, path, config.dpi)
-        images.append(("Stage 08 Injection Period Recovery", path, "Injected period versus validation-refined period; dashed line is perfect recovery."))
+        images.append(("Stage 11 Injection Period Recovery", path, "Injected period versus validation-refined period; dashed line is perfect recovery."))
 
     index_path = output_dir / "index.md"
     lines = [
@@ -770,12 +919,12 @@ def visualize_cwt_stages(
                     "period_min_records": float(np.nanmin(periods)),
                     "period_max_records": float(np.nanmax(periods)),
                     "block_channels": search_config.block_channels,
-                    "threshold": search_config.threshold,
-                    "dog_sigma_peak": search_config.dog_sigma_peak,
-                    "dog_sigma_background": search_config.dog_sigma_background,
-                    "time_smooth_sigma": search_config.time_smooth_sigma,
                     "candidate_period_min_records": search_config.candidate_period_min_records,
                     "candidate_period_max_records": search_config.candidate_period_max_records,
+                    "noise_floor_fraction": search_config.noise_floor_fraction,
+                    "activity_trim_low": search_config.activity_trim_low,
+                    "activity_trim_high": search_config.activity_trim_high,
+                    "activity_smooth_records": search_config.activity_smooth_records,
                     "time_aggregation": search_config.time_aggregation,
                 },
             },

@@ -49,17 +49,22 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--time-aggregation", type=str, default=None, help="Time aggregation for period-channel response.")
     parser.add_argument("--aggregation-percentile", type=float, default=None, help="Percentile for percentile aggregation.")
     parser.add_argument("--block-channels", type=int, default=None, help="Frequency channels per block.")
-    parser.add_argument("--threshold", type=float, default=None, help="Minimum per-channel scalogram region score.")
-    parser.add_argument("--dog-sigma-peak", type=float, default=None, help="Narrow period-axis Gaussian sigma for scalogram DoG.")
-    parser.add_argument("--dog-sigma-background", type=float, default=None, help="Broad period-axis Gaussian sigma for scalogram DoG.")
-    parser.add_argument("--time-smooth-sigma", type=float, default=None, help="Time-axis smoothing sigma for scalogram region scoring.")
-    parser.add_argument("--min-duration-records", type=int, default=None, help="Minimum candidate time length in records.")
-    parser.add_argument("--min-width-bins", type=float, default=None, help="Minimum candidate period width in bins.")
-    parser.add_argument("--max-width-bins", type=float, default=None, help="Maximum candidate period width in bins.")
+    parser.add_argument("--noise-floor-fraction", type=float, default=None, help="Lowest fraction of valid CWT power used as channel noise floor.")
+    parser.add_argument("--excess-eps-fraction", type=float, default=None, help="Fractional epsilon added to the noise floor.")
+    parser.add_argument("--activity-trim-low", type=float, default=None, help="Lower period-axis trim fraction for signed activity.")
+    parser.add_argument("--activity-trim-high", type=float, default=None, help="Upper period-axis trim fraction for signed activity.")
+    parser.add_argument("--activity-smooth-records", type=int, default=None, help="Moving-average width for activity curves.")
+    parser.add_argument("--pelt-penalty", type=float, default=None, help="PELT mean-shift penalty.")
+    parser.add_argument("--pelt-min-size-records", type=int, default=None, help="PELT minimum segment size.")
+    parser.add_argument("--window-min-duration-records", type=int, default=None, help="Minimum retained PELT window duration.")
+    parser.add_argument("--window-min-activity-mean", type=float, default=None, help="Minimum retained standardized activity mean.")
+    parser.add_argument("--window-merge-gap-records", type=int, default=None, help="Merge PELT windows separated by at most this gap.")
+    parser.add_argument("--profile-min-prominence", type=float, default=None, help="Minimum windowed period-profile peak prominence.")
+    parser.add_argument("--profile-max-peaks-per-window", type=int, default=None, help="Maximum period peaks retained per time window.")
     parser.add_argument("--candidate-period-min-records", type=float, default=None, help="Reject candidates below this period in records.")
     parser.add_argument("--candidate-period-max-records", type=float, default=None, help="Reject candidates above this period in records.")
-    parser.add_argument("--max-candidates-per-channel", type=int, default=None, help="Cap retained regions per frequency channel.")
-    parser.add_argument("--max-candidates-per-block", type=int, default=None, help="Cap regions retained per block.")
+    parser.add_argument("--max-candidates-per-channel", type=int, default=None, help="Cap retained candidates per frequency channel.")
+    parser.add_argument("--max-candidates-per-block", type=int, default=None, help="Cap retained candidates per block.")
     parser.add_argument("--validation-max-candidates", type=int, default=None, help="Maximum candidates to validate per file.")
     parser.add_argument("--validation-shuffle-trials", type=int, default=None, help="Shuffle/null trials per candidate.")
     parser.add_argument(
@@ -110,13 +115,18 @@ def _scan_overrides(args: argparse.Namespace) -> dict:
         "block_channels",
         "time_aggregation",
         "aggregation_percentile",
-        "threshold",
-        "dog_sigma_peak",
-        "dog_sigma_background",
-        "time_smooth_sigma",
-        "min_duration_records",
-        "min_width_bins",
-        "max_width_bins",
+        "noise_floor_fraction",
+        "excess_eps_fraction",
+        "activity_trim_low",
+        "activity_trim_high",
+        "activity_smooth_records",
+        "pelt_penalty",
+        "pelt_min_size_records",
+        "window_min_duration_records",
+        "window_min_activity_mean",
+        "window_merge_gap_records",
+        "profile_min_prominence",
+        "profile_max_peaks_per_window",
         "candidate_period_min_records",
         "candidate_period_max_records",
         "max_candidates_per_channel",
@@ -186,6 +196,7 @@ def main() -> None:
     print(f"Batch directory: {batch_dir}")
     print(f"Manifest: {batch_dir / 'manifest.csv'}")
     print(f"Candidates: {batch_dir / 'candidates_reviewed.all.csv'}")
+    print(f"Time windows: {batch_dir / 'time_windows.all.csv'}")
     print(f"Validation: {batch_dir / 'validation_reviewed.all.csv'}")
 
 

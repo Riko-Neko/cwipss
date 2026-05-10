@@ -52,10 +52,6 @@ def test_visualize_cwt_stages_writes_index_and_pngs(tmp_path: Path) -> None:
             wavelet="cmor1.5-1.0",
             periods=np.geomspace(2, 16, 8),
             block_channels=8,
-            threshold=2.0,
-            dog_sigma_peak=1.0,
-            dog_sigma_background=4.0,
-            time_smooth_sigma=1.0,
             candidate_period_min_records=2.0,
             candidate_period_max_records=16.0,
         ),
@@ -68,5 +64,5 @@ def test_visualize_cwt_stages_writes_index_and_pngs(tmp_path: Path) -> None:
 
     assert index_path.exists()
     assert (tmp_path / "viz" / "stage_01_input_matrix.png").exists()
-    assert (tmp_path / "viz" / "stage_07_injection_recovery.png").exists()
-    assert "Stage 04 Candidate-Domain Projection" in index_path.read_text()
+    assert (tmp_path / "viz" / "stage_10_injection_recovery.png").exists()
+    assert "Stage 04 Activity Windows" in index_path.read_text()

@@ -10,7 +10,7 @@ from typing import Any
 import numpy as np
 
 from .cwt import cwt_power_cube, period_grid_records
-from .detection import add_candidate_ids, summarize_scalogram_regions
+from .detection import add_candidate_ids, detect_block_periods
 from .injection import BackgroundData, ce4_background, inject_many, synthetic_background
 from .models import (
     INJECTION_PERFORMANCE_FIELDNAMES,
@@ -18,6 +18,7 @@ from .models import (
     INJECTION_TRUTH_FIELDNAMES,
     RAW_CANDIDATE_FIELDNAMES,
     REVIEWED_CANDIDATE_FIELDNAMES,
+    TIME_WINDOW_FIELDNAMES,
     VALIDATION_FIELDNAMES,
     VALIDATION_REVIEWED_FIELDNAMES,
     normalize_candidate_row,
@@ -50,16 +51,22 @@ class CWTBenchmarkConfig:
     block_channels: int = 128
     time_aggregation: str = "p95"
     aggregation_percentile: float = 95.0
-    threshold: float = 2.5
-    dog_sigma_peak: float = 1.0
-    dog_sigma_background: float = 10.0
-    time_smooth_sigma: float = 1.0
-    min_duration_records: int = 8
-    min_width_bins: float = 1.0
-    max_width_bins: float = 10.0
+    detector: str = "single_channel_lowfloor_pelt"
     candidate_period_min_records: float = 10.0
     candidate_period_max_records: float = 200.0
-    max_candidates_per_channel: int = 2
+    noise_floor_fraction: float = 0.20
+    excess_eps_fraction: float = 1e-6
+    activity_trim_low: float = 0.05
+    activity_trim_high: float = 0.95
+    activity_smooth_records: int = 8
+    pelt_penalty: float = 8.0
+    pelt_min_size_records: int = 256
+    window_min_duration_records: int = 256
+    window_min_activity_mean: float = 0.05
+    window_merge_gap_records: int = 64
+    profile_min_prominence: float = 0.5
+    profile_max_peaks_per_window: int = 3
+    max_candidates_per_channel: int = 3
     max_candidates_per_block: int = 50
     progress_enabled: bool = True
     progress_leave: bool = False
@@ -130,7 +137,7 @@ def run_cwt_candidate_search(
     run_id: str,
     search_config: CWTBenchmarkConfig,
     veto_config: VetoConfig,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     matrix = np.asarray(data, dtype=np.float32)
     periods = period_grid_records(
         search_config.period_min_records,
@@ -139,6 +146,7 @@ def run_cwt_candidate_search(
         search_config.period_spacing,
     )
     all_candidates: list[dict[str, Any]] = []
+    all_windows: list[dict[str, Any]] = []
     progress = _channel_progress(
         total=matrix.shape[1],
         run_id=run_id,
@@ -157,23 +165,36 @@ def run_cwt_candidate_search(
                 method=search_config.cwt_method,
                 normalize_channels=True,
             )
-            candidates, _score_cube = summarize_scalogram_regions(
+            candidates, windows = detect_block_periods(
                 power_cube=power,
                 periods=periods,
                 freqs_mhz=block_freqs,
                 record_start=0,
-                threshold=search_config.threshold,
-                sigma_period_peak=search_config.dog_sigma_peak,
-                sigma_period_background=search_config.dog_sigma_background,
-                sigma_time=search_config.time_smooth_sigma,
-                min_duration_records=search_config.min_duration_records,
-                min_width_bins=search_config.min_width_bins,
-                max_width_bins=search_config.max_width_bins,
-                max_candidates_per_channel=search_config.max_candidates_per_channel,
                 candidate_period_min_records=search_config.candidate_period_min_records,
                 candidate_period_max_records=search_config.candidate_period_max_records,
+                noise_floor_fraction=search_config.noise_floor_fraction,
+                excess_eps_fraction=search_config.excess_eps_fraction,
+                activity_trim_low=search_config.activity_trim_low,
+                activity_trim_high=search_config.activity_trim_high,
+                activity_smooth_records=search_config.activity_smooth_records,
+                pelt_penalty=search_config.pelt_penalty,
+                pelt_min_size_records=search_config.pelt_min_size_records,
+                window_min_duration_records=search_config.window_min_duration_records,
+                window_min_activity_mean=search_config.window_min_activity_mean,
+                window_merge_gap_records=search_config.window_merge_gap_records,
+                profile_min_prominence=search_config.profile_min_prominence,
+                profile_max_peaks_per_window=search_config.profile_max_peaks_per_window,
+                max_candidates_per_channel=search_config.max_candidates_per_channel,
                 max_candidates=search_config.max_candidates_per_block,
             )
+            for row in windows:
+                row["schema_version"] = 1
+                row["run_id"] = run_id
+                row["source_file"] = source_name
+                row["block_id"] = f"block_{block_index:04d}"
+                row["block_channel_start"] = block_start
+                row["block_channel_stop"] = block_stop
+                all_windows.append(row)
             for row in candidates:
                 row["cwt_wavelet"] = search_config.wavelet
                 row["time_aggregation"] = search_config.time_aggregation
@@ -200,7 +221,7 @@ def run_cwt_candidate_search(
         freq_start_mhz=float(np.nanmin(freqs_mhz)),
         freq_stop_mhz=float(np.nanmax(freqs_mhz)),
     )
-    return raw, review_candidates(raw, context=context, config=veto_config)
+    return raw, review_candidates(raw, context=context, config=veto_config), all_windows
 
 
 def _freq_slice_for_row(freqs_mhz: np.ndarray, row: dict[str, Any]) -> slice:
@@ -471,7 +492,7 @@ def run_injection_benchmark(
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     injected_background, truths = inject_many(background, injections)
-    raw, reviewed = run_cwt_candidate_search(
+    raw, reviewed, time_windows = run_cwt_candidate_search(
         injected_background.data,
         injected_background.freqs_mhz,
         source_name=injected_background.source_name,
@@ -491,6 +512,7 @@ def run_injection_benchmark(
     results = evaluate_injections(truths, raw, reviewed, validation_reviewed, match_config)
     performance_rows = aggregate_injection_performance(results)
     write_rows_csv(output_dir / "injection_truth.csv", truths, INJECTION_TRUTH_FIELDNAMES)
+    write_rows_csv(output_dir / "time_windows.csv", time_windows, TIME_WINDOW_FIELDNAMES)
     write_rows_csv(output_dir / "candidates_raw.csv", raw, RAW_CANDIDATE_FIELDNAMES)
     write_rows_csv(output_dir / "candidates_reviewed.csv", reviewed, REVIEWED_CANDIDATE_FIELDNAMES)
     write_rows_csv(output_dir / "validation_summary.csv", validation_rows, VALIDATION_FIELDNAMES)
@@ -507,6 +529,8 @@ def run_injection_benchmark(
         "injection_count": len(truths),
         "candidate_count": len(raw),
         "reviewed_candidate_count": len(reviewed),
+        "vetoed_candidate_count": sum(1 for row in reviewed if row.get("candidate_status") == "vetoed"),
+        "time_window_count": len(time_windows),
         "validation_count": len(validation_rows),
         "detected_raw_count": sum(1 for row in results if row["detected_raw"]),
         "detected_after_veto_count": sum(1 for row in results if row["detected_after_veto"]),
@@ -547,17 +571,19 @@ def run_injection_benchmark(
                 cwt_method=search_config.cwt_method,
                 periods=periods,
                 block_channels=search_config.block_channels,
-                threshold=search_config.threshold,
-                dog_sigma_peak=search_config.dog_sigma_peak,
-                dog_sigma_background=search_config.dog_sigma_background,
-                time_smooth_sigma=search_config.time_smooth_sigma,
                 candidate_period_min_records=search_config.candidate_period_min_records,
                 candidate_period_max_records=search_config.candidate_period_max_records,
                 time_aggregation=search_config.time_aggregation,
                 aggregation_percentile=search_config.aggregation_percentile,
+                noise_floor_fraction=search_config.noise_floor_fraction,
+                excess_eps_fraction=search_config.excess_eps_fraction,
+                activity_trim_low=search_config.activity_trim_low,
+                activity_trim_high=search_config.activity_trim_high,
+                activity_smooth_records=search_config.activity_smooth_records,
             ),
             raw_candidates=raw,
             reviewed_candidates=reviewed,
+            time_windows=time_windows,
             truths=truths,
             validation_rows=validation_reviewed,
             injection_results=results,

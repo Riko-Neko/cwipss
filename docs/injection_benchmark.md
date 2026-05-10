@@ -37,10 +37,11 @@ run directory. The command line controls background selection, search,
 validation, and visualization only; injection parameters live in the simulation
 config.
 
-The benchmark uses the same per-channel scalogram-region detector as the main
-pipeline: `threshold=2.5`, candidate period domain `10..200` records,
-`min_duration_records=8`, and `max_candidates_per_block=50`. Lower these only
-for high-recall diagnostic sweeps.
+The benchmark uses the same single-channel low-floor PELT/profile detector as
+the main pipeline: candidate period domain `10..200` records, low-floor fraction
+`0.20`, PELT windowing, and `max_candidates_per_block=50`. Lower
+`pelt_penalty`, `window_min_activity_mean`, or `profile_min_prominence` only for
+high-recall diagnostic sweeps.
 
 ## Injection Config
 
@@ -66,6 +67,7 @@ Sampler fields accept a raw value, a list, `{ "values": [...] }`,
 ## Outputs
 
 - `injection_truth.csv`
+- `time_windows.csv`
 - `candidates_raw.csv`
 - `candidates_reviewed.csv`
 - `validation_summary.csv`
@@ -77,7 +79,7 @@ Sampler fields accept a raw value, a list, `{ "values": [...] }`,
 
 ## Failure Stages
 
-- `missed_detection`: no per-channel CWT scalogram region overlaps the injection.
+- `missed_detection`: no single-channel PELT/profile candidate overlaps the injection.
 - `vetoed`: the best matching raw candidate did not survive veto.
 - `not_validated`: the matched candidate was not in the validation table.
 - `period_mismatch`: validation refined period is too far from truth.

@@ -13,6 +13,7 @@ from .models import (
     BATCH_MANIFEST_FIELDNAMES,
     RAW_CANDIDATE_FIELDNAMES,
     REVIEWED_CANDIDATE_FIELDNAMES,
+    TIME_WINDOW_FIELDNAMES,
     VALIDATION_FIELDNAMES,
     VALIDATION_REVIEWED_FIELDNAMES,
 )
@@ -249,6 +250,11 @@ def run_batch(
         batch_dir / "candidates_reviewed.all.csv",
         _merge_csvs(successful_run_dirs, "candidates_reviewed.csv"),
         REVIEWED_CANDIDATE_FIELDNAMES,
+    )
+    _write_rows_csv(
+        batch_dir / "time_windows.all.csv",
+        _merge_csvs(successful_run_dirs, "time_windows.csv"),
+        TIME_WINDOW_FIELDNAMES,
     )
 
     validation_rows = _merge_csvs(successful_run_dirs, "validation_summary.csv")

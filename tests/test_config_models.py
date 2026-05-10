@@ -13,10 +13,10 @@ def test_structured_config_maps_to_resolved_dataclass() -> None:
             "input": {"path": "data/example.2C"},
             "scan": {"f_start": 38.0, "f_stop": 39.0, "period_count": 40},
             "detection": {
-                "threshold": 3.0,
-                "dog_sigma_background": 12.0,
-                "time_smooth_sigma": 1.5,
-                "min_duration_records": 12,
+                "noise_floor_fraction": 0.15,
+                "activity_smooth_records": 12,
+                "pelt_penalty": 6.0,
+                "window_min_duration_records": 12,
                 "candidate_period_min_records": 10,
                 "candidate_period_max_records": 200,
                 "max_candidates_per_channel": 1,
@@ -33,10 +33,10 @@ def test_structured_config_maps_to_resolved_dataclass() -> None:
     assert config.f_start == 38.0
     assert config.f_stop == 39.0
     assert config.period_count == 40
-    assert config.threshold == 3.0
-    assert config.dog_sigma_background == 12.0
-    assert config.time_smooth_sigma == 1.5
-    assert config.min_duration_records == 12
+    assert config.noise_floor_fraction == 0.15
+    assert config.activity_smooth_records == 12
+    assert config.pelt_penalty == 6.0
+    assert config.window_min_duration_records == 12
     assert config.candidate_period_min_records == 10
     assert config.candidate_period_max_records == 200
     assert config.max_candidates_per_channel == 1
@@ -55,8 +55,8 @@ def test_structured_config_maps_to_resolved_dataclass() -> None:
     nested = cwt_config_to_nested_dict(config)
     assert nested["input"]["path"] == "data/example.2C"
     assert nested["scan"]["period_count"] == 40
-    assert nested["detection"]["threshold"] == 3.0
-    assert nested["detection"]["min_duration_records"] == 12
+    assert nested["detection"]["noise_floor_fraction"] == 0.15
+    assert nested["detection"]["window_min_duration_records"] == 12
     assert nested["detection"]["candidate_period_min_records"] == 10
     assert nested["detection"]["candidate_period_max_records"] == 200
     assert nested["veto"]["max_bandwidth_fraction"] == 0.8
@@ -69,12 +69,12 @@ def test_structured_config_maps_to_resolved_dataclass() -> None:
 def test_flat_config_remains_supported_with_overrides() -> None:
     config = cwt_config_from_mapping(
         {"input": "data/example.2C", "period_count": 30},
-        overrides={"period_count": 50, "threshold": 7.0},
+        overrides={"period_count": 50, "pelt_penalty": 7.0},
     )
 
     assert config.input == "data/example.2C"
     assert config.period_count == 50
-    assert config.threshold == 7.0
+    assert config.pelt_penalty == 7.0
 
 
 def test_unknown_config_key_is_rejected() -> None:
@@ -87,7 +87,8 @@ def test_normalize_candidate_row_adds_schema_and_seconds() -> None:
         {
             "cwt_wavelet": "cmor1.5-1.0",
             "time_aggregation": "p95",
-            "detection_method": "per_channel_scalogram_region",
+            "detection_method": "single_channel_lowfloor_pelt_profile",
+            "window_id": "ch0003_w0001",
             "channel_index": 3,
             "region_pixels": 12,
             "record_start": 10,
@@ -106,6 +107,10 @@ def test_normalize_candidate_row_adds_schema_and_seconds() -> None:
             "peak_score": 8.0,
             "mean_score": 6.0,
             "integrated_score": 12.0,
+            "activity_mean": 1.0,
+            "activity_max": 2.0,
+            "noise_floor": 0.5,
+            "period_peak_prominence": 3.0,
             "block_channel_start": 0,
             "block_channel_stop": 8,
         },

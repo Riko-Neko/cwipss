@@ -3,180 +3,185 @@ from __future__ import annotations
 from typing import Iterable
 
 import numpy as np
-from scipy import ndimage as ndi
+
+from .activity import (
+    crop_valid_periods,
+    low_fraction_noise_floor,
+    relative_excess,
+    robust_standardize,
+    signed_trimmed_period_activity,
+    smooth_activity,
+)
+from .profile import find_period_profile_peaks, windowed_period_profile
+from .windows import active_windows_from_segments, merge_close_windows, pelt_mean_shift
 
 
-def _robust_zscore(values: np.ndarray) -> np.ndarray:
-    matrix = np.asarray(values, dtype=np.float32)
-    finite = np.isfinite(matrix)
-    if not np.any(finite):
-        return np.zeros_like(matrix, dtype=np.float32)
-    median = float(np.nanmedian(matrix[finite]))
-    centered = matrix - median
-    mad = float(np.nanmedian(np.abs(centered[finite])))
-    scale = 1.4826 * mad
-    if not np.isfinite(scale) or scale <= 1e-6:
-        scale = float(np.nanstd(centered[finite]))
-    if not np.isfinite(scale) or scale <= 1e-6:
-        return np.zeros_like(matrix, dtype=np.float32)
-    score = centered / scale
-    score[~finite] = 0.0
-    return score.astype(np.float32, copy=False)
+DETECTION_METHOD = "single_channel_lowfloor_pelt_profile"
+WINDOW_METHOD = "single_channel_lowfloor_pelt"
 
 
-def scalogram_region_score(
-    log_power: np.ndarray,
-    sigma_period_peak: float = 1.0,
-    sigma_period_background: float = 10.0,
-    sigma_time: float = 1.0,
-) -> np.ndarray:
-    """Score one channel's `(period, time)` CWT scalogram for short period bands."""
-    values = np.asarray(log_power, dtype=np.float32)
-    if values.ndim != 2:
-        raise ValueError("log_power must have shape (periods, records)")
-    finite = np.isfinite(values)
-    if not np.any(finite):
-        return np.zeros_like(values, dtype=np.float32)
-    filled = values.copy()
-    filled[~finite] = float(np.nanmedian(filled[finite]))
-
-    sigma_period_peak = max(0.0, float(sigma_period_peak))
-    sigma_period_background = max(sigma_period_peak + 1e-6, float(sigma_period_background))
-    sigma_time = max(0.0, float(sigma_time))
-    narrow = (
-        ndi.gaussian_filter1d(filled, sigma=sigma_period_peak, axis=0, mode="nearest")
-        if sigma_period_peak > 0
-        else filled
-    )
-    broad = ndi.gaussian_filter1d(filled, sigma=sigma_period_background, axis=0, mode="nearest")
-    bandpass = narrow - broad
-    if sigma_time > 0:
-        bandpass = ndi.gaussian_filter1d(bandpass, sigma=sigma_time, axis=1, mode="nearest")
-    return _robust_zscore(bandpass)
+def _peak_record(activity: np.ndarray, start: int, stop: int, record_start: int) -> int:
+    values = np.asarray(activity, dtype=np.float32)
+    start = max(0, min(int(start), values.size))
+    stop = max(start + 1, min(int(stop), values.size))
+    local = values[start:stop]
+    if local.size == 0:
+        return int(record_start + start)
+    return int(record_start + start + int(np.nanargmax(local)))
 
 
-def _period_width(periods: np.ndarray, p0: int, p1: int) -> float:
-    return float(abs(float(periods[p1]) - float(periods[p0])))
-
-
-def _period_domain_mask(
+def detect_channel_periods(
+    power_channel: np.ndarray,
     periods: np.ndarray,
-    min_period_records: float | None,
-    max_period_records: float | None,
-) -> np.ndarray:
-    values = np.asarray(periods, dtype=np.float64)
-    lo = -np.inf if min_period_records is None else float(min_period_records)
-    hi = np.inf if max_period_records is None else float(max_period_records)
-    if hi < lo:
-        lo, hi = hi, lo
-    return np.asarray((values >= lo) & (values <= hi), dtype=bool)
-
-
-def _region_time_integral(score: np.ndarray, p0: int, p1: int, t0: int, t1: int) -> tuple[float, float]:
-    window = np.asarray(score[p0:p1 + 1, t0:t1 + 1], dtype=np.float32)
-    if window.size == 0:
-        return 0.0, 0.0
-    time_profile = np.nanmax(window, axis=0)
-    positive = np.clip(time_profile, 0.0, None)
-    duration = max(1, int(time_profile.size))
-    integrated = float(np.nansum(positive) / np.sqrt(duration))
-    mean_score = float(np.nanmean(window))
-    return integrated, mean_score
-
-
-def _region_rows_for_channel(
-    score: np.ndarray,
-    power: np.ndarray,
-    periods: np.ndarray,
+    *,
     freq_mhz: float,
     channel_idx: int,
     record_start: int,
-    threshold: float,
-    min_duration_records: int,
-    min_width_bins: float,
-    max_width_bins: float,
-    max_candidates_per_channel: int,
     candidate_period_min_records: float | None,
     candidate_period_max_records: float | None,
-) -> list[dict]:
-    mask = np.asarray(score >= float(threshold), dtype=bool)
-    period_mask = _period_domain_mask(periods, candidate_period_min_records, candidate_period_max_records)
-    mask &= period_mask[:, np.newaxis]
-    labels, count = ndi.label(mask, structure=np.ones((3, 3), dtype=np.uint8))
-    slices = ndi.find_objects(labels)
-    rows: list[dict] = []
-    width_min = max(1.0, float(min_width_bins))
-    width_max = max(width_min, float(max_width_bins))
-    min_duration = max(1, int(min_duration_records))
+    noise_floor_fraction: float,
+    excess_eps_fraction: float,
+    activity_trim_low: float,
+    activity_trim_high: float,
+    activity_smooth_records: int,
+    pelt_penalty: float,
+    pelt_min_size_records: int,
+    window_min_duration_records: int,
+    window_min_activity_mean: float,
+    window_merge_gap_records: int,
+    profile_min_prominence: float,
+    profile_max_peaks_per_window: int,
+    max_candidates_per_channel: int,
+) -> tuple[list[dict], list[dict], dict[str, np.ndarray | float]]:
+    """Detect period candidates from one channel's CWT power map.
 
-    for label_id, region_slice in enumerate(slices, start=1):
-        if region_slice is None:
-            continue
-        local_p, local_t = np.nonzero(labels[region_slice] == label_id)
-        if local_p.size == 0:
-            continue
-        p_offset = int(region_slice[0].start or 0)
-        t_offset = int(region_slice[1].start or 0)
-        p_idx = local_p + p_offset
-        t_idx = local_t + t_offset
-        p0, p1 = int(p_idx.min()), int(p_idx.max())
-        t0, t1 = int(t_idx.min()), int(t_idx.max())
-        period_width_bins = float(p1 - p0 + 1)
-        duration = int(t1 - t0 + 1)
-        if duration < min_duration or period_width_bins < width_min or period_width_bins > width_max:
-            continue
+    The detector uses a single low-fraction noise floor per channel over the
+    trusted CWT period domain, then detects PELT time windows from signed
+    period-axis activity and searches period-profile peaks inside each window.
+    """
+    power = np.asarray(power_channel, dtype=np.float32)
+    if power.ndim != 2:
+        raise ValueError("power_channel must have shape (periods, records)")
+    valid_power, valid_periods, _mask = crop_valid_periods(
+        power,
+        periods,
+        candidate_period_min_records,
+        candidate_period_max_records,
+    )
+    noise_floor = low_fraction_noise_floor(valid_power, fraction=noise_floor_fraction)
+    excess = relative_excess(valid_power, noise_floor, eps_fraction=excess_eps_fraction)
+    activity_raw = signed_trimmed_period_activity(
+        excess,
+        trim_low=activity_trim_low,
+        trim_high=activity_trim_high,
+    )
+    activity = smooth_activity(activity_raw, smooth_records=activity_smooth_records)
+    activity_z = robust_standardize(activity)
+    segments = pelt_mean_shift(activity_z, penalty=pelt_penalty, min_size=pelt_min_size_records)
+    windows = active_windows_from_segments(
+        segments,
+        activity_z,
+        min_duration=window_min_duration_records,
+        min_mean=window_min_activity_mean,
+    )
+    windows = merge_close_windows(windows, max_gap=window_merge_gap_records)
 
-        region_scores = score[p_idx, t_idx]
-        peak_local = int(np.nanargmax(region_scores))
-        peak_period_idx = int(p_idx[peak_local])
-        peak_time_idx = int(t_idx[peak_local])
-        integrated_score, mean_score = _region_time_integral(score, p0, p1, t0, t1)
-        rows.append(
-            {
-                "detection_method": "per_channel_scalogram_region",
-                "channel_index": int(channel_idx),
-                "region_pixels": int(local_p.size),
-                "record_start": int(record_start + t0),
-                "record_stop": int(record_start + t1 + 1),
-                "duration_records": duration,
-                "period_start_records": float(periods[p0]),
-                "period_stop_records": float(periods[p1]),
-                "period_width_records": _period_width(periods, p0, p1),
-                "period_width_bins": period_width_bins,
-                "peak_period_records": float(periods[peak_period_idx]),
-                "freq_start_mhz": float(freq_mhz),
-                "freq_stop_mhz": float(freq_mhz),
-                "bandwidth_mhz": 0.0,
-                "peak_record": int(record_start + peak_time_idx),
-                "peak_freq_mhz": float(freq_mhz),
-                "peak_score": float(region_scores[peak_local]),
-                "mean_score": mean_score,
-                "integrated_score": integrated_score,
-            }
+    window_rows: list[dict] = []
+    candidate_rows: list[dict] = []
+    for window_index, window in enumerate(windows, start=1):
+        local_start = int(window["record_start"])
+        local_stop = int(window["record_stop"])
+        duration = int(local_stop - local_start)
+        peak_record = _peak_record(activity_z, local_start, local_stop, record_start)
+        window_id = f"ch{int(channel_idx):04d}_w{window_index:04d}"
+        activity_window = activity_z[local_start:local_stop]
+        window_row = {
+            "detection_method": WINDOW_METHOD,
+            "window_id": window_id,
+            "channel_index": int(channel_idx),
+            "freq_mhz": float(freq_mhz),
+            "record_start": int(record_start + local_start),
+            "record_stop": int(record_start + local_stop),
+            "duration_records": duration,
+            "activity_mean": float(np.nanmean(activity_window)) if activity_window.size else 0.0,
+            "activity_max": float(np.nanmax(activity_window)) if activity_window.size else 0.0,
+            "noise_floor": float(noise_floor),
+            "pelt_penalty": float(pelt_penalty),
+            "pelt_cost": float(window.get("pelt_cost", 0.0)),
+        }
+        window_rows.append(window_row)
+
+        profile = windowed_period_profile(excess, local_start, local_stop)
+        peaks = find_period_profile_peaks(
+            profile,
+            valid_periods,
+            min_prominence=profile_min_prominence,
+            max_peaks=profile_max_peaks_per_window,
         )
+        for peak in peaks:
+            candidate_rows.append(
+                {
+                    "detection_method": DETECTION_METHOD,
+                    "window_id": window_id,
+                    "channel_index": int(channel_idx),
+                    "region_pixels": 0,
+                    "record_start": int(record_start + local_start),
+                    "record_stop": int(record_start + local_stop),
+                    "duration_records": duration,
+                    "period_start_records": peak["period_start_records"],
+                    "period_stop_records": peak["period_stop_records"],
+                    "period_width_records": peak["period_width_records"],
+                    "period_width_bins": peak["period_width_bins"],
+                    "peak_period_records": peak["peak_period_records"],
+                    "freq_start_mhz": float(freq_mhz),
+                    "freq_stop_mhz": float(freq_mhz),
+                    "bandwidth_mhz": 0.0,
+                    "peak_record": peak_record,
+                    "peak_freq_mhz": float(freq_mhz),
+                    "peak_score": float(peak["profile_score"]),
+                    "mean_score": float(window_row["activity_mean"]),
+                    "integrated_score": float(peak["profile_score"]),
+                    "activity_mean": float(window_row["activity_mean"]),
+                    "activity_max": float(window_row["activity_max"]),
+                    "noise_floor": float(noise_floor),
+                    "period_peak_prominence": float(peak["period_peak_prominence"]),
+                }
+            )
 
-    rows.sort(key=lambda row: (row["integrated_score"], row["peak_score"]), reverse=True)
-    return rows[: max(1, int(max_candidates_per_channel))]
+    candidate_rows.sort(key=lambda row: (row["integrated_score"], row["period_peak_prominence"]), reverse=True)
+    max_rows = max(1, int(max_candidates_per_channel))
+    diagnostics: dict[str, np.ndarray | float] = {
+        "valid_periods": valid_periods,
+        "excess": excess,
+        "activity": activity_z,
+        "noise_floor": float(noise_floor),
+    }
+    return candidate_rows[:max_rows], window_rows, diagnostics
 
 
-def summarize_scalogram_regions(
+def detect_block_periods(
     power_cube: np.ndarray,
     periods: np.ndarray,
     freqs_mhz: np.ndarray,
     record_start: int,
-    threshold: float,
-    sigma_period_peak: float,
-    sigma_period_background: float,
-    sigma_time: float,
-    min_duration_records: int,
-    min_width_bins: float,
-    max_width_bins: float,
+    *,
+    candidate_period_min_records: float | None,
+    candidate_period_max_records: float | None,
+    noise_floor_fraction: float,
+    excess_eps_fraction: float,
+    activity_trim_low: float,
+    activity_trim_high: float,
+    activity_smooth_records: int,
+    pelt_penalty: float,
+    pelt_min_size_records: int,
+    window_min_duration_records: int,
+    window_min_activity_mean: float,
+    window_merge_gap_records: int,
+    profile_min_prominence: float,
+    profile_max_peaks_per_window: int,
     max_candidates_per_channel: int,
-    candidate_period_min_records: float | None = None,
-    candidate_period_max_records: float | None = None,
     max_candidates: int | None = None,
-) -> tuple[list[dict], np.ndarray]:
-    """Detect candidate regions in each channel's first-hand `(period, time)` scalogram."""
+) -> tuple[list[dict], list[dict]]:
     power = np.asarray(power_cube, dtype=np.float32)
     period_values = np.asarray(periods, dtype=np.float64)
     freqs = np.asarray(freqs_mhz, dtype=np.float64)
@@ -185,50 +190,38 @@ def summarize_scalogram_regions(
     if power.shape[0] != period_values.size or power.shape[2] != freqs.size:
         raise ValueError("power_cube shape must match periods and freqs_mhz")
 
-    score_cube = np.zeros_like(power, dtype=np.float32)
-    rows: list[dict] = []
+    candidates: list[dict] = []
+    windows: list[dict] = []
     for channel_idx in range(power.shape[2]):
-        score = scalogram_region_score(
-            np.log10(power[:, :, channel_idx] + 1e-12),
-            sigma_period_peak=sigma_period_peak,
-            sigma_period_background=sigma_period_background,
-            sigma_time=sigma_time,
+        channel_candidates, channel_windows, _diagnostics = detect_channel_periods(
+            power[:, :, channel_idx],
+            period_values,
+            freq_mhz=float(freqs[channel_idx]),
+            channel_idx=channel_idx,
+            record_start=record_start,
+            candidate_period_min_records=candidate_period_min_records,
+            candidate_period_max_records=candidate_period_max_records,
+            noise_floor_fraction=noise_floor_fraction,
+            excess_eps_fraction=excess_eps_fraction,
+            activity_trim_low=activity_trim_low,
+            activity_trim_high=activity_trim_high,
+            activity_smooth_records=activity_smooth_records,
+            pelt_penalty=pelt_penalty,
+            pelt_min_size_records=pelt_min_size_records,
+            window_min_duration_records=window_min_duration_records,
+            window_min_activity_mean=window_min_activity_mean,
+            window_merge_gap_records=window_merge_gap_records,
+            profile_min_prominence=profile_min_prominence,
+            profile_max_peaks_per_window=profile_max_peaks_per_window,
+            max_candidates_per_channel=max_candidates_per_channel,
         )
-        score_cube[:, :, channel_idx] = score
-        rows.extend(
-            _region_rows_for_channel(
-                score,
-                power[:, :, channel_idx],
-                period_values,
-                float(freqs[channel_idx]),
-                channel_idx,
-                record_start,
-                threshold,
-                min_duration_records,
-                min_width_bins,
-                max_width_bins,
-                max_candidates_per_channel,
-                candidate_period_min_records,
-                candidate_period_max_records,
-            )
-        )
+        candidates.extend(channel_candidates)
+        windows.extend(channel_windows)
 
-    rows.sort(key=lambda row: (row["integrated_score"], row["peak_score"]), reverse=True)
+    candidates.sort(key=lambda row: (row["integrated_score"], row["period_peak_prominence"]), reverse=True)
     if max_candidates is not None:
-        rows = rows[: max(0, int(max_candidates))]
-    return rows, score_cube
-
-
-def project_scalogram_score(score_cube: np.ndarray, method: str = "max") -> np.ndarray:
-    """Project `(period, time, channel)` scalogram scores to `(period, channel)` for overview plots."""
-    scores = np.asarray(score_cube, dtype=np.float32)
-    if scores.ndim != 3:
-        raise ValueError("score_cube must have shape (periods, records, channels)")
-    if method == "mean":
-        return np.nanmean(scores, axis=1).astype(np.float32)
-    if method == "p95":
-        return np.nanpercentile(scores, 95.0, axis=1).astype(np.float32)
-    return np.nanmax(scores, axis=1).astype(np.float32)
+        candidates = candidates[: max(0, int(max_candidates))]
+    return candidates, windows
 
 
 def add_candidate_ids(candidates: Iterable[dict]) -> list[dict]:

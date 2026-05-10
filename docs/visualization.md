@@ -18,25 +18,32 @@ Stage visualization is optional and writes PNG diagnostics plus
 ## Stages
 
 - Stage 01: raw `time x channel` matrix.
-- Stage 02: representative-channel `period x time` CWT scalograms before time
-  aggregation.
-- Stage 03: aggregated `period x channel` overview response map.
-- Stage 04: projected per-channel scalogram score inside the candidate period
-  domain and recorded-candidate overlays; line width encodes candidate duration.
-- Stage 05: candidate review overview colored by veto status.
-- Stage 06: validation/statistics overview when available.
-- Stage 07: injection recovery rates when available.
-- Stage 08: injected period versus refined period when available.
+- Stage 02: representative-channel full `period x time` CWT scalograms.
+- Stage 03: representative-channel trusted-period relative excess after
+  single-channel low-20% floor normalization.
+- Stage 04: signed period-axis activity curve with recorded PELT time windows.
+- Stage 05: windowed period profiles used to choose candidate periods.
+- Stage 06: aggregated `period x channel` overview response map for review
+  only; detection does not use this projection.
+- Stage 07: candidate-domain `period x channel` overview with recorded
+  candidate overlays.
+- Stage 08: candidate review overview colored by veto status.
+- Stage 09: validation/statistics overview when available.
+- Stage 10: injection recovery rates when available.
+- Stage 11: injected period versus refined period when available.
 
 ## Controls
 
-- `--threshold`: minimum per-channel scalogram region score. Default `2.5`.
 - `--candidate-period-min-records`: reject candidates below this period.
   Default `10`.
 - `--candidate-period-max-records`: reject candidates above this period.
   Default `200`.
-- `--min-duration-records`: minimum candidate time span. Default `8`.
-- `--max-width-bins`: maximum period-band width in bins. Default `10`.
+- `--noise-floor-fraction`: lowest fraction of trusted CWT power used as
+  channel noise floor. Default `0.20`.
+- `--pelt-penalty`: PELT mean-shift penalty. Default `8`.
+- `--window-min-duration-records`: minimum PELT window duration. Default `256`.
+- `--profile-min-prominence`: minimum period-profile peak prominence.
+  Default `0.5`.
 - `--viz-max-blocks`: maximum blocks to visualize; `0` renders all.
 - `--viz-max-channels`: representative channels per block for period-time CWT
   scalograms.

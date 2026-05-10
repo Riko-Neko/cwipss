@@ -9,11 +9,12 @@ per-channel continuous wavelet transform.
 time x channel data
   -> per-channel CWT over explicit period grid
   -> period x time x channel power cube
-  -> period-axis Difference-of-Gaussians per channel
-  -> time-bounded period-response regions
   -> candidate period-domain filter
-  -> time-integrated region ranking
-  -> period x channel candidate projection for visual review
+  -> single-channel low-fraction CWT noise floor
+  -> signed relative excess power
+  -> trimmed period-axis activity curve
+  -> PELT time windows per channel
+  -> windowed period-profile peaks
   -> veto, validation, statistics, report
 ```
 
@@ -21,29 +22,27 @@ The overview projection is directly interpretable:
 
 - x-axis: observation channel or MHz coordinate;
 - y-axis: period in records or seconds;
-- value: projected per-channel scalogram score or candidate duration marker.
+- value: CWT overview or recorded single-channel candidates.
 
 ## Candidate Meaning
 
-A time-bounded region in one channel's `period x time` scalogram is only a
-candidate. It is not a confirmed periodic signal. Final review still requires
-original time-series validation, null tests, RFI veto, and multiple-testing
-correction.
+A peak in a PELT-windowed period profile is only a candidate. It is not a
+confirmed periodic signal. Final review still requires original time-series
+validation, null tests, RFI veto, and multiple-testing correction.
 
 ## Candidate Sensitivity
 
 The default detector is set for low sensitivity and higher review purity:
 
-- per-channel scalogram score `threshold=2.5`;
 - candidate period domain `10..200` records;
-- minimum time span `min_duration_records=8`;
-- period-band width capped at `max_width_bins=10`;
-- retained regions capped at `max_candidates_per_block=50`;
+- low-floor noise fraction `0.20`;
+- PELT minimum segment/window size `256` records;
+- retained candidates capped at `max_candidates_per_block=50`;
 - validation capped at `validation.max_candidates=25`.
 
-Lower thresholds are debug/high-recall settings. They are useful for inspecting
-weak period responses, but they can create many visually plausible candidates
-and should not be used as the default review configuration.
+Lower PELT/profile thresholds are debug/high-recall settings. They are useful
+for inspecting weak period responses, but they can create many visually
+plausible candidates and should not be used as the default review configuration.
 
 ## Feasible Period Domain
 
@@ -91,8 +90,10 @@ Supported aggregation methods are `max`, `mean`, `median`, `pNN`, and
 `percentile`.
 
 Before aggregation, visualization can write representative-channel
-`period x time` scalograms. This is the required middleware view for inspecting
-whether a period response is persistent, burst-like, or contaminated.
+`period x time` scalograms, trusted-period relative-excess maps, PELT activity
+curves, and windowed period profiles. These are the required middleware views
+for inspecting whether a period response is persistent, burst-like, or
+contaminated.
 
 ## Outputs
 
@@ -100,6 +101,7 @@ Each run writes:
 
 - `candidates_raw.csv`
 - `candidates_reviewed.csv`
+- `time_windows.csv`
 - `manifest.csv`
 - `summary.json`
 - optional `visualization/index.md`

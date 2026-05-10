@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import numpy as np
 
+from ce4_period_search.activity import low_fraction_noise_floor, relative_excess, signed_trimmed_period_activity
 from ce4_period_search.cwt import aggregate_cwt_time, cwt_power_cube, period_grid_records
-from ce4_period_search.detection import summarize_scalogram_regions
+from ce4_period_search.detection import detect_block_periods
+from ce4_period_search.windows import pelt_mean_shift
 
 
 def test_cwt_power_cube_shape() -> None:
@@ -27,67 +29,75 @@ def test_cwt_time_aggregation_returns_period_channel_map() -> None:
     assert response[2, 1] == 10.0
 
 
-def test_scalogram_region_detector_finds_time_bounded_period_band() -> None:
-    periods = period_grid_records(2, 128, 48)
-    target_period_idx = 24
-    target_channel = 3
-    power = np.ones((periods.size, 64, 5), dtype=np.float32)
-    power[target_period_idx - 1:target_period_idx + 2, 20:45, target_channel] = 100.0
+def test_low_fraction_noise_floor_ignores_high_power_tail() -> None:
+    values = np.ones((10, 100), dtype=np.float32)
+    values[:, 80:] = 100.0
 
-    rows, score_cube = summarize_scalogram_regions(
+    floor = low_fraction_noise_floor(values, fraction=0.2)
+
+    assert 0.9 <= floor <= 1.1
+
+
+def test_signed_activity_keeps_negative_excess() -> None:
+    excess = np.array([[-1.0, 2.0], [1.0, 4.0], [3.0, 6.0]], dtype=np.float32)
+
+    activity = signed_trimmed_period_activity(excess, trim_low=0.0, trim_high=1.0)
+
+    assert activity.tolist() == [1.0, 4.0]
+
+
+def test_pelt_mean_shift_finds_active_segment() -> None:
+    activity = np.zeros(120, dtype=np.float32)
+    activity[40:90] = 4.0
+
+    segments = pelt_mean_shift(activity, penalty=5.0, min_size=10)
+    bounds = [(segment.start, segment.stop) for segment in segments]
+
+    assert any(start <= 40 and stop >= 90 for start, stop in bounds)
+
+
+def test_lowfloor_pelt_detector_finds_windowed_period_peak() -> None:
+    periods = period_grid_records(2, 128, 48)
+    target_period_idx = int(np.argmin(np.abs(periods - 64.0)))
+    target_channel = 3
+    power = np.ones((periods.size, 128, 5), dtype=np.float32)
+    power[target_period_idx - 2:target_period_idx + 3, 36:96, target_channel] = 50.0
+
+    rows, windows = detect_block_periods(
         power_cube=power,
         periods=periods,
         freqs_mhz=np.arange(5, dtype=np.float64),
         record_start=10,
-        threshold=2.0,
-        sigma_period_peak=1.0,
-        sigma_period_background=8.0,
-        sigma_time=1.0,
-        min_duration_records=8,
-        min_width_bins=1.0,
-        max_width_bins=8.0,
-        max_candidates_per_channel=1,
+        candidate_period_min_records=10.0,
+        candidate_period_max_records=200.0,
+        noise_floor_fraction=0.2,
+        excess_eps_fraction=1e-6,
+        activity_trim_low=0.0,
+        activity_trim_high=1.0,
+        activity_smooth_records=3,
+        pelt_penalty=5.0,
+        pelt_min_size_records=8,
+        window_min_duration_records=16,
+        window_min_activity_mean=0.5,
+        window_merge_gap_records=4,
+        profile_min_prominence=0.1,
+        profile_max_peaks_per_window=2,
+        max_candidates_per_channel=2,
         max_candidates=10,
     )
 
-    assert score_cube.shape == power.shape
-    assert len(rows) == 1
-    assert rows[0]["detection_method"] == "per_channel_scalogram_region"
+    assert len(windows) >= 1
+    assert len(rows) >= 1
+    assert rows[0]["detection_method"] == "single_channel_lowfloor_pelt_profile"
     assert rows[0]["channel_index"] == target_channel
     assert rows[0]["peak_freq_mhz"] == float(target_channel)
-    assert rows[0]["peak_period_records"] == float(periods[target_period_idx])
-    assert 25 <= rows[0]["record_start"] <= 32
-    assert 53 <= rows[0]["record_stop"] <= 60
-    assert rows[0]["duration_records"] >= 20
+    assert abs(rows[0]["peak_period_records"] - float(periods[target_period_idx])) < 12.0
+    assert rows[0]["record_start"] <= 50
+    assert rows[0]["record_stop"] >= 90
     assert rows[0]["integrated_score"] > 0
 
 
-def test_scalogram_region_detector_rejects_out_of_domain_periods() -> None:
-    periods = period_grid_records(2, 128, 48)
-    low_idx = int(np.argmin(np.abs(periods - 5.0)))
-    high_idx = int(np.argmin(np.abs(periods - 64.0)))
-    power = np.ones((periods.size, 64, 2), dtype=np.float32)
-    power[low_idx - 1:low_idx + 2, 12:48, 0] = 100.0
-    power[high_idx - 1:high_idx + 2, 12:48, 1] = 100.0
-
-    rows, _score_cube = summarize_scalogram_regions(
-        power_cube=power,
-        periods=periods,
-        freqs_mhz=np.arange(2, dtype=np.float64),
-        record_start=0,
-        threshold=2.0,
-        sigma_period_peak=1.0,
-        sigma_period_background=8.0,
-        sigma_time=1.0,
-        min_duration_records=8,
-        min_width_bins=1.0,
-        max_width_bins=8.0,
-        max_candidates_per_channel=1,
-        candidate_period_min_records=10.0,
-        candidate_period_max_records=200.0,
-        max_candidates=10,
-    )
-
-    assert len(rows) == 1
-    assert rows[0]["channel_index"] == 1
-    assert rows[0]["peak_period_records"] >= 10.0
+def test_relative_excess_is_zero_near_noise_floor() -> None:
+    power = np.ones((4, 5), dtype=np.float32)
+    z = relative_excess(power, 1.0)
+    assert np.max(np.abs(z)) < 1e-5

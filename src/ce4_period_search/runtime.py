@@ -15,7 +15,8 @@ def runtime_info() -> dict:
         "scipy": scipy.__version__,
         "local_filter": {
             "enabled": True,
-            "scalogram_filter": "scipy.ndimage.gaussian_filter1d",
-            "region_labeler": "scipy.ndimage.label",
+            "noise_floor": "numpy.partition low-fraction mean",
+            "activity_smoother": "scipy.ndimage.uniform_filter1d",
+            "window_detector": "internal PELT mean-shift",
         },
     }

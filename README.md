@@ -1,6 +1,6 @@
-# CScout: A CWT Period Search Pipeline
+# CWIPSS: Continuous Wavelet Investigation for Periodic Spectral Signals
 
-Reproducible CWT period-candidate search for time-channel data.
+CWIPSS is a reproducible CWT period-candidate search pipeline for time-channel data.
 
 The core pipeline treats input as a dynamic spectrum or equivalent
 `time x channel` matrix. Mission- or instrument-specific file formats belong to
@@ -12,19 +12,19 @@ The candidate generator is:
 
 1. read time-channel data through an adapter;
 2. run per-channel CWT over an explicit period grid;
-3. score each full `period x time` scalogram with a period-axis
-   Difference-of-Gaussians filter;
-4. extract time-bounded period-response regions per frequency channel inside
-   the configured candidate period domain;
-5. rank regions by time-integrated score;
-6. project candidates onto a `period x channel` overview map for review.
+3. crop to the configured trusted period domain;
+4. estimate a single-channel low-fraction CWT noise floor from the lowest 20%
+   of valid CWT power;
+5. compute signed relative excess power and a trimmed period-axis activity curve;
+6. use PELT to propose time windows per channel;
+7. integrate each window into a period profile and rank period peaks.
 
-Detected scalogram regions are candidates only. Validation in the original time series
-is still required before any signal interpretation.
+Detected period-profile peaks are candidates only. Validation in the original
+time series is still required before any signal interpretation.
 
 Single-channel period candidates are valid targets. The legacy-style
 `fixed_channel` and time-edge vetoes are disabled by default because they are
-not meaningful for the time-aggregated CWT overview projection.
+not meaningful for this single-channel candidate engine.
 
 ## Layout
 
@@ -61,17 +61,18 @@ arguments override matching config values.
 
 Default candidate generation is intentionally conservative:
 
-- `threshold=2.5`: minimum per-channel scalogram region score.
 - `candidate_period_min_records=10` and `candidate_period_max_records=200`:
   reject low-period instrument-like stripes and long-period trend-like domains.
-- `min_duration_records=8`: minimum candidate time span.
-- `max_width_bins=10`: reject broad period bands.
-- `max_candidates_per_block=50`: cap retained regions per frequency block.
+- `noise_floor_fraction=0.20`: estimate the channel floor from the lowest 20%
+  of trusted CWT power.
+- `pelt_min_size_records=256` and `window_min_duration_records=256`: reject
+  short unstable activity windows.
+- `max_candidates_per_block=50`: cap retained candidates per frequency block.
 - `validation.max_candidates=25`: cap rows passed to validation by default.
 
-For diagnostic/high-recall sweeps, lower `--threshold` or
-`--min-duration-records` explicitly. Do not use low thresholds as the default
-review mode.
+For diagnostic/high-recall sweeps, lower `--pelt-penalty`,
+`--window-min-activity-mean`, or `--profile-min-prominence` explicitly. Do not
+use high-recall settings as the default review mode.
 
 The default candidate period domain assumes local scans of roughly 4096 records
 and target responses lasting at least half that window: with at least 10 cycles
@@ -86,6 +87,7 @@ Each run writes:
 
 - `config.resolved.json`
 - `manifest.csv`
+- `time_windows.csv`
 - `candidates_raw.csv`
 - `candidates_reviewed.csv`
 - `summary.json`
@@ -144,9 +146,11 @@ batch directory receives merged candidate, validation, and statistics tables.
 This writes `visualization/index.md` plus PNG diagnostics for:
 
 - raw time-channel matrix;
-- representative-channel `period x time` CWT scalograms before time aggregation;
-- aggregated `period x channel` response maps;
-- projected per-channel scalogram score maps and candidate overlays;
+- representative-channel full `period x time` CWT scalograms;
+- trusted-period relative-excess maps after low-20% floor normalization;
+- single-channel signed activity curves with recorded PELT windows;
+- windowed period profiles with candidate period spans;
+- aggregated `period x channel` overview maps for review only;
 - veto review and optional validation/injection summaries.
 
 ## Injection Benchmark

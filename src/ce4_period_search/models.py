@@ -17,6 +17,7 @@ RAW_CANDIDATE_FIELDNAMES = [
     "cwt_wavelet",
     "time_aggregation",
     "detection_method",
+    "window_id",
     "channel_index",
     "region_pixels",
     "record_start",
@@ -38,6 +39,10 @@ RAW_CANDIDATE_FIELDNAMES = [
     "peak_score",
     "mean_score",
     "integrated_score",
+    "activity_mean",
+    "activity_max",
+    "noise_floor",
+    "period_peak_prominence",
     "block_channel_start",
     "block_channel_stop",
 ]
@@ -111,6 +116,28 @@ MANIFEST_FIELDNAMES = [
     "candidate_count",
     "status",
     "error",
+]
+
+
+TIME_WINDOW_FIELDNAMES = [
+    "schema_version",
+    "run_id",
+    "source_file",
+    "block_id",
+    "window_id",
+    "detection_method",
+    "channel_index",
+    "freq_mhz",
+    "record_start",
+    "record_stop",
+    "duration_records",
+    "activity_mean",
+    "activity_max",
+    "noise_floor",
+    "pelt_penalty",
+    "pelt_cost",
+    "block_channel_start",
+    "block_channel_stop",
 ]
 
 

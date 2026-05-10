@@ -25,16 +25,22 @@ class CWTSearchConfig:
     block_channels: int = 128
     time_aggregation: str = "p95"
     aggregation_percentile: float = 95.0
-    threshold: float = 2.5
-    dog_sigma_peak: float = 1.0
-    dog_sigma_background: float = 10.0
-    time_smooth_sigma: float = 1.0
-    min_duration_records: int = 8
-    min_width_bins: float = 1.0
-    max_width_bins: float = 10.0
+    detector: str = "single_channel_lowfloor_pelt"
     candidate_period_min_records: float = 10.0
     candidate_period_max_records: float = 200.0
-    max_candidates_per_channel: int = 2
+    noise_floor_fraction: float = 0.20
+    excess_eps_fraction: float = 1e-6
+    activity_trim_low: float = 0.05
+    activity_trim_high: float = 0.95
+    activity_smooth_records: int = 8
+    pelt_penalty: float = 8.0
+    pelt_min_size_records: int = 256
+    window_min_duration_records: int = 256
+    window_min_activity_mean: float = 0.05
+    window_merge_gap_records: int = 64
+    profile_min_prominence: float = 0.5
+    profile_max_peaks_per_window: int = 3
+    max_candidates_per_channel: int = 3
     output_dir: str = "runs"
     max_candidates_per_block: int = 50
     veto_enabled: bool = True
@@ -92,15 +98,21 @@ _SECTION_KEY_MAP: dict[str, dict[str, str]] = {
         "aggregation_percentile": "aggregation_percentile",
     },
     "detection": {
-        "threshold": "threshold",
-        "dog_sigma_peak": "dog_sigma_peak",
-        "dog_sigma_background": "dog_sigma_background",
-        "time_smooth_sigma": "time_smooth_sigma",
-        "min_duration_records": "min_duration_records",
-        "min_width_bins": "min_width_bins",
-        "max_width_bins": "max_width_bins",
+        "detector": "detector",
         "candidate_period_min_records": "candidate_period_min_records",
         "candidate_period_max_records": "candidate_period_max_records",
+        "noise_floor_fraction": "noise_floor_fraction",
+        "excess_eps_fraction": "excess_eps_fraction",
+        "activity_trim_low": "activity_trim_low",
+        "activity_trim_high": "activity_trim_high",
+        "activity_smooth_records": "activity_smooth_records",
+        "pelt_penalty": "pelt_penalty",
+        "pelt_min_size_records": "pelt_min_size_records",
+        "window_min_duration_records": "window_min_duration_records",
+        "window_min_activity_mean": "window_min_activity_mean",
+        "window_merge_gap_records": "window_merge_gap_records",
+        "profile_min_prominence": "profile_min_prominence",
+        "profile_max_peaks_per_window": "profile_max_peaks_per_window",
         "max_candidates_per_channel": "max_candidates_per_channel",
         "max_candidates_per_block": "max_candidates_per_block",
     },
@@ -223,15 +235,21 @@ def cwt_config_to_nested_dict(config: CWTSearchConfig) -> dict[str, Any]:
             "aggregation_percentile": config.aggregation_percentile,
         },
         "detection": {
-            "threshold": config.threshold,
-            "dog_sigma_peak": config.dog_sigma_peak,
-            "dog_sigma_background": config.dog_sigma_background,
-            "time_smooth_sigma": config.time_smooth_sigma,
-            "min_duration_records": config.min_duration_records,
-            "min_width_bins": config.min_width_bins,
-            "max_width_bins": config.max_width_bins,
+            "detector": config.detector,
             "candidate_period_min_records": config.candidate_period_min_records,
             "candidate_period_max_records": config.candidate_period_max_records,
+            "noise_floor_fraction": config.noise_floor_fraction,
+            "excess_eps_fraction": config.excess_eps_fraction,
+            "activity_trim_low": config.activity_trim_low,
+            "activity_trim_high": config.activity_trim_high,
+            "activity_smooth_records": config.activity_smooth_records,
+            "pelt_penalty": config.pelt_penalty,
+            "pelt_min_size_records": config.pelt_min_size_records,
+            "window_min_duration_records": config.window_min_duration_records,
+            "window_min_activity_mean": config.window_min_activity_mean,
+            "window_merge_gap_records": config.window_merge_gap_records,
+            "profile_min_prominence": config.profile_min_prominence,
+            "profile_max_peaks_per_window": config.profile_max_peaks_per_window,
             "max_candidates_per_channel": config.max_candidates_per_channel,
             "max_candidates_per_block": config.max_candidates_per_block,
         },

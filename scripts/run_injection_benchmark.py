@@ -51,13 +51,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--block-channels", type=int, default=128, help="Frequency channels per block.")
     parser.add_argument("--time-aggregation", type=str, default="p95", help="Time aggregation for period-channel response.")
     parser.add_argument("--aggregation-percentile", type=float, default=95.0, help="Percentile for percentile aggregation.")
-    parser.add_argument("--threshold", type=float, default=2.5, help="Minimum per-channel scalogram region score.")
-    parser.add_argument("--dog-sigma-peak", type=float, default=1.0, help="Narrow period-axis Gaussian sigma for scalogram DoG.")
-    parser.add_argument("--dog-sigma-background", type=float, default=10.0, help="Broad period-axis Gaussian sigma for scalogram DoG.")
-    parser.add_argument("--time-smooth-sigma", type=float, default=1.0, help="Time-axis smoothing sigma for scalogram region scoring.")
-    parser.add_argument("--min-duration-records", type=int, default=8, help="Minimum candidate time length in records.")
-    parser.add_argument("--min-width-bins", type=float, default=1.0, help="Minimum candidate period width in bins.")
-    parser.add_argument("--max-width-bins", type=float, default=10.0, help="Maximum candidate period width in bins.")
+    parser.add_argument("--noise-floor-fraction", type=float, default=0.20, help="Lowest fraction of valid CWT power used as channel noise floor.")
+    parser.add_argument("--excess-eps-fraction", type=float, default=1e-6, help="Fractional epsilon added to the noise floor.")
+    parser.add_argument("--activity-trim-low", type=float, default=0.05, help="Lower period-axis trim fraction for signed activity.")
+    parser.add_argument("--activity-trim-high", type=float, default=0.95, help="Upper period-axis trim fraction for signed activity.")
+    parser.add_argument("--activity-smooth-records", type=int, default=8, help="Moving-average width for activity curves.")
+    parser.add_argument("--pelt-penalty", type=float, default=8.0, help="PELT mean-shift penalty.")
+    parser.add_argument("--pelt-min-size-records", type=int, default=256, help="PELT minimum segment size.")
+    parser.add_argument("--window-min-duration-records", type=int, default=256, help="Minimum retained PELT window duration.")
+    parser.add_argument("--window-min-activity-mean", type=float, default=0.05, help="Minimum retained standardized activity mean.")
+    parser.add_argument("--window-merge-gap-records", type=int, default=64, help="Merge PELT windows separated by at most this gap.")
+    parser.add_argument("--profile-min-prominence", type=float, default=0.5, help="Minimum windowed period-profile peak prominence.")
+    parser.add_argument("--profile-max-peaks-per-window", type=int, default=3, help="Maximum period peaks retained per time window.")
     parser.add_argument("--candidate-period-min-records", type=float, default=10.0, help="Reject candidates below this period in records.")
     parser.add_argument("--candidate-period-max-records", type=float, default=200.0, help="Reject candidates above this period in records.")
     parser.add_argument("--max-candidates-per-channel", type=int, default=2, help="Candidate cap per frequency channel.")
@@ -139,13 +144,18 @@ def main() -> None:
         block_channels=args.block_channels,
         time_aggregation=args.time_aggregation,
         aggregation_percentile=args.aggregation_percentile,
-        threshold=args.threshold,
-        dog_sigma_peak=args.dog_sigma_peak,
-        dog_sigma_background=args.dog_sigma_background,
-        time_smooth_sigma=args.time_smooth_sigma,
-        min_duration_records=args.min_duration_records,
-        min_width_bins=args.min_width_bins,
-        max_width_bins=args.max_width_bins,
+        noise_floor_fraction=args.noise_floor_fraction,
+        excess_eps_fraction=args.excess_eps_fraction,
+        activity_trim_low=args.activity_trim_low,
+        activity_trim_high=args.activity_trim_high,
+        activity_smooth_records=args.activity_smooth_records,
+        pelt_penalty=args.pelt_penalty,
+        pelt_min_size_records=args.pelt_min_size_records,
+        window_min_duration_records=args.window_min_duration_records,
+        window_min_activity_mean=args.window_min_activity_mean,
+        window_merge_gap_records=args.window_merge_gap_records,
+        profile_min_prominence=args.profile_min_prominence,
+        profile_max_peaks_per_window=args.profile_max_peaks_per_window,
         candidate_period_min_records=args.candidate_period_min_records,
         candidate_period_max_records=args.candidate_period_max_records,
         max_candidates_per_channel=args.max_candidates_per_channel,
@@ -196,6 +206,7 @@ def main() -> None:
     summary_path.write_text(json.dumps(summary, indent=2, ensure_ascii=True))
     print(f"Injection benchmark directory: {output_dir}")
     print(f"Truth: {output_dir / 'injection_truth.csv'}")
+    print(f"Time windows: {output_dir / 'time_windows.csv'}")
     print(f"Results: {output_dir / 'injection_results.csv'}")
     print(f"Performance: {output_dir / 'injection_performance.csv'}")
     if args.visualize:

@@ -213,15 +213,19 @@ def test_run_injection_benchmark_writes_expected_outputs(tmp_path: Path) -> None
             period_max_records=16,
             period_count=8,
             block_channels=16,
-            threshold=1.5,
-            dog_sigma_peak=0.5,
-            dog_sigma_background=3.0,
-            time_smooth_sigma=1.0,
-            min_duration_records=4,
-            min_width_bins=1.0,
-            max_width_bins=5.0,
             candidate_period_min_records=2.0,
             candidate_period_max_records=16.0,
+            noise_floor_fraction=0.2,
+            activity_trim_low=0.0,
+            activity_trim_high=1.0,
+            activity_smooth_records=3,
+            pelt_penalty=2.0,
+            pelt_min_size_records=8,
+            window_min_duration_records=8,
+            window_min_activity_mean=0.1,
+            window_merge_gap_records=4,
+            profile_min_prominence=0.1,
+            profile_max_peaks_per_window=2,
             max_candidates_per_channel=2,
             max_candidates_per_block=20,
         ),
@@ -240,6 +244,7 @@ def test_run_injection_benchmark_writes_expected_outputs(tmp_path: Path) -> None
     )
 
     assert (run_dir / "injection_truth.csv").exists()
+    assert (run_dir / "time_windows.csv").exists()
     assert (run_dir / "candidates_raw.csv").exists()
     assert (run_dir / "validation_reviewed.csv").exists()
     assert (run_dir / "injection_performance.csv").exists()

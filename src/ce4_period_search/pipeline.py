@@ -8,12 +8,13 @@ import numpy as np
 
 from .config import CWTSearchConfig, cwt_config_to_nested_dict
 from .cwt import cwt_power_cube, period_grid_records
-from .detection import add_candidate_ids, summarize_scalogram_regions
+from .detection import add_candidate_ids, detect_block_periods
 from .io import CE4Reader
 from .models import (
     MANIFEST_FIELDNAMES,
     RAW_CANDIDATE_FIELDNAMES,
     REVIEWED_CANDIDATE_FIELDNAMES,
+    TIME_WINDOW_FIELDNAMES,
     make_manifest_row,
     normalize_candidate_row,
 )
@@ -60,6 +61,10 @@ def write_reviewed_candidates_csv(path: Path, candidates: list[dict]) -> None:
     write_rows_csv(path, candidates, REVIEWED_CANDIDATE_FIELDNAMES)
 
 
+def write_time_windows_csv(path: Path, rows: list[dict]) -> None:
+    write_rows_csv(path, rows, TIME_WINDOW_FIELDNAMES)
+
+
 def write_manifest_csv(path: Path, rows: list[dict]) -> None:
     write_rows_csv(path, rows, MANIFEST_FIELDNAMES)
 
@@ -88,9 +93,9 @@ def write_summary_json(
         },
         "top_candidates": candidates[:20],
         "notes": [
-            "CWT per-channel scalogram regions are candidates, not signal claims.",
-            "Time aggregation creates only the period-channel overview map, not the primary detector input.",
-            "Candidate period-domain filtering is applied during per-channel region detection.",
+            "CWT single-channel low-floor PELT/profile detections are candidates, not signal claims.",
+            "Frequency channels are processed independently; no cross-frequency public operation is used.",
+            "Candidate period-domain filtering is applied before activity and profile scoring.",
             "Candidate periods require validation in the original time series.",
         ],
     }
@@ -138,6 +143,7 @@ def run_cwt_search(config: CWTSearchConfig) -> Path:
         leave=config.progress_leave,
     )
     all_candidates: list[dict] = []
+    all_windows: list[dict] = []
     try:
         for block_index, block in enumerate(
             reader.iter_frequency_blocks(
@@ -157,23 +163,36 @@ def run_cwt_search(config: CWTSearchConfig) -> Path:
                 method=config.cwt_method,
                 normalize_channels=True,
             )
-            candidates, _score_cube = summarize_scalogram_regions(
+            candidates, windows = detect_block_periods(
                 power_cube=power,
                 periods=periods,
                 freqs_mhz=block.freqs_mhz,
                 record_start=block.record_range[0],
-                threshold=config.threshold,
-                sigma_period_peak=config.dog_sigma_peak,
-                sigma_period_background=config.dog_sigma_background,
-                sigma_time=config.time_smooth_sigma,
-                min_duration_records=config.min_duration_records,
-                min_width_bins=config.min_width_bins,
-                max_width_bins=config.max_width_bins,
-                max_candidates_per_channel=config.max_candidates_per_channel,
                 candidate_period_min_records=config.candidate_period_min_records,
                 candidate_period_max_records=config.candidate_period_max_records,
+                noise_floor_fraction=config.noise_floor_fraction,
+                excess_eps_fraction=config.excess_eps_fraction,
+                activity_trim_low=config.activity_trim_low,
+                activity_trim_high=config.activity_trim_high,
+                activity_smooth_records=config.activity_smooth_records,
+                pelt_penalty=config.pelt_penalty,
+                pelt_min_size_records=config.pelt_min_size_records,
+                window_min_duration_records=config.window_min_duration_records,
+                window_min_activity_mean=config.window_min_activity_mean,
+                window_merge_gap_records=config.window_merge_gap_records,
+                profile_min_prominence=config.profile_min_prominence,
+                profile_max_peaks_per_window=config.profile_max_peaks_per_window,
+                max_candidates_per_channel=config.max_candidates_per_channel,
                 max_candidates=config.max_candidates_per_block,
             )
+            for row in windows:
+                row["schema_version"] = 1
+                row["run_id"] = run_id
+                row["source_file"] = str(config.input)
+                row["block_id"] = block_id
+                row["block_channel_start"] = block.channel_range[0]
+                row["block_channel_stop"] = block.channel_range[1]
+                all_windows.append(row)
             for row in candidates:
                 row["cwt_wavelet"] = config.wavelet
                 row["time_aggregation"] = config.time_aggregation
@@ -195,6 +214,7 @@ def run_cwt_search(config: CWTSearchConfig) -> Path:
             progress.close()
 
     final_candidates = add_candidate_ids(all_candidates)
+    write_time_windows_csv(run_dir / "time_windows.csv", all_windows)
     write_candidates_csv(run_dir / "candidates_raw.csv", final_candidates)
     if config.save_legacy_candidates_csv:
         write_candidates_csv(run_dir / "candidates.csv", final_candidates)
@@ -243,17 +263,19 @@ def run_cwt_search(config: CWTSearchConfig) -> Path:
                 cwt_method=config.cwt_method,
                 periods=periods,
                 block_channels=config.block_channels,
-                threshold=config.threshold,
-                dog_sigma_peak=config.dog_sigma_peak,
-            dog_sigma_background=config.dog_sigma_background,
-            time_smooth_sigma=config.time_smooth_sigma,
-            candidate_period_min_records=config.candidate_period_min_records,
-            candidate_period_max_records=config.candidate_period_max_records,
-            time_aggregation=config.time_aggregation,
+                candidate_period_min_records=config.candidate_period_min_records,
+                candidate_period_max_records=config.candidate_period_max_records,
+                time_aggregation=config.time_aggregation,
                 aggregation_percentile=config.aggregation_percentile,
+                noise_floor_fraction=config.noise_floor_fraction,
+                excess_eps_fraction=config.excess_eps_fraction,
+                activity_trim_low=config.activity_trim_low,
+                activity_trim_high=config.activity_trim_high,
+                activity_smooth_records=config.activity_smooth_records,
             ),
             raw_candidates=final_candidates,
             reviewed_candidates=reviewed_candidates,
+            time_windows=all_windows,
             run_id=run_id,
             source_name=str(config.input),
             record_offset=int(selected_block.record_range[0]),
