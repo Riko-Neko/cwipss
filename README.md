@@ -44,10 +44,10 @@ Generated products go under `runs/` and are ignored by git.
 
 ## Quick Start
 
-Use the `pytorch` conda environment:
+Activate a Python environment with the project dependencies installed, then run:
 
 ```bash
-/opt/miniconda3/envs/pytorch/bin/python scripts/run_cwt_candidates.py \
+python scripts/run_cwt_candidates.py \
   --input data/CE4/example.2C \
   --f-start 38.0 \
   --f-stop 38.3 \
@@ -117,7 +117,7 @@ runtime information.
 ## Validation
 
 ```bash
-/opt/miniconda3/envs/pytorch/bin/python scripts/run_validation.py \
+python scripts/run_validation.py \
   --run-dir runs/<run_id> \
   --max-candidates 20 \
   --shuffle-trials 100
@@ -127,7 +127,7 @@ This writes `validation_summary.csv` and per-candidate JSON files under
 `validation/`.
 
 ```bash
-/opt/miniconda3/envs/pytorch/bin/python scripts/run_stats.py \
+python scripts/run_stats.py \
   --run-dir runs/<run_id>
 ```
 
@@ -137,7 +137,7 @@ global q-values, and deterministic evidence ranks.
 ## Batch
 
 ```bash
-/opt/miniconda3/envs/pytorch/bin/python scripts/run_batch.py \
+python scripts/run_batch.py \
   --input-dir data/CE4 \
   --pattern "*.2C" \
   --batch-id smoke_batch \
@@ -153,7 +153,7 @@ batch directory receives merged candidate, validation, and statistics tables.
 ## Visualization
 
 ```bash
-/opt/miniconda3/envs/pytorch/bin/python scripts/run_cwt_candidates.py \
+python scripts/run_cwt_candidates.py \
   --input data/CE4/example.2C \
   --f-start 38.0 \
   --f-stop 38.3 \
@@ -176,7 +176,7 @@ This writes `visualization/index.md` plus PNG diagnostics for:
 ## Injection Benchmark
 
 ```bash
-/opt/miniconda3/envs/pytorch/bin/python scripts/run_injection_benchmark.py \
+python scripts/run_injection_benchmark.py \
   --background synthetic \
   --records 1024 \
   --channels 64 \
@@ -196,7 +196,7 @@ copies.
 ## Report
 
 ```bash
-/opt/miniconda3/envs/pytorch/bin/python scripts/run_report.py \
+python scripts/run_report.py \
   --run-dir runs/<run_id-or-batch_id>
 ```
 

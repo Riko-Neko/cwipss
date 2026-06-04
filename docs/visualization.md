@@ -6,7 +6,7 @@ Stage visualization is optional and writes PNG diagnostics plus
 ## Enable
 
 ```bash
-/opt/miniconda3/envs/pytorch/bin/python scripts/run_cwt_candidates.py \
+python scripts/run_cwt_candidates.py \
   --input data/example.2C \
   --f-start 38.0 \
   --f-stop 38.3 \

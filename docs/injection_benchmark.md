@@ -10,7 +10,7 @@ are explicit stress tests, not the default scientific assumption.
 ## Command
 
 ```bash
-/opt/miniconda3/envs/pytorch/bin/python scripts/run_injection_benchmark.py \
+python scripts/run_injection_benchmark.py \
   --background synthetic \
   --records 1024 \
   --channels 64 \
@@ -21,7 +21,7 @@ are explicit stress tests, not the default scientific assumption.
 All injection suites are declared in JSON and passed with `--injection-config`:
 
 ```bash
-/opt/miniconda3/envs/pytorch/bin/python scripts/run_injection_benchmark.py \
+python scripts/run_injection_benchmark.py \
   --background ce4 \
   --input data/CE4/example.2C \
   --f-start 0.1 \
