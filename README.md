@@ -147,8 +147,11 @@ python scripts/run_batch.py \
   --t-stop 2048
 ```
 
-Each source file gets an isolated run under `runs/<batch_id>/files/`, and the
-batch directory receives merged candidate, validation, and statistics tables.
+Each source file gets an isolated run under `runs/<batch_id>/files/`. Batch
+runs also print a colored start/done/error line per input file, show a file-level
+progress bar plus the per-file CWT channel progress, and copy per-file CSVs into
+`runs/<batch_id>/per_file_results/` as each file completes. The batch directory
+also receives merged candidate, validation, and statistics tables.
 
 ## Visualization
 

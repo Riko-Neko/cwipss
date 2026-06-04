@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+import shutil
 import time
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime
@@ -45,6 +46,13 @@ class BatchConfig:
     stats: bool = True
 
 
+ANSI_RESET = "\033[0m"
+ANSI_BOLD_CYAN = "\033[1;36m"
+ANSI_BOLD_GREEN = "\033[1;32m"
+ANSI_BOLD_RED = "\033[1;31m"
+ANSI_BOLD_YELLOW = "\033[1;33m"
+
+
 def default_batch_id() -> str:
     return "batch_" + datetime.now().strftime("%Y%m%d_%H%M%S")
 
@@ -52,6 +60,31 @@ def default_batch_id() -> str:
 def _token(value: object) -> str:
     text = str(value)
     return text.replace(".", "p").replace("/", "_").replace(" ", "_")
+
+
+def _color(text: str, color: str) -> str:
+    return f"{color}{text}{ANSI_RESET}"
+
+
+def _batch_progress(total: int, enabled: bool, leave: bool):
+    if not enabled:
+        return None
+    from tqdm.auto import tqdm
+
+    return tqdm(
+        total=max(0, int(total)),
+        desc="Batch files",
+        unit="file",
+        leave=bool(leave),
+        dynamic_ncols=True,
+    )
+
+
+def _emit(message: str, progress=None) -> None:
+    if progress is not None:
+        progress.write(message)
+    else:
+        print(message, flush=True)
 
 
 def run_id_for_input(path: str | Path, index: int) -> str:
@@ -125,6 +158,30 @@ def _write_rows_csv(path: Path, rows: list[dict[str, Any]], fieldnames: list[str
             writer.writerow({key: row.get(key, "") for key in fieldnames})
 
 
+def _copy_csv_if_exists(source: Path, target: Path) -> bool:
+    if not source.exists():
+        return False
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(source, target)
+    return True
+
+
+def _copy_per_file_csv_outputs(run_dir: Path, per_file_dir: Path, run_id: str) -> list[Path]:
+    prefix = _token(run_id)
+    copied: list[Path] = []
+    for source_name, suffix in [
+        ("candidates_raw.csv", "candidates_raw.csv"),
+        ("candidates_reviewed.csv", "candidates_reviewed.csv"),
+        ("time_windows.csv", "time_windows.csv"),
+        ("validation_summary.csv", "validation_summary.csv"),
+        ("validation_reviewed.csv", "validation_reviewed.csv"),
+    ]:
+        target = per_file_dir / f"{prefix}.{suffix}"
+        if _copy_csv_if_exists(run_dir / source_name, target):
+            copied.append(target)
+    return copied
+
+
 def _read_rows_if_exists(path: Path) -> list[dict[str, str]]:
     if not path.exists():
         return []
@@ -194,51 +251,100 @@ def run_batch(
     project_dir = Path(project_dir)
     batch_dir = Path(batch_config.output_dir) / batch_config.batch_id
     files_dir = batch_dir / "files"
+    per_file_dir = batch_dir / "per_file_results"
     batch_dir.mkdir(parents=True, exist_ok=True)
     jobs = ensure_run_ids(jobs)
     _write_batch_config(batch_dir, batch_config, base_config, jobs)
 
     manifest_rows: list[dict[str, Any]] = []
     successful_run_dirs: list[Path] = []
-    for job in jobs:
-        start_time = time.perf_counter()
-        run_dir = files_dir / str(job.run_id)
-        status = "complete"
-        error = ""
-        validation_count = 0
-        stats_count = 0
-        try:
-            scan_config = _job_scan_config(base_config, job, files_dir)
-            run_dir = run_cwt_search(scan_config)
-            successful_run_dirs.append(run_dir)
-            if batch_config.validate:
-                validation_rows = _run_validation_for_dir(run_dir, scan_config, project_dir=project_dir)
-                validation_count = len(validation_rows)
-            if batch_config.stats and (run_dir / "validation_summary.csv").exists():
-                stats_rows = run_stats(run_dir / "validation_summary.csv", run_dir / "validation_reviewed.csv")
-                stats_count = len(stats_rows)
-            counts = _summary_counts(run_dir)
-        except Exception as exc:
-            status = "error"
-            error = str(exc)
-            counts = {"candidate_count": 0, "vetoed_candidate_count": 0}
-        duration = time.perf_counter() - start_time
-        manifest_rows.append(
-            {
-                "batch_id": batch_config.batch_id,
-                "run_id": job.run_id,
-                "source_file": job.input,
-                "run_dir": str(run_dir),
-                "status": status,
-                "error": error,
-                "duration_seconds": f"{duration:.3f}",
-                "candidate_count": counts["candidate_count"],
-                "vetoed_candidate_count": counts["vetoed_candidate_count"],
-                "validation_count": validation_count,
-                "stats_count": stats_count,
-            }
-        )
-        _write_rows_csv(batch_dir / "manifest.csv", manifest_rows, BATCH_MANIFEST_FIELDNAMES)
+    progress = _batch_progress(
+        total=len(jobs),
+        enabled=bool(base_config.progress_enabled),
+        leave=bool(base_config.progress_leave),
+    )
+    try:
+        iterable = enumerate(jobs, start=1)
+        for job_index, job in iterable:
+            _emit(
+                _color(
+                    f"[CWT BATCH] START {job_index}/{len(jobs)} run_id={job.run_id} file={Path(job.input).name}",
+                    ANSI_BOLD_CYAN,
+                ),
+                progress=progress,
+            )
+            start_time = time.perf_counter()
+            run_dir = files_dir / str(job.run_id)
+            status = "complete"
+            error = ""
+            validation_count = 0
+            stats_count = 0
+            copied_paths: list[Path] = []
+            try:
+                scan_config = _job_scan_config(base_config, job, files_dir)
+                run_dir = run_cwt_search(scan_config)
+                successful_run_dirs.append(run_dir)
+                copied_paths = _copy_per_file_csv_outputs(run_dir, per_file_dir, str(job.run_id))
+                if batch_config.validate:
+                    validation_rows = _run_validation_for_dir(run_dir, scan_config, project_dir=project_dir)
+                    validation_count = len(validation_rows)
+                if batch_config.stats and (run_dir / "validation_summary.csv").exists():
+                    stats_rows = run_stats(run_dir / "validation_summary.csv", run_dir / "validation_reviewed.csv")
+                    stats_count = len(stats_rows)
+                copied_paths = _copy_per_file_csv_outputs(run_dir, per_file_dir, str(job.run_id))
+                counts = _summary_counts(run_dir)
+            except Exception as exc:
+                status = "error"
+                error = str(exc)
+                counts = {"candidate_count": 0, "vetoed_candidate_count": 0}
+            duration = time.perf_counter() - start_time
+            manifest_rows.append(
+                {
+                    "batch_id": batch_config.batch_id,
+                    "run_id": job.run_id,
+                    "source_file": job.input,
+                    "run_dir": str(run_dir),
+                    "status": status,
+                    "error": error,
+                    "duration_seconds": f"{duration:.3f}",
+                    "candidate_count": counts["candidate_count"],
+                    "vetoed_candidate_count": counts["vetoed_candidate_count"],
+                    "validation_count": validation_count,
+                    "stats_count": stats_count,
+                }
+            )
+            _write_rows_csv(batch_dir / "manifest.csv", manifest_rows, BATCH_MANIFEST_FIELDNAMES)
+            if status == "complete":
+                _emit(
+                    _color(
+                        f"[CWT BATCH] DONE  {job_index}/{len(jobs)} run_id={job.run_id} "
+                        f"candidates={counts['candidate_count']} validation={validation_count} "
+                        f"csv_files={len(copied_paths)} duration={duration:.1f}s",
+                        ANSI_BOLD_GREEN,
+                    ),
+                    progress=progress,
+                )
+                if copied_paths:
+                    _emit(
+                        _color(
+                            f"[CWT BATCH] CSV   {per_file_dir / (_token(str(job.run_id)) + '.*.csv')}",
+                            ANSI_BOLD_YELLOW,
+                        ),
+                        progress=progress,
+                    )
+            else:
+                _emit(
+                    _color(
+                        f"[CWT BATCH] ERROR {job_index}/{len(jobs)} run_id={job.run_id} file={Path(job.input).name}: {error}",
+                        ANSI_BOLD_RED,
+                    ),
+                    progress=progress,
+                )
+            if progress is not None:
+                progress.update(1)
+    finally:
+        if progress is not None:
+            progress.close()
 
     _write_rows_csv(batch_dir / "manifest.csv", manifest_rows, BATCH_MANIFEST_FIELDNAMES)
     _write_rows_csv(
