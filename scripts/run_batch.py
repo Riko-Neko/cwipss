@@ -51,6 +51,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--block-channels", type=int, default=None, help="Frequency channels per block.")
     parser.add_argument("--noise-floor-fraction", type=float, default=None, help="Lowest fraction of valid CWT power used as channel noise floor.")
     parser.add_argument("--excess-eps-fraction", type=float, default=None, help="Fractional epsilon added to the noise floor.")
+    parser.add_argument("--structure-baseline-quantile", type=float, default=None, help="Low time-quantile background for per-period structure z-score.")
+    parser.add_argument("--structure-scale-quantile", type=float, default=None, help="Low time-quantile subset used to estimate per-period structure scale.")
+    parser.add_argument("--structure-z-threshold", type=float, default=None, help="Per-period robust z threshold for 2D CWT structure support.")
+    parser.add_argument("--structure-time-support-records", type=int, default=None, help="Time-neighborhood width for 2D structure support.")
+    parser.add_argument("--structure-period-support-bins", type=int, default=None, help="Period-neighborhood width for 2D structure support.")
+    parser.add_argument("--structure-min-support-fraction", type=float, default=None, help="Minimum local 2D support fraction before CWT texture is retained.")
     parser.add_argument("--activity-trim-low", type=float, default=None, help="Lower period-axis trim fraction for signed activity.")
     parser.add_argument("--activity-trim-high", type=float, default=None, help="Upper period-axis trim fraction for signed activity.")
     parser.add_argument("--activity-smooth-records", type=int, default=None, help="Moving-average width for activity curves.")
@@ -58,6 +64,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--pelt-min-size-records", type=int, default=None, help="PELT minimum segment size.")
     parser.add_argument("--window-min-duration-records", type=int, default=None, help="Minimum retained PELT window duration.")
     parser.add_argument("--window-min-activity-mean", type=float, default=None, help="Minimum retained standardized activity mean.")
+    parser.add_argument("--window-min-activity-raw-mean", type=float, default=None, help="Minimum retained raw structured activity mean before robust standardization.")
     parser.add_argument("--window-merge-gap-records", type=int, default=None, help="Merge PELT windows separated by at most this gap.")
     parser.add_argument("--profile-min-prominence", type=float, default=None, help="Minimum windowed period-profile peak prominence.")
     parser.add_argument("--profile-max-peaks-per-window", type=int, default=None, help="Maximum period peaks retained per time window.")
@@ -75,7 +82,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--visualize", action="store_true", default=None, help="Write staged visualization PNGs for each file run.")
     parser.add_argument("--viz-max-blocks", type=int, default=None, help="Maximum blocks to visualize per file; 0 means all.")
-    parser.add_argument("--viz-max-channels", type=int, default=None, help="Representative channels per block for period-time CWT plots.")
+    parser.add_argument("--viz-max-channels", type=int, default=None, help="Representative channels per block for period-time CWT plots; 0 means all channels.")
     parser.add_argument("--viz-top-candidates", type=int, default=None, help="Maximum candidate overlays/scatter points.")
     parser.add_argument("--viz-dpi", type=int, default=None, help="Visualization image DPI.")
     parser.add_argument(
@@ -117,6 +124,12 @@ def _scan_overrides(args: argparse.Namespace) -> dict:
         "aggregation_percentile",
         "noise_floor_fraction",
         "excess_eps_fraction",
+        "structure_baseline_quantile",
+        "structure_scale_quantile",
+        "structure_z_threshold",
+        "structure_time_support_records",
+        "structure_period_support_bins",
+        "structure_min_support_fraction",
         "activity_trim_low",
         "activity_trim_high",
         "activity_smooth_records",
@@ -124,6 +137,7 @@ def _scan_overrides(args: argparse.Namespace) -> dict:
         "pelt_min_size_records",
         "window_min_duration_records",
         "window_min_activity_mean",
+        "window_min_activity_raw_mean",
         "window_merge_gap_records",
         "profile_min_prominence",
         "profile_max_peaks_per_window",

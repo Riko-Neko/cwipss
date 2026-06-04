@@ -15,9 +15,12 @@ The candidate generator is:
 3. crop to the configured trusted period domain;
 4. estimate a single-channel low-fraction CWT noise floor from the lowest 20%
    of valid CWT power;
-5. compute signed relative excess power and a trimmed period-axis activity curve;
-6. use PELT to propose time windows per channel;
-7. integrate each window into a period profile and rank period peaks.
+5. compute signed relative excess power;
+6. build a structure-gated CWT map using per-period low-quantile background
+   removal and local 2D time-period support;
+7. compress the structured map into a trimmed period-axis activity curve;
+8. use PELT to propose time windows per channel;
+9. integrate each window into a period profile and rank period peaks.
 
 Detected period-profile peaks are candidates only. Validation in the original
 time series is still required before any signal interpretation.
@@ -65,8 +68,24 @@ Default candidate generation is intentionally conservative:
   reject low-period instrument-like stripes and long-period trend-like domains.
 - `noise_floor_fraction=0.20`: estimate the channel floor from the lowest 20%
   of trusted CWT power.
-- `pelt_min_size_records=256` and `window_min_duration_records=256`: reject
+- `structure_baseline_quantile=0.10`, `structure_scale_quantile=0.20`,
+  `structure_z_threshold=1.0`, `structure_time_support_records=64`,
+  `structure_period_support_bins=3`, and
+  `structure_min_support_fraction=0.10`: suppress isolated noise texture before
+  the period-axis activity compression.
+- `activity_smooth_records=16`, `pelt_penalty=16`, `pelt_min_size_records=384`,
+  and `window_min_duration_records=384`: reject
   short unstable activity windows.
+- `window_min_activity_raw_mean=25.0`: after PELT proposes a window on the
+  standardized activity curve, require enough raw structured CWT activity
+  before the window can emit period candidates. This prevents per-channel
+  robust standardization from turning weak residual noise texture into false
+  windows.
+- `window_merge_gap_records=256`: merge nearby PELT segments so one persistent
+  signal is less likely to be split into multiple windows.
+- `profile_max_peaks_per_window=1`: treat one PELT time window as one
+  period-family candidate; Sa-like side lobes or harmonics are not emitted as
+  separate default candidates.
 - `max_candidates_per_block=50`: cap retained candidates per frequency block.
 - `validation.max_candidates=25`: cap rows passed to validation by default.
 
@@ -147,7 +166,8 @@ This writes `visualization/index.md` plus PNG diagnostics for:
 
 - raw time-channel matrix;
 - representative-channel full `period x time` CWT scalograms;
-- trusted-period relative-excess maps after low-20% floor normalization;
+- trusted-period structure-gated maps after floor normalization, per-period
+  low-quantile standardization, and local 2D support gating;
 - single-channel signed activity curves with recorded PELT windows;
 - windowed period profiles with candidate period spans;
 - aggregated `period x channel` overview maps for review only;

@@ -14,9 +14,16 @@ def test_structured_config_maps_to_resolved_dataclass() -> None:
             "scan": {"f_start": 38.0, "f_stop": 39.0, "period_count": 40},
             "detection": {
                 "noise_floor_fraction": 0.15,
+                "structure_baseline_quantile": 0.08,
+                "structure_scale_quantile": 0.25,
+                "structure_z_threshold": 1.2,
+                "structure_time_support_records": 32,
+                "structure_period_support_bins": 5,
+                "structure_min_support_fraction": 0.2,
                 "activity_smooth_records": 12,
                 "pelt_penalty": 6.0,
                 "window_min_duration_records": 12,
+                "window_min_activity_raw_mean": 11.0,
                 "candidate_period_min_records": 10,
                 "candidate_period_max_records": 200,
                 "max_candidates_per_channel": 1,
@@ -34,9 +41,16 @@ def test_structured_config_maps_to_resolved_dataclass() -> None:
     assert config.f_stop == 39.0
     assert config.period_count == 40
     assert config.noise_floor_fraction == 0.15
+    assert config.structure_baseline_quantile == 0.08
+    assert config.structure_scale_quantile == 0.25
+    assert config.structure_z_threshold == 1.2
+    assert config.structure_time_support_records == 32
+    assert config.structure_period_support_bins == 5
+    assert config.structure_min_support_fraction == 0.2
     assert config.activity_smooth_records == 12
     assert config.pelt_penalty == 6.0
     assert config.window_min_duration_records == 12
+    assert config.window_min_activity_raw_mean == 11.0
     assert config.candidate_period_min_records == 10
     assert config.candidate_period_max_records == 200
     assert config.max_candidates_per_channel == 1
@@ -56,7 +70,14 @@ def test_structured_config_maps_to_resolved_dataclass() -> None:
     assert nested["input"]["path"] == "data/example.2C"
     assert nested["scan"]["period_count"] == 40
     assert nested["detection"]["noise_floor_fraction"] == 0.15
+    assert nested["detection"]["structure_baseline_quantile"] == 0.08
+    assert nested["detection"]["structure_scale_quantile"] == 0.25
+    assert nested["detection"]["structure_z_threshold"] == 1.2
+    assert nested["detection"]["structure_time_support_records"] == 32
+    assert nested["detection"]["structure_period_support_bins"] == 5
+    assert nested["detection"]["structure_min_support_fraction"] == 0.2
     assert nested["detection"]["window_min_duration_records"] == 12
+    assert nested["detection"]["window_min_activity_raw_mean"] == 11.0
     assert nested["detection"]["candidate_period_min_records"] == 10
     assert nested["detection"]["candidate_period_max_records"] == 200
     assert nested["veto"]["max_bandwidth_fraction"] == 0.8
@@ -109,6 +130,8 @@ def test_normalize_candidate_row_adds_schema_and_seconds() -> None:
             "integrated_score": 12.0,
             "activity_mean": 1.0,
             "activity_max": 2.0,
+            "activity_raw_mean": 3.0,
+            "activity_raw_max": 4.0,
             "noise_floor": 0.5,
             "period_peak_prominence": 3.0,
             "block_channel_start": 0,

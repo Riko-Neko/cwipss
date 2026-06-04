@@ -30,16 +30,23 @@ class CWTSearchConfig:
     candidate_period_max_records: float = 200.0
     noise_floor_fraction: float = 0.20
     excess_eps_fraction: float = 1e-6
+    structure_baseline_quantile: float = 0.10
+    structure_scale_quantile: float = 0.20
+    structure_z_threshold: float = 1.0
+    structure_time_support_records: int = 64
+    structure_period_support_bins: int = 3
+    structure_min_support_fraction: float = 0.10
     activity_trim_low: float = 0.05
     activity_trim_high: float = 0.95
-    activity_smooth_records: int = 8
-    pelt_penalty: float = 8.0
-    pelt_min_size_records: int = 256
-    window_min_duration_records: int = 256
+    activity_smooth_records: int = 16
+    pelt_penalty: float = 16.0
+    pelt_min_size_records: int = 384
+    window_min_duration_records: int = 384
     window_min_activity_mean: float = 0.05
-    window_merge_gap_records: int = 64
+    window_min_activity_raw_mean: float = 25.0
+    window_merge_gap_records: int = 256
     profile_min_prominence: float = 0.5
-    profile_max_peaks_per_window: int = 3
+    profile_max_peaks_per_window: int = 1
     max_candidates_per_channel: int = 3
     output_dir: str = "runs"
     max_candidates_per_block: int = 50
@@ -103,6 +110,12 @@ _SECTION_KEY_MAP: dict[str, dict[str, str]] = {
         "candidate_period_max_records": "candidate_period_max_records",
         "noise_floor_fraction": "noise_floor_fraction",
         "excess_eps_fraction": "excess_eps_fraction",
+        "structure_baseline_quantile": "structure_baseline_quantile",
+        "structure_scale_quantile": "structure_scale_quantile",
+        "structure_z_threshold": "structure_z_threshold",
+        "structure_time_support_records": "structure_time_support_records",
+        "structure_period_support_bins": "structure_period_support_bins",
+        "structure_min_support_fraction": "structure_min_support_fraction",
         "activity_trim_low": "activity_trim_low",
         "activity_trim_high": "activity_trim_high",
         "activity_smooth_records": "activity_smooth_records",
@@ -110,6 +123,7 @@ _SECTION_KEY_MAP: dict[str, dict[str, str]] = {
         "pelt_min_size_records": "pelt_min_size_records",
         "window_min_duration_records": "window_min_duration_records",
         "window_min_activity_mean": "window_min_activity_mean",
+        "window_min_activity_raw_mean": "window_min_activity_raw_mean",
         "window_merge_gap_records": "window_merge_gap_records",
         "profile_min_prominence": "profile_min_prominence",
         "profile_max_peaks_per_window": "profile_max_peaks_per_window",
@@ -240,6 +254,12 @@ def cwt_config_to_nested_dict(config: CWTSearchConfig) -> dict[str, Any]:
             "candidate_period_max_records": config.candidate_period_max_records,
             "noise_floor_fraction": config.noise_floor_fraction,
             "excess_eps_fraction": config.excess_eps_fraction,
+            "structure_baseline_quantile": config.structure_baseline_quantile,
+            "structure_scale_quantile": config.structure_scale_quantile,
+            "structure_z_threshold": config.structure_z_threshold,
+            "structure_time_support_records": config.structure_time_support_records,
+            "structure_period_support_bins": config.structure_period_support_bins,
+            "structure_min_support_fraction": config.structure_min_support_fraction,
             "activity_trim_low": config.activity_trim_low,
             "activity_trim_high": config.activity_trim_high,
             "activity_smooth_records": config.activity_smooth_records,
@@ -247,6 +267,7 @@ def cwt_config_to_nested_dict(config: CWTSearchConfig) -> dict[str, Any]:
             "pelt_min_size_records": config.pelt_min_size_records,
             "window_min_duration_records": config.window_min_duration_records,
             "window_min_activity_mean": config.window_min_activity_mean,
+            "window_min_activity_raw_mean": config.window_min_activity_raw_mean,
             "window_merge_gap_records": config.window_merge_gap_records,
             "profile_min_prominence": config.profile_min_prominence,
             "profile_max_peaks_per_window": config.profile_max_peaks_per_window,

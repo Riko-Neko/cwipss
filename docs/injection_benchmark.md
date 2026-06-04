@@ -37,9 +37,12 @@ run directory. The command line controls background selection, search,
 validation, and visualization only; injection parameters live in the simulation
 config.
 
-The benchmark uses the same single-channel low-floor PELT/profile detector as
-the main pipeline: candidate period domain `10..200` records, low-floor fraction
-`0.20`, PELT windowing, and `max_candidates_per_block=50`. Lower
+The benchmark uses the same single-channel low-floor, structure-gated
+PELT/profile detector as the main pipeline: candidate period domain `10..200`
+records, low-floor fraction `0.20`, structure support defaults, PELT penalty
+`16`, minimum window `384` records, raw structured-activity mean floor `25.0`,
+merge gap `256` records, one period-family candidate per PELT window, and
+`max_candidates_per_block=50`. Lower
 `pelt_penalty`, `window_min_activity_mean`, or `profile_min_prominence` only for
 high-recall diagnostic sweeps.
 

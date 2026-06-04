@@ -53,16 +53,23 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--aggregation-percentile", type=float, default=95.0, help="Percentile for percentile aggregation.")
     parser.add_argument("--noise-floor-fraction", type=float, default=0.20, help="Lowest fraction of valid CWT power used as channel noise floor.")
     parser.add_argument("--excess-eps-fraction", type=float, default=1e-6, help="Fractional epsilon added to the noise floor.")
+    parser.add_argument("--structure-baseline-quantile", type=float, default=0.10, help="Low time-quantile background for per-period structure z-score.")
+    parser.add_argument("--structure-scale-quantile", type=float, default=0.20, help="Low time-quantile subset used to estimate per-period structure scale.")
+    parser.add_argument("--structure-z-threshold", type=float, default=1.0, help="Per-period robust z threshold for 2D CWT structure support.")
+    parser.add_argument("--structure-time-support-records", type=int, default=64, help="Time-neighborhood width for 2D structure support.")
+    parser.add_argument("--structure-period-support-bins", type=int, default=3, help="Period-neighborhood width for 2D structure support.")
+    parser.add_argument("--structure-min-support-fraction", type=float, default=0.10, help="Minimum local 2D support fraction before CWT texture is retained.")
     parser.add_argument("--activity-trim-low", type=float, default=0.05, help="Lower period-axis trim fraction for signed activity.")
     parser.add_argument("--activity-trim-high", type=float, default=0.95, help="Upper period-axis trim fraction for signed activity.")
-    parser.add_argument("--activity-smooth-records", type=int, default=8, help="Moving-average width for activity curves.")
-    parser.add_argument("--pelt-penalty", type=float, default=8.0, help="PELT mean-shift penalty.")
-    parser.add_argument("--pelt-min-size-records", type=int, default=256, help="PELT minimum segment size.")
-    parser.add_argument("--window-min-duration-records", type=int, default=256, help="Minimum retained PELT window duration.")
+    parser.add_argument("--activity-smooth-records", type=int, default=16, help="Moving-average width for activity curves.")
+    parser.add_argument("--pelt-penalty", type=float, default=16.0, help="PELT mean-shift penalty.")
+    parser.add_argument("--pelt-min-size-records", type=int, default=384, help="PELT minimum segment size.")
+    parser.add_argument("--window-min-duration-records", type=int, default=384, help="Minimum retained PELT window duration.")
     parser.add_argument("--window-min-activity-mean", type=float, default=0.05, help="Minimum retained standardized activity mean.")
-    parser.add_argument("--window-merge-gap-records", type=int, default=64, help="Merge PELT windows separated by at most this gap.")
+    parser.add_argument("--window-min-activity-raw-mean", type=float, default=25.0, help="Minimum retained raw structured activity mean before robust standardization.")
+    parser.add_argument("--window-merge-gap-records", type=int, default=256, help="Merge PELT windows separated by at most this gap.")
     parser.add_argument("--profile-min-prominence", type=float, default=0.5, help="Minimum windowed period-profile peak prominence.")
-    parser.add_argument("--profile-max-peaks-per-window", type=int, default=3, help="Maximum period peaks retained per time window.")
+    parser.add_argument("--profile-max-peaks-per-window", type=int, default=1, help="Maximum period peaks retained per time window.")
     parser.add_argument("--candidate-period-min-records", type=float, default=10.0, help="Reject candidates below this period in records.")
     parser.add_argument("--candidate-period-max-records", type=float, default=200.0, help="Reject candidates above this period in records.")
     parser.add_argument("--max-candidates-per-channel", type=int, default=2, help="Candidate cap per frequency channel.")
@@ -95,7 +102,7 @@ def parse_args() -> argparse.Namespace:
 
     parser.add_argument("--visualize", action="store_true", help="Write staged visualization PNGs and index.md.")
     parser.add_argument("--viz-max-blocks", type=int, default=2, help="Maximum blocks to visualize; 0 means all.")
-    parser.add_argument("--viz-max-channels", type=int, default=4, help="Representative channels per block for period-time CWT plots.")
+    parser.add_argument("--viz-max-channels", type=int, default=4, help="Representative channels per block for period-time CWT plots; 0 means all channels.")
     parser.add_argument("--viz-top-candidates", type=int, default=50, help="Maximum candidate overlays/scatter points.")
     parser.add_argument("--viz-dpi", type=int, default=140, help="Visualization image DPI.")
     return parser.parse_args()
@@ -146,6 +153,12 @@ def main() -> None:
         aggregation_percentile=args.aggregation_percentile,
         noise_floor_fraction=args.noise_floor_fraction,
         excess_eps_fraction=args.excess_eps_fraction,
+        structure_baseline_quantile=args.structure_baseline_quantile,
+        structure_scale_quantile=args.structure_scale_quantile,
+        structure_z_threshold=args.structure_z_threshold,
+        structure_time_support_records=args.structure_time_support_records,
+        structure_period_support_bins=args.structure_period_support_bins,
+        structure_min_support_fraction=args.structure_min_support_fraction,
         activity_trim_low=args.activity_trim_low,
         activity_trim_high=args.activity_trim_high,
         activity_smooth_records=args.activity_smooth_records,
@@ -153,6 +166,7 @@ def main() -> None:
         pelt_min_size_records=args.pelt_min_size_records,
         window_min_duration_records=args.window_min_duration_records,
         window_min_activity_mean=args.window_min_activity_mean,
+        window_min_activity_raw_mean=args.window_min_activity_raw_mean,
         window_merge_gap_records=args.window_merge_gap_records,
         profile_min_prominence=args.profile_min_prominence,
         profile_max_peaks_per_window=args.profile_max_peaks_per_window,

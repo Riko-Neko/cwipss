@@ -1,12 +1,16 @@
 # CWT Period Search Output Schema
 
-Schema version 1 covers the current single-channel low-floor PELT/profile
-candidate generator.
+Schema version 1 covers the current single-channel low-floor,
+structure-gated PELT/profile candidate generator.
 
 ## Candidate Tables
 
 `candidates_raw.csv` and `candidates_reviewed.csv` contain one row per period
 peak detected from a single channel's PELT-windowed CWT period profile.
+By default this is one period-family row per PELT window. Extra profile peaks
+inside the same window are considered response substructure unless
+`profile_max_peaks_per_window` is explicitly increased for high-recall
+exploration.
 
 Important fields:
 
@@ -18,7 +22,8 @@ Important fields:
 - `window_id`: source PELT time-window id.
 - `channel_index`: frequency-channel index within the current block.
 - `record_start`, `record_stop`, `duration_records`: detected PELT window span.
-- `period_start_records`, `period_stop_records`: period-profile peak support.
+- `period_start_records`, `period_stop_records`: local period-profile peak
+  support, not the full Sa-like response envelope.
 - `peak_period_records`: strongest period-profile peak.
 - `peak_period_seconds`: `peak_period_records * tsamp_seconds`.
 - `freq_start_mhz`, `freq_stop_mhz`: candidate channel/frequency coordinate.
@@ -27,7 +32,10 @@ Important fields:
 - `peak_score`: windowed period-profile score.
 - `mean_score`: mean standardized activity in the source window.
 - `integrated_score`: same ranking score as `peak_score`.
-- `noise_floor`: single-channel low-20% CWT power floor.
+- `activity_raw_mean`, `activity_raw_max`: source-window structured activity
+  before robust standardization.
+- `noise_floor`: single-channel low-20% CWT power floor used before
+  structure gating.
 - `period_peak_prominence`: period-profile peak prominence.
 - `candidate_status`, `veto_flags`, `veto_reason`: present in reviewed tables.
 
@@ -40,7 +48,10 @@ generation. Important fields:
 - `detection_method`: usually `single_channel_lowfloor_pelt`.
 - `channel_index`, `freq_mhz`: source channel.
 - `record_start`, `record_stop`, `duration_records`: window span.
-- `activity_mean`, `activity_max`: standardized signed activity statistics.
+- `activity_mean`, `activity_max`: standardized activity statistics after
+  period-axis compression of the structure-gated CWT map.
+- `activity_raw_mean`, `activity_raw_max`: same window measured before robust
+  standardization; the default raw mean floor is `25.0`.
 - `noise_floor`: low-fraction CWT power floor used for this channel.
 - `pelt_penalty`, `pelt_cost`: segmentation diagnostics.
 

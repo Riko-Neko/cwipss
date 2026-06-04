@@ -99,6 +99,7 @@ def _candidate_table(rows: list[dict[str, str]], limit: int) -> str:
                 row.get("candidate_status", "-"),
                 _fmt(row.get("integrated_score")),
                 _fmt(row.get("peak_score")),
+                _fmt(row.get("activity_raw_mean")),
                 _fmt(row.get("peak_period_records")),
                 _fmt(row.get("duration_records")),
                 _fmt(row.get("peak_record")),
@@ -107,7 +108,7 @@ def _candidate_table(rows: list[dict[str, str]], limit: int) -> str:
             ]
         )
     return _markdown_table(
-        ["candidate_id", "source", "status", "integrated", "peak_score", "period_rec", "duration", "peak_record", "peak_mhz", "veto_flags"],
+        ["candidate_id", "source", "status", "integrated", "peak_score", "raw_activity", "period_rec", "duration", "peak_record", "peak_mhz", "veto_flags"],
         table_rows,
     )
 

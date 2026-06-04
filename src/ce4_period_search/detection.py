@@ -5,6 +5,7 @@ from typing import Iterable
 import numpy as np
 
 from .activity import (
+    coherent_structure_map,
     crop_valid_periods,
     low_fraction_noise_floor,
     relative_excess,
@@ -41,6 +42,12 @@ def detect_channel_periods(
     candidate_period_max_records: float | None,
     noise_floor_fraction: float,
     excess_eps_fraction: float,
+    structure_baseline_quantile: float,
+    structure_scale_quantile: float,
+    structure_z_threshold: float,
+    structure_time_support_records: int,
+    structure_period_support_bins: int,
+    structure_min_support_fraction: float,
     activity_trim_low: float,
     activity_trim_high: float,
     activity_smooth_records: int,
@@ -48,6 +55,7 @@ def detect_channel_periods(
     pelt_min_size_records: int,
     window_min_duration_records: int,
     window_min_activity_mean: float,
+    window_min_activity_raw_mean: float,
     window_merge_gap_records: int,
     profile_min_prominence: float,
     profile_max_peaks_per_window: int,
@@ -56,8 +64,10 @@ def detect_channel_periods(
     """Detect period candidates from one channel's CWT power map.
 
     The detector uses a single low-fraction noise floor per channel over the
-    trusted CWT period domain, then detects PELT time windows from signed
-    period-axis activity and searches period-profile peaks inside each window.
+    trusted CWT period domain, suppresses isolated 2D texture with per-period
+    low-quantile standardization and local time-period support, then detects
+    PELT time windows from the compressed activity curve and searches
+    period-profile peaks inside each window.
     """
     power = np.asarray(power_channel, dtype=np.float32)
     if power.ndim != 2:
@@ -70,8 +80,17 @@ def detect_channel_periods(
     )
     noise_floor = low_fraction_noise_floor(valid_power, fraction=noise_floor_fraction)
     excess = relative_excess(valid_power, noise_floor, eps_fraction=excess_eps_fraction)
-    activity_raw = signed_trimmed_period_activity(
+    structured = coherent_structure_map(
         excess,
+        baseline_quantile=structure_baseline_quantile,
+        scale_quantile=structure_scale_quantile,
+        z_threshold=structure_z_threshold,
+        time_support_records=structure_time_support_records,
+        period_support_bins=structure_period_support_bins,
+        min_support_fraction=structure_min_support_fraction,
+    )
+    activity_raw = signed_trimmed_period_activity(
+        structured,
         trim_low=activity_trim_low,
         trim_high=activity_trim_high,
     )
@@ -88,6 +107,7 @@ def detect_channel_periods(
 
     window_rows: list[dict] = []
     candidate_rows: list[dict] = []
+    raw_threshold = max(0.0, float(window_min_activity_raw_mean))
     for window_index, window in enumerate(windows, start=1):
         local_start = int(window["record_start"])
         local_stop = int(window["record_stop"])
@@ -95,6 +115,11 @@ def detect_channel_periods(
         peak_record = _peak_record(activity_z, local_start, local_stop, record_start)
         window_id = f"ch{int(channel_idx):04d}_w{window_index:04d}"
         activity_window = activity_z[local_start:local_stop]
+        raw_activity_window = activity[local_start:local_stop]
+        raw_activity_mean = float(np.nanmean(raw_activity_window)) if raw_activity_window.size else 0.0
+        raw_activity_max = float(np.nanmax(raw_activity_window)) if raw_activity_window.size else 0.0
+        if raw_activity_mean < raw_threshold:
+            continue
         window_row = {
             "detection_method": WINDOW_METHOD,
             "window_id": window_id,
@@ -105,13 +130,15 @@ def detect_channel_periods(
             "duration_records": duration,
             "activity_mean": float(np.nanmean(activity_window)) if activity_window.size else 0.0,
             "activity_max": float(np.nanmax(activity_window)) if activity_window.size else 0.0,
+            "activity_raw_mean": raw_activity_mean,
+            "activity_raw_max": raw_activity_max,
             "noise_floor": float(noise_floor),
             "pelt_penalty": float(pelt_penalty),
             "pelt_cost": float(window.get("pelt_cost", 0.0)),
         }
         window_rows.append(window_row)
 
-        profile = windowed_period_profile(excess, local_start, local_stop)
+        profile = windowed_period_profile(structured, local_start, local_stop)
         peaks = find_period_profile_peaks(
             profile,
             valid_periods,
@@ -143,6 +170,8 @@ def detect_channel_periods(
                     "integrated_score": float(peak["profile_score"]),
                     "activity_mean": float(window_row["activity_mean"]),
                     "activity_max": float(window_row["activity_max"]),
+                    "activity_raw_mean": float(window_row["activity_raw_mean"]),
+                    "activity_raw_max": float(window_row["activity_raw_max"]),
                     "noise_floor": float(noise_floor),
                     "period_peak_prominence": float(peak["period_peak_prominence"]),
                 }
@@ -153,6 +182,7 @@ def detect_channel_periods(
     diagnostics: dict[str, np.ndarray | float] = {
         "valid_periods": valid_periods,
         "excess": excess,
+        "structured": structured,
         "activity": activity_z,
         "noise_floor": float(noise_floor),
     }
@@ -169,6 +199,12 @@ def detect_block_periods(
     candidate_period_max_records: float | None,
     noise_floor_fraction: float,
     excess_eps_fraction: float,
+    structure_baseline_quantile: float,
+    structure_scale_quantile: float,
+    structure_z_threshold: float,
+    structure_time_support_records: int,
+    structure_period_support_bins: int,
+    structure_min_support_fraction: float,
     activity_trim_low: float,
     activity_trim_high: float,
     activity_smooth_records: int,
@@ -176,6 +212,7 @@ def detect_block_periods(
     pelt_min_size_records: int,
     window_min_duration_records: int,
     window_min_activity_mean: float,
+    window_min_activity_raw_mean: float,
     window_merge_gap_records: int,
     profile_min_prominence: float,
     profile_max_peaks_per_window: int,
@@ -203,6 +240,12 @@ def detect_block_periods(
             candidate_period_max_records=candidate_period_max_records,
             noise_floor_fraction=noise_floor_fraction,
             excess_eps_fraction=excess_eps_fraction,
+            structure_baseline_quantile=structure_baseline_quantile,
+            structure_scale_quantile=structure_scale_quantile,
+            structure_z_threshold=structure_z_threshold,
+            structure_time_support_records=structure_time_support_records,
+            structure_period_support_bins=structure_period_support_bins,
+            structure_min_support_fraction=structure_min_support_fraction,
             activity_trim_low=activity_trim_low,
             activity_trim_high=activity_trim_high,
             activity_smooth_records=activity_smooth_records,
@@ -210,6 +253,7 @@ def detect_block_periods(
             pelt_min_size_records=pelt_min_size_records,
             window_min_duration_records=window_min_duration_records,
             window_min_activity_mean=window_min_activity_mean,
+            window_min_activity_raw_mean=window_min_activity_raw_mean,
             window_merge_gap_records=window_merge_gap_records,
             profile_min_prominence=profile_min_prominence,
             profile_max_peaks_per_window=profile_max_peaks_per_window,

@@ -22,6 +22,7 @@ from matplotlib import pyplot as plt
 from matplotlib.patches import Rectangle
 
 from .activity import (
+    coherent_structure_map,
     crop_valid_periods,
     low_fraction_noise_floor,
     relative_excess,
@@ -58,9 +59,15 @@ class SearchVisualizationConfig:
     aggregation_percentile: float = 95.0
     noise_floor_fraction: float = 0.20
     excess_eps_fraction: float = 1e-6
+    structure_baseline_quantile: float = 0.10
+    structure_scale_quantile: float = 0.20
+    structure_z_threshold: float = 1.0
+    structure_time_support_records: int = 64
+    structure_period_support_bins: int = 3
+    structure_min_support_fraction: float = 0.10
     activity_trim_low: float = 0.05
     activity_trim_high: float = 0.95
-    activity_smooth_records: int = 8
+    activity_smooth_records: int = 16
 
 
 def read_csv_rows(path: str | Path) -> list[dict[str, str]]:
@@ -531,7 +538,7 @@ def _relative_excess_products(
     power_channel: np.ndarray,
     periods: np.ndarray,
     search_config: SearchVisualizationConfig,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, float]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, float]:
     valid_power, valid_periods, _mask = crop_valid_periods(
         power_channel,
         periods,
@@ -540,14 +547,23 @@ def _relative_excess_products(
     )
     noise_floor = low_fraction_noise_floor(valid_power, fraction=search_config.noise_floor_fraction)
     excess = relative_excess(valid_power, noise_floor, eps_fraction=search_config.excess_eps_fraction)
-    activity = signed_trimmed_period_activity(
+    structured = coherent_structure_map(
         excess,
+        baseline_quantile=search_config.structure_baseline_quantile,
+        scale_quantile=search_config.structure_scale_quantile,
+        z_threshold=search_config.structure_z_threshold,
+        time_support_records=search_config.structure_time_support_records,
+        period_support_bins=search_config.structure_period_support_bins,
+        min_support_fraction=search_config.structure_min_support_fraction,
+    )
+    activity = signed_trimmed_period_activity(
+        structured,
         trim_low=search_config.activity_trim_low,
         trim_high=search_config.activity_trim_high,
     )
     activity = smooth_activity(activity, smooth_records=search_config.activity_smooth_records)
     activity_z = robust_standardize(activity)
-    return valid_periods, excess, activity_z, float(noise_floor)
+    return valid_periods, excess, structured, activity_z, float(noise_floor)
 
 
 def visualize_cwt_stages(
@@ -615,7 +631,7 @@ def visualize_cwt_stages(
     images.append(("Stage 01 Input Matrix", path, "Raw time-channel matrix. Cyan boxes mark injected truth spans when available."))
 
     max_blocks = math.inf if int(config.max_blocks) <= 0 else int(config.max_blocks)
-    max_channels = max(1, int(config.max_channels))
+    requested_max_channels = int(config.max_channels)
     block_count = 0
     for block_index, block_start in enumerate(range(0, matrix.shape[1], search_config.block_channels), start=1):
         if block_count >= max_blocks:
@@ -638,7 +654,16 @@ def visualize_cwt_stages(
             percentile=search_config.aggregation_percentile,
         )
         block_rows = [row for row in raw_candidates if str(row.get("block_id", "")) == block_id]
-        representative = _representative_channels(block_start, block_stop, block_freqs, block_rows, max_channels)
+        if requested_max_channels <= 0:
+            representative = list(range(block_start, block_stop))
+        else:
+            representative = _representative_channels(
+                block_start,
+                block_stop,
+                block_freqs,
+                block_rows,
+                max(1, requested_max_channels),
+            )
 
         for global_channel in representative:
             local_channel = global_channel - block_start
@@ -680,7 +705,7 @@ def visualize_cwt_stages(
             _save(fig, path, config.dpi)
             images.append((f"Stage 02 CWT Scalogram {block_id} Ch {global_channel}", path, "Full period-time CWT power for one representative frequency channel before time aggregation."))
 
-            valid_periods, excess, activity_z, noise_floor = _relative_excess_products(
+            valid_periods, excess, structured, activity_z, noise_floor = _relative_excess_products(
                 power[:, :, local_channel],
                 periods,
                 search_config,
@@ -688,24 +713,23 @@ def visualize_cwt_stages(
             fig, ax = _new_figure()
             _pcolormesh(
                 ax,
-                excess,
+                structured,
                 _record_edges(matrix.shape[0], record_offset),
                 _period_edges(valid_periods),
-                title=f"Stage 03 trusted relative excess: {block_id}, channel {global_channel}",
+                title=f"Stage 03 structure-gated CWT map: {block_id}, channel {global_channel}",
                 xlabel="Record",
                 ylabel="Period / records",
-                cmap="coolwarm",
-                cbar_label=f"CWT power / low-floor - 1 (floor={noise_floor:.4g})",
+                cmap="viridis",
+                cbar_label=f"positive period-z x 2D support (floor={noise_floor:.4g})",
                 yscale="log",
-                symmetric=True,
             )
             _draw_time_period_rows(ax, channel_rows, color=CANDIDATE_COLOR, label="candidate", linewidth=1.5)
             _draw_time_truth(ax, channel_truths, color=TRUTH_COLOR, label="truth period", linewidth=1.5)
             if channel_rows or channel_truths:
                 ax.legend(loc="best")
-            path = output_dir / f"stage_03_{block_id}_channel_{global_channel:04d}_trusted_excess.png"
+            path = output_dir / f"stage_03_{block_id}_channel_{global_channel:04d}_structure_map.png"
             _save(fig, path, config.dpi)
-            images.append((f"Stage 03 Trusted Relative Excess {block_id} Ch {global_channel}", path, "Trusted period-domain CWT after single-channel low-20% floor normalization. Detection activity is derived from this map."))
+            images.append((f"Stage 03 Structure-Gated CWT Map {block_id} Ch {global_channel}", path, "Trusted period-domain CWT after floor normalization, per-period robust centering, and 2D support gating. Detection activity is derived from this map."))
 
             records = np.arange(record_offset, record_offset + matrix.shape[0], dtype=np.float64)
             fig, ax = _new_figure()
@@ -730,7 +754,7 @@ def visualize_cwt_stages(
                     local_stop = int(min(matrix.shape[0], _float(row, "record_stop", record_offset + matrix.shape[0]) - record_offset))
                     if local_stop <= local_start:
                         continue
-                    profile = windowed_period_profile(excess, local_start, local_stop)
+                    profile = windowed_period_profile(structured, local_start, local_stop)
                     label = f"cand {row.get('candidate_id', '-')}, win {row.get('window_id', '-')}"
                     ax.plot(valid_periods, profile, linewidth=1.0, alpha=0.85, label=label)
                     p0 = _float(row, "period_start_records")
@@ -744,7 +768,7 @@ def visualize_cwt_stages(
                         ax.axvline(period, color=TRUTH_COLOR, linewidth=1.2, linestyle="--", alpha=0.9)
                 ax.set_title(f"Stage 05 windowed period profiles: {block_id}, channel {global_channel}")
                 ax.set_xlabel("Period / records")
-                ax.set_ylabel("Windowed relative-excess profile")
+                ax.set_ylabel("Windowed structure profile")
                 ax.set_xscale("log")
                 ax.grid(alpha=0.25)
                 ax.legend(loc="best", fontsize="small")
@@ -922,6 +946,12 @@ def visualize_cwt_stages(
                     "candidate_period_min_records": search_config.candidate_period_min_records,
                     "candidate_period_max_records": search_config.candidate_period_max_records,
                     "noise_floor_fraction": search_config.noise_floor_fraction,
+                    "structure_baseline_quantile": search_config.structure_baseline_quantile,
+                    "structure_scale_quantile": search_config.structure_scale_quantile,
+                    "structure_z_threshold": search_config.structure_z_threshold,
+                    "structure_time_support_records": search_config.structure_time_support_records,
+                    "structure_period_support_bins": search_config.structure_period_support_bins,
+                    "structure_min_support_fraction": search_config.structure_min_support_fraction,
                     "activity_trim_low": search_config.activity_trim_low,
                     "activity_trim_high": search_config.activity_trim_high,
                     "activity_smooth_records": search_config.activity_smooth_records,

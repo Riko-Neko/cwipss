@@ -12,7 +12,9 @@ time x channel data
   -> candidate period-domain filter
   -> single-channel low-fraction CWT noise floor
   -> signed relative excess power
-  -> trimmed period-axis activity curve
+  -> per-period low-quantile standardization
+  -> local 2D time-period support gate
+  -> trimmed period-axis activity curve from structured CWT map
   -> PELT time windows per channel
   -> windowed period-profile peaks
   -> veto, validation, statistics, report
@@ -36,13 +38,31 @@ The default detector is set for low sensitivity and higher review purity:
 
 - candidate period domain `10..200` records;
 - low-floor noise fraction `0.20`;
-- PELT minimum segment/window size `256` records;
+- per-period structure background quantile `0.10`, scale quantile `0.20`,
+  structure z threshold `1.0`, time support `64` records, period support `3`
+  bins, and minimum local support fraction `0.10`;
+- PELT penalty `16`, activity smoothing `16` records, and minimum
+  segment/window size `384` records;
+- after PELT, a raw structured-activity mean floor of `25.0` is applied before
+  period-profile candidates are emitted;
+- nearby PELT windows are merged across gaps up to `256` records;
+- each PELT time window emits one default period-family candidate
+  (`profile_max_peaks_per_window=1`), so Sa-like side lobes are not split into
+  separate default candidates;
 - retained candidates capped at `max_candidates_per_block=50`;
 - validation capped at `validation.max_candidates=25`.
 
-Lower PELT/profile thresholds are debug/high-recall settings. They are useful
-for inspecting weak period responses, but they can create many visually
-plausible candidates and should not be used as the default review configuration.
+Lower PELT/profile thresholds or `profile_max_peaks_per_window > 1` are
+debug/high-recall settings. They are useful for inspecting weak period
+responses, but they can split one Sa-like response envelope into many visually
+plausible candidates and should not be used as the default review
+configuration.
+
+The raw structured-activity floor is deliberately separate from
+`window_min_activity_mean`: PELT runs on robust-standardized activity to find
+time boundaries, but candidate emission also needs absolute structured CWT
+energy. Without this second gate, a noise-only channel can be standardized to
+unit variance and segmented into visually plausible but weak false windows.
 
 ## Feasible Period Domain
 
@@ -90,10 +110,10 @@ Supported aggregation methods are `max`, `mean`, `median`, `pNN`, and
 `percentile`.
 
 Before aggregation, visualization can write representative-channel
-`period x time` scalograms, trusted-period relative-excess maps, PELT activity
+`period x time` scalograms, trusted-period structure-gated maps, PELT activity
 curves, and windowed period profiles. These are the required middleware views
-for inspecting whether a period response is persistent, burst-like, or
-contaminated.
+for inspecting whether a period response is persistent, burst-like, coherent
+over neighboring period-time pixels, or contaminated by isolated texture.
 
 ## Outputs
 

@@ -33,7 +33,7 @@ def _segment_mean(prefix_sum: np.ndarray, start: int, stop: int) -> float:
     return float((prefix_sum[stop] - prefix_sum[start]) / n)
 
 
-def pelt_mean_shift(activity: np.ndarray, penalty: float = 8.0, min_size: int = 256) -> list[Segment]:
+def pelt_mean_shift(activity: np.ndarray, penalty: float = 16.0, min_size: int = 384) -> list[Segment]:
     """Segment one activity curve with a mean-shift PELT cost.
 
     The cost is within-segment squared error. This implementation uses the
