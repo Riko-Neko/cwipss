@@ -284,6 +284,8 @@ def run_cwt_search(config: CWTSearchConfig) -> Path:
                 pelt_jump_records=config.pelt_jump_records,
                 pelt_threads=config.pelt_threads,
                 cuda_structure_batch=config.cuda_structure_batch,
+                cuda_structure_batch_channels=config.cuda_structure_batch_channels,
+                cuda_device=config.cuda_device,
                 window_min_duration_records=config.window_min_duration_records,
                 window_min_activity_mean=config.window_min_activity_mean,
                 window_min_activity_raw_mean=config.window_min_activity_raw_mean,

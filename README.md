@@ -82,9 +82,10 @@ Default candidate generation is intentionally conservative:
   Increase `pelt_jump_records` only for long-record performance sweeps; `1`
   keeps the exact PELT endpoint search. Increase `pelt_threads` on CUDA runs to
   parallelize native CPU PELT across channels.
-- `cuda_structure_batch=false`: keep CUDA structure preprocessing on the stable
-  per-channel path. Enable it on GPU servers to batch structure/activity
-  preprocessing across all channels in a block.
+- `cuda_structure_batch=false`, `cuda_structure_batch_channels=16`: keep CUDA
+  structure preprocessing on the stable per-channel path by default. Enable
+  batching on GPU servers to process structure/activity preprocessing in
+  channel chunks; lower the chunk size if `cupy.quantile` peaks out of memory.
 - `window_min_activity_raw_mean=25.0`: after PELT proposes a window on the
   standardized activity curve, require enough raw structured CWT activity
   before the window can emit period candidates. This prevents per-channel

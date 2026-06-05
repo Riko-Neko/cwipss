@@ -394,6 +394,7 @@ def test_cuda_batch_structure_matches_sequential_structure_for_synthetic_peak() 
     batch_rows, batch_windows = detect_block_periods_cuda_power(
         **kwargs,
         cuda_structure_batch=True,
+        cuda_structure_batch_channels=2,
         pelt_threads=2,
     )
 

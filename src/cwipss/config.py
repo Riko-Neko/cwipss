@@ -46,6 +46,7 @@ class CWTSearchConfig:
     pelt_jump_records: int = 1
     pelt_threads: int = 1
     cuda_structure_batch: bool = False
+    cuda_structure_batch_channels: int = 16
     window_min_duration_records: int = 384
     window_min_activity_mean: float = 0.05
     window_min_activity_raw_mean: float = 25.0
@@ -132,6 +133,7 @@ _SECTION_KEY_MAP: dict[str, dict[str, str]] = {
         "pelt_jump_records": "pelt_jump_records",
         "pelt_threads": "pelt_threads",
         "cuda_structure_batch": "cuda_structure_batch",
+        "cuda_structure_batch_channels": "cuda_structure_batch_channels",
         "window_min_duration_records": "window_min_duration_records",
         "window_min_activity_mean": "window_min_activity_mean",
         "window_min_activity_raw_mean": "window_min_activity_raw_mean",
@@ -284,6 +286,7 @@ def cwt_config_to_nested_dict(config: CWTSearchConfig) -> dict[str, Any]:
             "pelt_jump_records": config.pelt_jump_records,
             "pelt_threads": config.pelt_threads,
             "cuda_structure_batch": config.cuda_structure_batch,
+            "cuda_structure_batch_channels": config.cuda_structure_batch_channels,
             "window_min_duration_records": config.window_min_duration_records,
             "window_min_activity_mean": config.window_min_activity_mean,
             "window_min_activity_raw_mean": config.window_min_activity_raw_mean,
