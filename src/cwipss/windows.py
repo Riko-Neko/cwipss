@@ -200,6 +200,35 @@ def pelt_mean_shift(
     return [Segment(int(start), int(stop), float(cost), float(mean)) for start, stop, cost, mean in rows]
 
 
+def pelt_mean_shift_batch(
+    activity: np.ndarray,
+    penalty: float = 16.0,
+    min_size: int = 384,
+    jump: int = 1,
+    threads: int = 1,
+) -> list[list[Segment]]:
+    values = np.asarray(activity, dtype=np.float64)
+    if values.ndim != 2:
+        raise ValueError("activity must have shape (channels, records)")
+    threads = max(1, int(threads))
+    if _pelt_ext is None:
+        return [
+            _pelt_mean_shift_python(row, penalty=penalty, min_size=min_size, jump=jump)
+            for row in values
+        ]
+    batch_rows = _pelt_ext.pelt_mean_shift_batch(
+        values,
+        penalty=float(penalty),
+        min_size=int(min_size),
+        jump=int(jump),
+        threads=threads,
+    )
+    return [
+        [Segment(int(start), int(stop), float(cost), float(mean)) for start, stop, cost, mean in rows]
+        for rows in batch_rows
+    ]
+
+
 def active_windows_from_segments(
     segments: list[Segment],
     activity: np.ndarray,

@@ -282,6 +282,7 @@ def run_cwt_search(config: CWTSearchConfig) -> Path:
                 pelt_penalty=config.pelt_penalty,
                 pelt_min_size_records=config.pelt_min_size_records,
                 pelt_jump_records=config.pelt_jump_records,
+                pelt_threads=config.pelt_threads,
                 window_min_duration_records=config.window_min_duration_records,
                 window_min_activity_mean=config.window_min_activity_mean,
                 window_min_activity_raw_mean=config.window_min_activity_raw_mean,

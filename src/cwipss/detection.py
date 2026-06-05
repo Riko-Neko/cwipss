@@ -16,7 +16,7 @@ from .activity import (
     smooth_activity,
 )
 from .profile import find_period_profile_peaks, windowed_period_profile
-from .windows import active_windows_from_segments, merge_close_windows, pelt_mean_shift
+from .windows import Segment, active_windows_from_segments, merge_close_windows, pelt_mean_shift
 
 
 DETECTION_METHOD = "single_channel_lowfloor_pelt_profile"
@@ -79,16 +79,18 @@ def _detect_preprocessed_channel_periods(
     profile_min_prominence: float,
     profile_max_peaks_per_window: int,
     max_candidates_per_channel: int,
+    segments: list[Segment] | None = None,
     timing: dict[str, float] | None = None,
     profile_getter: ProfileGetter | None = None,
 ) -> tuple[list[dict], list[dict], dict[str, np.ndarray | float]]:
-    stage_start = perf_counter() if timing is not None else 0.0
-    segments = pelt_mean_shift(
-        activity_z,
-        penalty=pelt_penalty,
-        min_size=pelt_min_size_records,
-        jump=pelt_jump_records,
-    )
+    stage_start = perf_counter() if timing is not None and segments is None else 0.0
+    if segments is None:
+        segments = pelt_mean_shift(
+            activity_z,
+            penalty=pelt_penalty,
+            min_size=pelt_min_size_records,
+            jump=pelt_jump_records,
+        )
     windows = active_windows_from_segments(
         segments,
         activity_z,
@@ -97,7 +99,8 @@ def _detect_preprocessed_channel_periods(
     )
     windows = merge_close_windows(windows, max_gap=window_merge_gap_records)
     if timing is not None:
-        _timing_add(timing, "pelt_seconds", perf_counter() - stage_start)
+        if stage_start:
+            _timing_add(timing, "pelt_seconds", perf_counter() - stage_start)
         _timing_increment(timing, "segments", len(segments))
         _timing_increment(timing, "windows_before_raw_floor", len(windows))
 
@@ -342,6 +345,7 @@ def detect_block_periods(
     max_candidates_per_channel: int | str,
     max_candidates_per_record: float = 3.0 / 4096.0,
     pelt_jump_records: int = 1,
+    pelt_threads: int = 1,
     timing: dict[str, float] | None = None,
 ) -> tuple[list[dict], list[dict]]:
     power = np.asarray(power_cube, dtype=np.float32)

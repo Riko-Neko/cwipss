@@ -11,7 +11,7 @@ from cwipss.activity import (
 )
 from cwipss.cwt import aggregate_cwt_time, cwt_power_cube, period_grid_records
 from cwipss.detection import detect_block_periods, resolve_channel_candidate_cap
-from cwipss.windows import _pelt_mean_shift_python, native_pelt_available, pelt_mean_shift
+from cwipss.windows import _pelt_mean_shift_python, native_pelt_available, pelt_mean_shift, pelt_mean_shift_batch
 
 
 def test_cwt_power_cube_shape() -> None:
@@ -190,6 +190,31 @@ def test_native_pelt_matches_python_reference_when_available() -> None:
         np.testing.assert_allclose(
             [(segment.cost, segment.mean) for segment in actual],
             [(segment.cost, segment.mean) for segment in expected],
+            rtol=1e-10,
+            atol=1e-10,
+        )
+
+
+def test_pelt_batch_matches_python_reference() -> None:
+    rng = np.random.default_rng(322)
+    activity = rng.normal(0.0, 0.3, (4, 180)).astype(np.float64)
+    activity[0, 30:90] += 1.5
+    activity[1, 80:140] -= 1.0
+    activity[2, 10] = np.nan
+
+    actual = pelt_mean_shift_batch(activity, penalty=4.0, min_size=10, jump=4, threads=2)
+    expected = [
+        _pelt_mean_shift_python(row, penalty=4.0, min_size=10, jump=4)
+        for row in activity
+    ]
+
+    for actual_segments, expected_segments in zip(actual, expected, strict=True):
+        assert [(segment.start, segment.stop) for segment in actual_segments] == [
+            (segment.start, segment.stop) for segment in expected_segments
+        ]
+        np.testing.assert_allclose(
+            [(segment.cost, segment.mean) for segment in actual_segments],
+            [(segment.cost, segment.mean) for segment in expected_segments],
             rtol=1e-10,
             atol=1e-10,
         )

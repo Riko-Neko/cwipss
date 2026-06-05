@@ -65,6 +65,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--pelt-penalty", type=float, default=None, help="PELT mean-shift penalty.")
     parser.add_argument("--pelt-min-size-records", type=int, default=None, help="PELT minimum segment size.")
     parser.add_argument("--pelt-jump-records", type=int, default=None, help="PELT endpoint/candidate grid stride in records; 1 keeps exact current behavior.")
+    parser.add_argument("--pelt-threads", type=int, default=None, help="CPU worker threads for native PELT across channels; 1 keeps sequential behavior.")
     parser.add_argument("--window-min-duration-records", type=int, default=None, help="Minimum retained PELT window duration.")
     parser.add_argument("--window-min-activity-mean", type=float, default=None, help="Minimum retained standardized activity mean.")
     parser.add_argument("--window-min-activity-raw-mean", type=float, default=None, help="Minimum retained raw structured activity mean before robust standardization.")
@@ -147,6 +148,7 @@ def _scan_overrides(args: argparse.Namespace) -> dict:
         "pelt_penalty",
         "pelt_min_size_records",
         "pelt_jump_records",
+        "pelt_threads",
         "window_min_duration_records",
         "window_min_activity_mean",
         "window_min_activity_raw_mean",

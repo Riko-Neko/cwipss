@@ -70,6 +70,7 @@ class CWTBenchmarkConfig:
     pelt_penalty: float = 16.0
     pelt_min_size_records: int = 384
     pelt_jump_records: int = 1
+    pelt_threads: int = 1
     window_min_duration_records: int = 384
     window_min_activity_mean: float = 0.05
     window_min_activity_raw_mean: float = 25.0
@@ -230,6 +231,7 @@ def run_cwt_candidate_search(
                 pelt_penalty=search_config.pelt_penalty,
                 pelt_min_size_records=search_config.pelt_min_size_records,
                 pelt_jump_records=search_config.pelt_jump_records,
+                pelt_threads=search_config.pelt_threads,
                 window_min_duration_records=search_config.window_min_duration_records,
                 window_min_activity_mean=search_config.window_min_activity_mean,
                 window_min_activity_raw_mean=search_config.window_min_activity_raw_mean,

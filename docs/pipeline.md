@@ -45,7 +45,8 @@ The default detector is set for low sensitivity and higher review purity:
   bins, and minimum local support fraction `0.10`;
 - PELT penalty `16`, activity smoothing `16` records, minimum segment/window
   size `384` records, and exact PELT endpoint search
-  (`pelt_jump_records=1`);
+  (`pelt_jump_records=1`); CUDA runs can parallelize native CPU PELT across
+  channels with `pelt_threads > 1`;
 - after PELT, a raw structured-activity mean floor of `25.0` is applied before
   period-profile candidates are emitted;
 - nearby PELT windows are merged across gaps up to `256` records;

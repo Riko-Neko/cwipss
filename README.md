@@ -76,10 +76,12 @@ Default candidate generation is intentionally conservative:
   `structure_min_support_fraction=0.10`: suppress isolated noise texture before
   the period-axis activity compression.
 - `activity_smooth_records=16`, `pelt_penalty=16`, `pelt_min_size_records=384`,
-  `pelt_jump_records=1`, and `window_min_duration_records=384`: reject
+  `pelt_jump_records=1`, `pelt_threads=1`, and
+  `window_min_duration_records=384`: reject
   short unstable activity windows.
   Increase `pelt_jump_records` only for long-record performance sweeps; `1`
-  keeps the exact PELT endpoint search.
+  keeps the exact PELT endpoint search. Increase `pelt_threads` on CUDA runs to
+  parallelize native CPU PELT across channels.
 - `window_min_activity_raw_mean=25.0`: after PELT proposes a window on the
   standardized activity curve, require enough raw structured CWT activity
   before the window can emit period candidates. This prevents per-channel

@@ -38,6 +38,7 @@
     "pelt_penalty": 16.0,
     "pelt_min_size_records": 384,
     "pelt_jump_records": 1,
+    "pelt_threads": 1,
     "window_min_duration_records": 384,
     "window_min_activity_mean": 0.05,
     "window_min_activity_raw_mean": 25.0,

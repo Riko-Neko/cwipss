@@ -2,9 +2,11 @@
 #include <pybind11/pybind11.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <thread>
 #include <vector>
 
 namespace py = pybind11;
@@ -235,6 +237,66 @@ py::list pelt_mean_shift(
   return rows;
 }
 
+py::list pelt_mean_shift_batch(
+    py::array_t<double, py::array::c_style | py::array::forcecast> activity,
+    double penalty,
+    std::int64_t min_size,
+    std::int64_t jump,
+    std::int64_t threads) {
+  const auto buf = activity.request();
+  if (buf.ndim != 2) {
+    throw py::value_error("activity must be a 2D array with shape (channels, records)");
+  }
+
+  min_size = std::max<std::int64_t>(1, min_size);
+  jump = std::max<std::int64_t>(1, jump);
+  penalty = std::max(0.0, penalty);
+  const auto channels = static_cast<std::int64_t>(buf.shape[0]);
+  const auto records = static_cast<std::int64_t>(buf.shape[1]);
+  const auto* ptr = static_cast<const double*>(buf.ptr);
+
+  std::vector<std::vector<Segment>> results(static_cast<std::size_t>(channels));
+  const std::int64_t worker_count = std::max<std::int64_t>(1, std::min<std::int64_t>(threads, channels));
+  {
+    py::gil_scoped_release release;
+    std::atomic<std::int64_t> next_channel{0};
+    std::vector<std::thread> workers;
+    workers.reserve(static_cast<std::size_t>(worker_count));
+    for (std::int64_t worker = 0; worker < worker_count; ++worker) {
+      workers.emplace_back([&, worker]() {
+        (void)worker;
+        while (true) {
+          const std::int64_t channel = next_channel.fetch_add(1);
+          if (channel >= channels) {
+            break;
+          }
+          std::vector<double> y;
+          y.reserve(static_cast<std::size_t>(records));
+          const auto offset = channel * records;
+          for (std::int64_t i = 0; i < records; ++i) {
+            const double value = ptr[offset + i];
+            y.push_back(std::isfinite(value) ? value : 0.0);
+          }
+          results[static_cast<std::size_t>(channel)] = pelt_exact(y, penalty, min_size, jump);
+        }
+      });
+    }
+    for (auto& worker : workers) {
+      worker.join();
+    }
+  }
+
+  py::list batch_rows;
+  for (const auto& channel_segments : results) {
+    py::list rows;
+    for (const auto& segment : channel_segments) {
+      rows.append(py::make_tuple(segment.start, segment.stop, segment.cost, segment.mean));
+    }
+    batch_rows.append(rows);
+  }
+  return batch_rows;
+}
+
 }  // namespace
 
 PYBIND11_MODULE(_pelt_ext, m) {
@@ -246,4 +308,12 @@ PYBIND11_MODULE(_pelt_ext, m) {
       py::arg("penalty") = 16.0,
       py::arg("min_size") = 384,
       py::arg("jump") = 1);
+  m.def(
+      "pelt_mean_shift_batch",
+      &pelt_mean_shift_batch,
+      py::arg("activity"),
+      py::arg("penalty") = 16.0,
+      py::arg("min_size") = 384,
+      py::arg("jump") = 1,
+      py::arg("threads") = 1);
 }

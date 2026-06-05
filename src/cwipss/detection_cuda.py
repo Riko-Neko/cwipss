@@ -14,6 +14,7 @@ from .detection import (
     _timing_increment,
     resolve_channel_candidate_cap,
 )
+from .windows import pelt_mean_shift_batch
 
 
 def _scalar_float(value) -> float:
@@ -192,6 +193,7 @@ def detect_block_periods_cuda_power(
     max_candidates_per_channel: int | str,
     max_candidates_per_record: float = 3.0 / 4096.0,
     pelt_jump_records: int = 1,
+    pelt_threads: int = 1,
     timing: dict[str, float] | None = None,
 ) -> tuple[list[dict], list[dict]]:
     cp = _cupy()
@@ -214,9 +216,11 @@ def detect_block_periods_cuda_power(
         max_candidates_per_record,
         int(power.shape[1]),
     )
+    pelt_threads = max(1, int(pelt_threads))
 
     candidates: list[dict] = []
     windows: list[dict] = []
+    preprocessed_channels: list[tuple[int, Any, np.ndarray, np.ndarray, float]] = []
     for channel_idx in range(power.shape[2]):
         channel_start = perf_counter() if timing is not None else 0.0
 
@@ -258,6 +262,13 @@ def detect_block_periods_cuda_power(
         if timing is not None:
             _timing_add(timing, "activity_seconds", perf_counter() - stage_start)
 
+        if pelt_threads > 1:
+            preprocessed_channels.append(
+                (int(channel_idx), structured, activity_cpu, activity_z_cpu, float(noise_floor))
+            )
+            del valid_power, excess, activity_raw, activity, activity_z
+            continue
+
         def profile_getter(start: int, stop: int, structured_gpu=structured) -> np.ndarray:
             return _gpu_windowed_period_profile(cp, structured_gpu, start, stop)
 
@@ -289,6 +300,56 @@ def detect_block_periods_cuda_power(
         candidates.extend(channel_candidates)
         windows.extend(channel_windows)
         del valid_power, excess, structured, activity_raw, activity, activity_z
+
+    if pelt_threads > 1 and preprocessed_channels:
+        stage_start = perf_counter() if timing is not None else 0.0
+        activity_z_batch = np.stack([row[3] for row in preprocessed_channels], axis=0)
+        segments_batch = pelt_mean_shift_batch(
+            activity_z_batch,
+            penalty=pelt_penalty,
+            min_size=pelt_min_size_records,
+            jump=pelt_jump_records,
+            threads=pelt_threads,
+        )
+        if timing is not None:
+            _timing_add(timing, "pelt_seconds", perf_counter() - stage_start)
+
+        for (channel_idx, structured, activity_cpu, activity_z_cpu, noise_floor), segments in zip(
+            preprocessed_channels,
+            segments_batch,
+            strict=True,
+        ):
+
+            def profile_getter(start: int, stop: int, structured_gpu=structured) -> np.ndarray:
+                return _gpu_windowed_period_profile(cp, structured_gpu, start, stop)
+
+            channel_candidates, channel_windows, _diagnostics = _detect_preprocessed_channel_periods(
+                valid_periods=valid_periods,
+                structured=None,
+                activity=activity_cpu,
+                activity_z=activity_z_cpu,
+                noise_floor=noise_floor,
+                freq_mhz=float(freqs[channel_idx]),
+                channel_idx=channel_idx,
+                record_start=record_start,
+                pelt_penalty=pelt_penalty,
+                pelt_min_size_records=pelt_min_size_records,
+                pelt_jump_records=pelt_jump_records,
+                window_min_duration_records=window_min_duration_records,
+                window_min_activity_mean=window_min_activity_mean,
+                window_min_activity_raw_mean=window_min_activity_raw_mean,
+                window_merge_gap_records=window_merge_gap_records,
+                profile_min_prominence=profile_min_prominence,
+                profile_max_peaks_per_window=profile_max_peaks_per_window,
+                max_candidates_per_channel=int(channel_cap or 0),
+                segments=segments,
+                timing=timing,
+                profile_getter=profile_getter,
+            )
+            _timing_increment(timing, "channels", 1)
+            candidates.extend(channel_candidates)
+            windows.extend(channel_windows)
+            del structured
 
     candidates.sort(key=lambda row: (row["integrated_score"], row["period_peak_prominence"]), reverse=True)
     return candidates, windows
