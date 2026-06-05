@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import json
 from pathlib import Path
+from time import perf_counter
 
 import numpy as np
 
@@ -116,7 +117,64 @@ def _channel_progress(total: int, run_id: str, enabled: bool, leave: bool):
     )
 
 
+def _emit(message: str, progress=None) -> None:
+    if progress is not None:
+        progress.write(message)
+    else:
+        print(message, flush=True)
+
+
+def _timing_add(totals: dict[str, float], key: str, seconds: float) -> None:
+    totals[key] = float(totals.get(key, 0.0)) + float(seconds)
+
+
+def _timing_value(values: dict[str, float], key: str) -> float:
+    return float(values.get(key, 0.0))
+
+
+def _timing_block_message(
+    run_id: str,
+    block_id: str,
+    block_channels: tuple[int, int],
+    records: int,
+    timings: dict[str, float],
+    detection_timing: dict[str, float],
+    candidates: int,
+    windows: int,
+) -> str:
+    detect = _timing_value(timings, "detect_seconds")
+    detail = (
+        f"floor_excess={_timing_value(detection_timing, 'floor_excess_seconds'):.3f}s "
+        f"structure={_timing_value(detection_timing, 'structure_seconds'):.3f}s "
+        f"activity={_timing_value(detection_timing, 'activity_seconds'):.3f}s "
+        f"pelt={_timing_value(detection_timing, 'pelt_seconds'):.3f}s "
+        f"profile={_timing_value(detection_timing, 'profile_seconds'):.3f}s"
+    )
+    return (
+        f"[CWT TIMING] run_id={run_id} block={block_id} "
+        f"ch={block_channels[0]}:{block_channels[1]} records={records} "
+        f"read={_timing_value(timings, 'read_seconds'):.3f}s "
+        f"cwt={_timing_value(timings, 'cwt_seconds'):.3f}s "
+        f"detect={detect:.3f}s ({detail}) "
+        f"windows={windows} candidates={candidates}"
+    )
+
+
+def _timing_summary_message(run_id: str, totals: dict[str, float], blocks: int) -> str:
+    return (
+        f"[CWT TIMING] SUMMARY run_id={run_id} blocks={blocks} "
+        f"read={_timing_value(totals, 'read_seconds'):.3f}s "
+        f"cwt={_timing_value(totals, 'cwt_seconds'):.3f}s "
+        f"detect={_timing_value(totals, 'detect_seconds'):.3f}s "
+        f"write={_timing_value(totals, 'write_seconds'):.3f}s "
+        f"veto={_timing_value(totals, 'veto_seconds'):.3f}s "
+        f"visualization={_timing_value(totals, 'visualization_seconds'):.3f}s "
+        f"total={_timing_value(totals, 'total_seconds'):.3f}s"
+    )
+
+
 def run_cwt_search(config: CWTSearchConfig) -> Path:
+    run_start = perf_counter()
     if not config.input:
         raise ValueError("config.input is required")
     reader = CE4Reader(config.input)
@@ -144,25 +202,33 @@ def run_cwt_search(config: CWTSearchConfig) -> Path:
     )
     all_candidates: list[dict] = []
     all_windows: list[dict] = []
+    timing_enabled = bool(config.timing_enabled)
+    timing_totals: dict[str, float] = {}
+    block_count = 0
     try:
-        for block_index, block in enumerate(
-            reader.iter_frequency_blocks(
-                f_start=config.f_start,
-                f_stop=config.f_stop,
-                t_start=config.t_start,
-                t_stop=config.t_stop,
-                block_channels=config.block_channels,
-            ),
-            start=1,
-        ):
+        block_channels = max(1, int(config.block_channels))
+        for block_index, block_start in enumerate(range(int(selected_channels.start), int(selected_channels.stop), block_channels), start=1):
+            read_start = perf_counter()
+            block_stop = min(block_start + block_channels, int(selected_channels.stop))
+            block = reader.read_block(selected_records, slice(block_start, block_stop))
+            read_seconds = perf_counter() - read_start
+            _timing_add(timing_totals, "read_seconds", read_seconds)
+            block_count += 1
             block_id = f"block_{block_index:04d}"
+            cwt_start = perf_counter()
             power = cwt_power_cube(
                 block.data,
                 periods,
                 wavelet=config.wavelet,
                 method=config.cwt_method,
+                backend=config.cwt_backend,
+                cuda_device=config.cuda_device,
                 normalize_channels=True,
             )
+            cwt_seconds = perf_counter() - cwt_start
+            _timing_add(timing_totals, "cwt_seconds", cwt_seconds)
+            detection_timing: dict[str, float] | None = {} if timing_enabled else None
+            detect_start = perf_counter()
             candidates, windows = detect_block_periods(
                 power_cube=power,
                 periods=periods,
@@ -191,7 +257,28 @@ def run_cwt_search(config: CWTSearchConfig) -> Path:
                 profile_max_peaks_per_window=config.profile_max_peaks_per_window,
                 max_candidates_per_channel=config.max_candidates_per_channel,
                 max_candidates=config.max_candidates_per_block,
+                timing=detection_timing,
             )
+            detect_seconds = perf_counter() - detect_start
+            _timing_add(timing_totals, "detect_seconds", detect_seconds)
+            if timing_enabled and detection_timing is not None:
+                _emit(
+                    _timing_block_message(
+                        run_id,
+                        block_id,
+                        block.channel_range,
+                        int(block.data.shape[0]),
+                        {
+                            "read_seconds": read_seconds,
+                            "cwt_seconds": cwt_seconds,
+                            "detect_seconds": detect_seconds,
+                        },
+                        detection_timing,
+                        candidates=len(candidates),
+                        windows=len(windows),
+                    ),
+                    progress=progress,
+                )
             for row in windows:
                 row["schema_version"] = 1
                 row["run_id"] = run_id
@@ -220,12 +307,15 @@ def run_cwt_search(config: CWTSearchConfig) -> Path:
         if progress is not None:
             progress.close()
 
+    write_start = perf_counter()
     final_candidates = add_candidate_ids(all_candidates)
     write_time_windows_csv(run_dir / "time_windows.csv", all_windows)
     write_candidates_csv(run_dir / "candidates_raw.csv", final_candidates)
     if config.save_legacy_candidates_csv:
         write_candidates_csv(run_dir / "candidates.csv", final_candidates)
+    _timing_add(timing_totals, "write_seconds", perf_counter() - write_start)
 
+    veto_start = perf_counter()
     veto_context = VetoContext(
         record_start=int(selected_records.start),
         record_stop=int(selected_records.stop),
@@ -238,7 +328,9 @@ def run_cwt_search(config: CWTSearchConfig) -> Path:
         config=veto_config_from_scan_config(config),
     )
     write_reviewed_candidates_csv(run_dir / "candidates_reviewed.csv", reviewed_candidates)
+    _timing_add(timing_totals, "veto_seconds", perf_counter() - veto_start)
 
+    write_start = perf_counter()
     manifest_row = make_manifest_row(
         run_id=run_id,
         source_info=reader.info(),
@@ -257,7 +349,9 @@ def run_cwt_search(config: CWTSearchConfig) -> Path:
         final_candidates,
         reviewed_candidates,
     )
+    _timing_add(timing_totals, "write_seconds", perf_counter() - write_start)
     if config.visualization_enabled:
+        visualization_start = perf_counter()
         from .visualization import CWTVisualizationConfig, SearchVisualizationConfig, visualize_cwt_stages
 
         selected_block = reader.read_block(selected_records, reader.freq_slice(config.f_start, config.f_stop))
@@ -268,6 +362,8 @@ def run_cwt_search(config: CWTSearchConfig) -> Path:
             SearchVisualizationConfig(
                 wavelet=config.wavelet,
                 cwt_method=config.cwt_method,
+                cwt_backend=config.cwt_backend,
+                cuda_device=config.cuda_device,
                 periods=periods,
                 block_channels=config.block_channels,
                 candidate_period_min_records=config.candidate_period_min_records,
@@ -300,4 +396,8 @@ def run_cwt_search(config: CWTSearchConfig) -> Path:
                 dpi=config.visualization_dpi,
             ),
         )
+        _timing_add(timing_totals, "visualization_seconds", perf_counter() - visualization_start)
+    timing_totals["total_seconds"] = perf_counter() - run_start
+    if timing_enabled:
+        _emit(_timing_summary_message(run_id, timing_totals, block_count), progress=None)
     return run_dir

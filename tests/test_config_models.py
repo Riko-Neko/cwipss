@@ -11,7 +11,7 @@ def test_structured_config_maps_to_resolved_dataclass() -> None:
         {
             "schema_version": 1,
             "input": {"path": "data/example.2C"},
-            "scan": {"f_start": 38.0, "f_stop": 39.0, "period_count": 40},
+            "scan": {"f_start": 38.0, "f_stop": 39.0, "period_count": 40, "cwt_backend": "cuda", "cuda_device": 1},
             "detection": {
                 "noise_floor_fraction": 0.15,
                 "structure_baseline_quantile": 0.08,
@@ -32,6 +32,7 @@ def test_structured_config_maps_to_resolved_dataclass() -> None:
             "validation": {"max_candidates": 12, "shuffle_trials": 20},
             "visualization": {"enabled": True, "max_blocks": 1, "max_channels": 2, "top_candidates": 10},
             "progress": {"enabled": False, "leave": True},
+            "timing": {"enabled": True},
             "output": {"output_dir": "runs", "run_id": "smoke"},
         }
     )
@@ -40,6 +41,8 @@ def test_structured_config_maps_to_resolved_dataclass() -> None:
     assert config.f_start == 38.0
     assert config.f_stop == 39.0
     assert config.period_count == 40
+    assert config.cwt_backend == "cuda"
+    assert config.cuda_device == 1
     assert config.noise_floor_fraction == 0.15
     assert config.structure_baseline_quantile == 0.08
     assert config.structure_scale_quantile == 0.25
@@ -64,11 +67,14 @@ def test_structured_config_maps_to_resolved_dataclass() -> None:
     assert config.visualization_top_candidates == 10
     assert config.progress_enabled is False
     assert config.progress_leave is True
+    assert config.timing_enabled is True
     assert config.run_id == "smoke"
 
     nested = cwt_config_to_nested_dict(config)
     assert nested["input"]["path"] == "data/example.2C"
     assert nested["scan"]["period_count"] == 40
+    assert nested["scan"]["cwt_backend"] == "cuda"
+    assert nested["scan"]["cuda_device"] == 1
     assert nested["detection"]["noise_floor_fraction"] == 0.15
     assert nested["detection"]["structure_baseline_quantile"] == 0.08
     assert nested["detection"]["structure_scale_quantile"] == 0.25
@@ -85,6 +91,7 @@ def test_structured_config_maps_to_resolved_dataclass() -> None:
     assert nested["visualization"]["enabled"] is True
     assert nested["progress"]["enabled"] is False
     assert nested["progress"]["leave"] is True
+    assert nested["timing"]["enabled"] is True
 
 
 def test_flat_config_remains_supported_with_overrides() -> None:

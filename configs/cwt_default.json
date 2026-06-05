@@ -10,6 +10,8 @@
     "t_stop": null,
     "wavelet": "cmor1.5-1.0",
     "cwt_method": "fft",
+    "cwt_backend": "cpu",
+    "cuda_device": 0,
     "period_min_records": 2.0,
     "period_max_records": 512.0,
     "period_count": 96,
@@ -77,6 +79,9 @@
   "progress": {
     "enabled": true,
     "leave": false
+  },
+  "timing": {
+    "enabled": false
   },
   "output": {
     "output_dir": "runs",

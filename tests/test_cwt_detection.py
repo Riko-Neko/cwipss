@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from ce4_period_search.activity import (
     coherent_structure_map,
@@ -22,6 +23,70 @@ def test_cwt_power_cube_shape() -> None:
 
     assert power.shape == (8, 64, 3)
     assert np.all(np.isfinite(power))
+
+
+def test_cwt_power_cube_cpu_backend_matches_default() -> None:
+    rng = np.random.default_rng(124)
+    data = rng.normal(size=(96, 4)).astype(np.float32)
+    periods = period_grid_records(2, 32, 12)
+
+    default = cwt_power_cube(data, periods, wavelet="cmor1.5-1.0")
+    explicit_cpu = cwt_power_cube(data, periods, wavelet="cmor1.5-1.0", backend="cpu")
+
+    np.testing.assert_array_equal(default, explicit_cpu)
+
+
+def test_cwt_power_cube_auto_falls_back_to_cpu_when_cuda_unavailable() -> None:
+    from ce4_period_search.cwt_cuda import cuda_available
+
+    if cuda_available():
+        pytest.skip("auto uses CUDA when a CUDA device is available")
+    rng = np.random.default_rng(125)
+    data = rng.normal(size=(64, 3)).astype(np.float32)
+    periods = period_grid_records(2, 16, 8)
+
+    cpu = cwt_power_cube(data, periods, wavelet="cmor1.5-1.0", backend="cpu")
+    auto = cwt_power_cube(data, periods, wavelet="cmor1.5-1.0", backend="auto")
+
+    np.testing.assert_array_equal(cpu, auto)
+
+
+def test_cwt_power_cube_cuda_rejects_conv_method() -> None:
+    data = np.ones((16, 2), dtype=np.float32)
+    periods = period_grid_records(2, 8, 4)
+
+    with pytest.raises(ValueError, match="supports method='fft'"):
+        cwt_power_cube(data, periods, method="conv", backend="cuda")
+
+
+def test_cwt_power_cube_auto_uses_cpu_for_conv_method() -> None:
+    rng = np.random.default_rng(127)
+    data = rng.normal(size=(32, 2)).astype(np.float32)
+    periods = period_grid_records(2, 8, 4)
+
+    cpu = cwt_power_cube(data, periods, method="conv", backend="cpu")
+    auto = cwt_power_cube(data, periods, method="conv", backend="auto")
+
+    np.testing.assert_array_equal(cpu, auto)
+
+
+def test_cwt_power_cube_cuda_matches_cpu_for_small_fft_case() -> None:
+    pytest.importorskip("cupy")
+    from ce4_period_search.cwt_cuda import cuda_available
+
+    if not cuda_available():
+        pytest.skip("CUDA device is not available")
+
+    rng = np.random.default_rng(126)
+    data = rng.normal(size=(96, 4)).astype(np.float32)
+    periods = period_grid_records(2, 32, 12)
+
+    cpu = cwt_power_cube(data, periods, wavelet="cmor1.5-1.0", backend="cpu")
+    cuda = cwt_power_cube(data, periods, wavelet="cmor1.5-1.0", backend="cuda")
+
+    assert cuda.shape == cpu.shape
+    assert cuda.dtype == np.float32
+    np.testing.assert_allclose(cuda, cpu, rtol=5e-3, atol=5e-4)
 
 
 def test_cwt_time_aggregation_returns_period_channel_map() -> None:
@@ -97,6 +162,7 @@ def test_lowfloor_pelt_detector_finds_windowed_period_peak() -> None:
     target_channel = 3
     power = np.ones((periods.size, 128, 5), dtype=np.float32)
     power[target_period_idx - 2:target_period_idx + 3, 36:96, target_channel] = 50.0
+    timing: dict[str, float] = {}
 
     rows, windows = detect_block_periods(
         power_cube=power,
@@ -126,6 +192,7 @@ def test_lowfloor_pelt_detector_finds_windowed_period_peak() -> None:
         profile_max_peaks_per_window=2,
         max_candidates_per_channel=2,
         max_candidates=10,
+        timing=timing,
     )
 
     assert len(windows) >= 1
@@ -137,6 +204,9 @@ def test_lowfloor_pelt_detector_finds_windowed_period_peak() -> None:
     assert rows[0]["record_start"] <= 50
     assert rows[0]["record_stop"] >= 90
     assert rows[0]["integrated_score"] > 0
+    assert timing["channels"] == 5.0
+    assert timing["structure_seconds"] >= 0.0
+    assert timing["pelt_seconds"] >= 0.0
 
 
 def test_default_profile_keeps_one_period_family_per_window() -> None:

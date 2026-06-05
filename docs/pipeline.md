@@ -101,6 +101,25 @@ computes CWT in frequency blocks for performance; the progress unit is the
 number of selected frequency channels completed. Use `--no-progress` to silence
 the bar or `--progress-leave` to keep it in terminal logs.
 
+Use `--timing` to print per-block timing diagnostics. This is disabled by
+default. Each timing line reports block read time, CWT time, total detection
+time, and detection substage totals for floor/excess, structure gating,
+activity compression, PELT, and period-profile scoring. The final summary line
+reports file-level totals.
+
+## CWT Backend
+
+The default backend is `cpu`, which uses the original PyWavelets implementation.
+This is the compatibility path and remains the default for all existing configs
+and commands.
+
+`--cwt-backend cuda` enables the optional CuPy FFT backend for CWT power
+generation. It currently supports `--cwt-method fft` and returns the same
+`period x time x channel` NumPy power cube expected by the existing CPU
+detector. `--cwt-backend auto` uses CUDA only when CuPy and the selected CUDA
+device are available; otherwise it falls back to the CPU backend. Explicit
+`cuda` mode fails fast if CUDA cannot be initialized.
+
 ## Time Aggregation
 
 CWT first produces `period x time x channel`. Detection uses this first-hand

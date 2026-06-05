@@ -42,6 +42,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--t-stop", type=int, default=None, help="Record stop index.")
     parser.add_argument("--wavelet", type=str, default=None, help="PyWavelets CWT wavelet.")
     parser.add_argument("--cwt-method", choices=["conv", "fft"], default=None, help="PyWavelets CWT computation method.")
+    parser.add_argument("--cwt-backend", choices=["cpu", "cuda", "auto"], default=None, help="CWT compute backend.")
+    parser.add_argument("--cuda-device", type=int, default=None, help="CUDA device index for --cwt-backend cuda/auto.")
     parser.add_argument("--period-min-records", type=float, default=None, help="Minimum CWT period in records.")
     parser.add_argument("--period-max-records", type=float, default=None, help="Maximum CWT period in records.")
     parser.add_argument("--period-count", type=int, default=None, help="Number of CWT periods.")
@@ -97,6 +99,12 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Leave CWT progress bars on screen when each file finishes.",
     )
+    parser.add_argument(
+        "--timing",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Print per-block timing diagnostics for each file run.",
+    )
     return parser.parse_args()
 
 
@@ -115,6 +123,8 @@ def _scan_overrides(args: argparse.Namespace) -> dict:
         "t_stop",
         "wavelet",
         "cwt_method",
+        "cwt_backend",
+        "cuda_device",
         "period_min_records",
         "period_max_records",
         "period_count",
@@ -155,6 +165,7 @@ def _scan_overrides(args: argparse.Namespace) -> dict:
         "visualization_dpi",
         "progress_enabled",
         "progress_leave",
+        "timing_enabled",
     ]
     mapped = {
         "visualize": "visualization_enabled",
@@ -164,6 +175,7 @@ def _scan_overrides(args: argparse.Namespace) -> dict:
         "viz_dpi": "visualization_dpi",
         "progress": "progress_enabled",
         "progress_leave": "progress_leave",
+        "timing": "timing_enabled",
     }
     values = vars(args)
     overrides = {name: values[name] for name in names if name in values and values[name] is not None}

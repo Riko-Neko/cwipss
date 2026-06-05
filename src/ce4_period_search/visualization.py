@@ -52,6 +52,8 @@ class SearchVisualizationConfig:
     wavelet: str
     periods: np.ndarray
     cwt_method: str = "fft"
+    cwt_backend: str = "cpu"
+    cuda_device: int = 0
     block_channels: int = 128
     candidate_period_min_records: float | None = 10.0
     candidate_period_max_records: float | None = 200.0
@@ -646,6 +648,8 @@ def visualize_cwt_stages(
             periods,
             wavelet=search_config.wavelet,
             method=search_config.cwt_method,
+            backend=search_config.cwt_backend,
+            cuda_device=search_config.cuda_device,
             normalize_channels=True,
         )
         response = aggregate_cwt_time(
@@ -939,6 +943,8 @@ def visualize_cwt_stages(
                 "search_config": {
                     "wavelet": search_config.wavelet,
                     "cwt_method": search_config.cwt_method,
+                    "cwt_backend": search_config.cwt_backend,
+                    "cuda_device": search_config.cuda_device,
                     "period_count": int(periods.size),
                     "period_min_records": float(np.nanmin(periods)),
                     "period_max_records": float(np.nanmax(periods)),

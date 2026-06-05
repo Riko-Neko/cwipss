@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from time import perf_counter
 from typing import Iterable
 
 import numpy as np
@@ -19,6 +20,16 @@ from .windows import active_windows_from_segments, merge_close_windows, pelt_mea
 
 DETECTION_METHOD = "single_channel_lowfloor_pelt_profile"
 WINDOW_METHOD = "single_channel_lowfloor_pelt"
+
+
+def _timing_add(timing: dict[str, float] | None, key: str, seconds: float) -> None:
+    if timing is not None:
+        timing[key] = float(timing.get(key, 0.0)) + float(seconds)
+
+
+def _timing_increment(timing: dict[str, float] | None, key: str, value: int = 1) -> None:
+    if timing is not None:
+        timing[key] = float(timing.get(key, 0.0)) + float(value)
 
 
 def _peak_record(activity: np.ndarray, start: int, stop: int, record_start: int) -> int:
@@ -60,6 +71,7 @@ def detect_channel_periods(
     profile_min_prominence: float,
     profile_max_peaks_per_window: int,
     max_candidates_per_channel: int,
+    timing: dict[str, float] | None = None,
 ) -> tuple[list[dict], list[dict], dict[str, np.ndarray | float]]:
     """Detect period candidates from one channel's CWT power map.
 
@@ -69,9 +81,11 @@ def detect_channel_periods(
     PELT time windows from the compressed activity curve and searches
     period-profile peaks inside each window.
     """
+    channel_start = perf_counter() if timing is not None else 0.0
     power = np.asarray(power_channel, dtype=np.float32)
     if power.ndim != 2:
         raise ValueError("power_channel must have shape (periods, records)")
+    stage_start = perf_counter() if timing is not None else 0.0
     valid_power, valid_periods, _mask = crop_valid_periods(
         power,
         periods,
@@ -80,6 +94,10 @@ def detect_channel_periods(
     )
     noise_floor = low_fraction_noise_floor(valid_power, fraction=noise_floor_fraction)
     excess = relative_excess(valid_power, noise_floor, eps_fraction=excess_eps_fraction)
+    if timing is not None:
+        _timing_add(timing, "floor_excess_seconds", perf_counter() - stage_start)
+
+    stage_start = perf_counter() if timing is not None else 0.0
     structured = coherent_structure_map(
         excess,
         baseline_quantile=structure_baseline_quantile,
@@ -89,6 +107,10 @@ def detect_channel_periods(
         period_support_bins=structure_period_support_bins,
         min_support_fraction=structure_min_support_fraction,
     )
+    if timing is not None:
+        _timing_add(timing, "structure_seconds", perf_counter() - stage_start)
+
+    stage_start = perf_counter() if timing is not None else 0.0
     activity_raw = signed_trimmed_period_activity(
         structured,
         trim_low=activity_trim_low,
@@ -96,6 +118,10 @@ def detect_channel_periods(
     )
     activity = smooth_activity(activity_raw, smooth_records=activity_smooth_records)
     activity_z = robust_standardize(activity)
+    if timing is not None:
+        _timing_add(timing, "activity_seconds", perf_counter() - stage_start)
+
+    stage_start = perf_counter() if timing is not None else 0.0
     segments = pelt_mean_shift(activity_z, penalty=pelt_penalty, min_size=pelt_min_size_records)
     windows = active_windows_from_segments(
         segments,
@@ -104,10 +130,15 @@ def detect_channel_periods(
         min_mean=window_min_activity_mean,
     )
     windows = merge_close_windows(windows, max_gap=window_merge_gap_records)
+    if timing is not None:
+        _timing_add(timing, "pelt_seconds", perf_counter() - stage_start)
+        _timing_increment(timing, "segments", len(segments))
+        _timing_increment(timing, "windows_before_raw_floor", len(windows))
 
     window_rows: list[dict] = []
     candidate_rows: list[dict] = []
     raw_threshold = max(0.0, float(window_min_activity_raw_mean))
+    stage_start = perf_counter() if timing is not None else 0.0
     for window_index, window in enumerate(windows, start=1):
         local_start = int(window["record_start"])
         local_stop = int(window["record_stop"])
@@ -176,7 +207,11 @@ def detect_channel_periods(
                     "period_peak_prominence": float(peak["period_peak_prominence"]),
                 }
             )
+    if timing is not None:
+        _timing_add(timing, "profile_seconds", perf_counter() - stage_start)
+        _timing_increment(timing, "windows_after_raw_floor", len(window_rows))
 
+    stage_start = perf_counter() if timing is not None else 0.0
     candidate_rows.sort(key=lambda row: (row["integrated_score"], row["period_peak_prominence"]), reverse=True)
     max_rows = max(1, int(max_candidates_per_channel))
     diagnostics: dict[str, np.ndarray | float] = {
@@ -186,6 +221,10 @@ def detect_channel_periods(
         "activity": activity_z,
         "noise_floor": float(noise_floor),
     }
+    if timing is not None:
+        _timing_add(timing, "candidate_sort_seconds", perf_counter() - stage_start)
+        _timing_increment(timing, "channel_candidate_rows_before_cap", len(candidate_rows))
+        _timing_add(timing, "channel_total_seconds", perf_counter() - channel_start)
     return candidate_rows[:max_rows], window_rows, diagnostics
 
 
@@ -218,6 +257,7 @@ def detect_block_periods(
     profile_max_peaks_per_window: int,
     max_candidates_per_channel: int,
     max_candidates: int | None = None,
+    timing: dict[str, float] | None = None,
 ) -> tuple[list[dict], list[dict]]:
     power = np.asarray(power_cube, dtype=np.float32)
     period_values = np.asarray(periods, dtype=np.float64)
@@ -258,7 +298,9 @@ def detect_block_periods(
             profile_min_prominence=profile_min_prominence,
             profile_max_peaks_per_window=profile_max_peaks_per_window,
             max_candidates_per_channel=max_candidates_per_channel,
+            timing=timing,
         )
+        _timing_increment(timing, "channels", 1)
         candidates.extend(channel_candidates)
         windows.extend(channel_windows)
 

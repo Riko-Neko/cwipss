@@ -101,6 +101,12 @@ Nyquist limit and suppresses persistent short-period artifacts.
 
 CLI scans show a CWT channel-progress bar by default. Use `--no-progress` to
 disable it, or `--progress-leave` to keep the finished bar in terminal logs.
+Use `--timing` to print per-block timing diagnostics for read, CWT, detection,
+and detection substages. It is disabled by default.
+
+The CWT backend defaults to `cpu`, preserving the original PyWavelets path.
+Systems with CuPy/CUDA can opt in with `--cwt-backend cuda --cuda-device 0`.
+`--cwt-backend auto` uses CUDA when available and otherwise falls back to CPU.
 
 Each run writes:
 

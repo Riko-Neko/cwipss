@@ -18,6 +18,8 @@ class CWTSearchConfig:
     t_stop: int | None = None
     wavelet: str = "cmor1.5-1.0"
     cwt_method: str = "fft"
+    cwt_backend: str = "cpu"
+    cuda_device: int = 0
     period_min_records: float = 2.0
     period_max_records: float = 512.0
     period_count: int = 96
@@ -76,6 +78,7 @@ class CWTSearchConfig:
     visualization_dpi: int = 140
     progress_enabled: bool = True
     progress_leave: bool = False
+    timing_enabled: bool = False
     run_id: str | None = None
     save_legacy_candidates_csv: bool = False
 
@@ -96,6 +99,8 @@ _SECTION_KEY_MAP: dict[str, dict[str, str]] = {
         "t_stop": "t_stop",
         "wavelet": "wavelet",
         "cwt_method": "cwt_method",
+        "cwt_backend": "cwt_backend",
+        "cuda_device": "cuda_device",
         "period_min_records": "period_min_records",
         "period_max_records": "period_max_records",
         "period_count": "period_count",
@@ -162,6 +167,9 @@ _SECTION_KEY_MAP: dict[str, dict[str, str]] = {
     "progress": {
         "enabled": "progress_enabled",
         "leave": "progress_leave",
+    },
+    "timing": {
+        "enabled": "timing_enabled",
     },
     "visualization": {
         "enabled": "visualization_enabled",
@@ -240,6 +248,8 @@ def cwt_config_to_nested_dict(config: CWTSearchConfig) -> dict[str, Any]:
             "t_stop": config.t_stop,
             "wavelet": config.wavelet,
             "cwt_method": config.cwt_method,
+            "cwt_backend": config.cwt_backend,
+            "cuda_device": config.cuda_device,
             "period_min_records": config.period_min_records,
             "period_max_records": config.period_max_records,
             "period_count": config.period_count,
@@ -305,6 +315,9 @@ def cwt_config_to_nested_dict(config: CWTSearchConfig) -> dict[str, Any]:
         "progress": {
             "enabled": config.progress_enabled,
             "leave": config.progress_leave,
+        },
+        "timing": {
+            "enabled": config.timing_enabled,
         },
         "visualization": {
             "enabled": config.visualization_enabled,

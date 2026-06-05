@@ -44,6 +44,8 @@ from .veto import VetoConfig, VetoContext, review_candidates
 class CWTBenchmarkConfig:
     wavelet: str = "cmor1.5-1.0"
     cwt_method: str = "fft"
+    cwt_backend: str = "cpu"
+    cuda_device: int = 0
     period_min_records: float = 2.0
     period_max_records: float = 512.0
     period_count: int = 96
@@ -170,6 +172,8 @@ def run_cwt_candidate_search(
                 wavelet=search_config.wavelet,
                 periods=periods,
                 method=search_config.cwt_method,
+                backend=search_config.cwt_backend,
+                cuda_device=search_config.cuda_device,
                 normalize_channels=True,
             )
             candidates, windows = detect_block_periods(
@@ -583,6 +587,8 @@ def run_injection_benchmark(
             SearchVisualizationConfig(
                 wavelet=search_config.wavelet,
                 cwt_method=search_config.cwt_method,
+                cwt_backend=search_config.cwt_backend,
+                cuda_device=search_config.cuda_device,
                 periods=periods,
                 block_channels=search_config.block_channels,
                 candidate_period_min_records=search_config.candidate_period_min_records,

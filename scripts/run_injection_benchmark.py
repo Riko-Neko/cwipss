@@ -44,6 +44,8 @@ def parse_args() -> argparse.Namespace:
 
     parser.add_argument("--wavelet", type=str, default="cmor1.5-1.0", help="PyWavelets CWT wavelet.")
     parser.add_argument("--cwt-method", choices=["conv", "fft"], default="fft", help="PyWavelets CWT computation method.")
+    parser.add_argument("--cwt-backend", choices=["cpu", "cuda", "auto"], default="cpu", help="CWT compute backend.")
+    parser.add_argument("--cuda-device", type=int, default=0, help="CUDA device index for --cwt-backend cuda/auto.")
     parser.add_argument("--period-min-records", type=float, default=2.0, help="Minimum CWT period in records.")
     parser.add_argument("--period-max-records", type=float, default=512.0, help="Maximum CWT period in records.")
     parser.add_argument("--period-count", type=int, default=96, help="Number of CWT periods.")
@@ -144,6 +146,8 @@ def main() -> None:
     search_config = CWTBenchmarkConfig(
         wavelet=args.wavelet,
         cwt_method=args.cwt_method,
+        cwt_backend=args.cwt_backend,
+        cuda_device=args.cuda_device,
         period_min_records=args.period_min_records,
         period_max_records=args.period_max_records,
         period_count=args.period_count,

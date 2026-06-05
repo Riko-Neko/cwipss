@@ -64,6 +64,79 @@ def cwt_power_cube(
     wavelet: str = "cmor1.5-1.0",
     normalize_channels: bool = True,
     method: str = "fft",
+    backend: str = "cpu",
+    cuda_device: int = 0,
+) -> np.ndarray:
+    """Return CWT power as `(periods, records, channels)`.
+
+    The default CPU backend is the original PyWavelets implementation. The CUDA
+    backend is optional and must be requested explicitly or via `backend="auto"`.
+    """
+    backend_name = str(backend or "cpu").lower()
+    if backend_name == "cpu":
+        return _cwt_power_cube_cpu(
+            data,
+            periods,
+            wavelet=wavelet,
+            normalize_channels=normalize_channels,
+            method=method,
+        )
+    if backend_name == "cuda":
+        from .cwt_cuda import cwt_power_cube_cuda
+
+        return cwt_power_cube_cuda(
+            data,
+            periods,
+            wavelet=wavelet,
+            normalize_channels=normalize_channels,
+            method=method,
+            device=int(cuda_device),
+        )
+    if backend_name == "auto":
+        if method != "fft":
+            return _cwt_power_cube_cpu(
+                data,
+                periods,
+                wavelet=wavelet,
+                normalize_channels=normalize_channels,
+                method=method,
+            )
+        try:
+            from .cwt_cuda import cuda_available, cwt_power_cube_cuda
+        except ImportError:
+            return _cwt_power_cube_cpu(
+                data,
+                periods,
+                wavelet=wavelet,
+                normalize_channels=normalize_channels,
+                method=method,
+            )
+
+        if cuda_available(device=int(cuda_device)):
+            return cwt_power_cube_cuda(
+                data,
+                periods,
+                wavelet=wavelet,
+                normalize_channels=normalize_channels,
+                method=method,
+                device=int(cuda_device),
+            )
+        return _cwt_power_cube_cpu(
+            data,
+            periods,
+            wavelet=wavelet,
+            normalize_channels=normalize_channels,
+            method=method,
+        )
+    raise ValueError(f"Unknown CWT backend: {backend}")
+
+
+def _cwt_power_cube_cpu(
+    data: np.ndarray,
+    periods: np.ndarray,
+    wavelet: str = "cmor1.5-1.0",
+    normalize_channels: bool = True,
+    method: str = "fft",
 ) -> np.ndarray:
     """Return CWT power as `(periods, records, channels)`.
 
