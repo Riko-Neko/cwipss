@@ -47,6 +47,9 @@ The default detector is set for low sensitivity and higher review purity:
   size `384` records, and exact PELT endpoint search
   (`pelt_jump_records=1`); CUDA runs can parallelize native CPU PELT across
   channels with `pelt_threads > 1`;
+- CUDA structure preprocessing uses the stable per-channel path by default;
+  `cuda_structure_batch=true` batches structure/activity preprocessing across
+  all channels in a block for GPU timing experiments;
 - after PELT, a raw structured-activity mean floor of `25.0` is applied before
   period-profile candidates are emitted;
 - nearby PELT windows are merged across gaps up to `256` records;

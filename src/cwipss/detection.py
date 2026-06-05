@@ -346,6 +346,7 @@ def detect_block_periods(
     max_candidates_per_record: float = 3.0 / 4096.0,
     pelt_jump_records: int = 1,
     pelt_threads: int = 1,
+    cuda_structure_batch: bool = False,
     timing: dict[str, float] | None = None,
 ) -> tuple[list[dict], list[dict]]:
     power = np.asarray(power_cube, dtype=np.float32)

@@ -45,10 +45,51 @@ def _gpu_low_fraction_noise_floor(cp: Any, power, fraction: float = 0.20) -> flo
     return max(floor, 1e-12)
 
 
+def _gpu_low_fraction_noise_floor_batch(cp: Any, power, fraction: float = 0.20):
+    if power.ndim != 3:
+        raise ValueError("power must have shape (periods, records, channels)")
+    channels = int(power.shape[2])
+    finite_mask = cp.isfinite(power)
+    if not bool(cp.all(finite_mask).item()):
+        floors = [
+            _gpu_low_fraction_noise_floor(cp, power[:, :, channel_idx], fraction=fraction)
+            for channel_idx in range(channels)
+        ]
+        return cp.asarray(floors, dtype=cp.float32)
+
+    flat = cp.transpose(power, (2, 0, 1)).reshape(channels, -1)
+    finite_size = int(flat.shape[1])
+    if finite_size == 0:
+        return cp.ones(channels, dtype=cp.float32)
+    fraction = min(max(float(fraction), 1.0 / finite_size), 1.0)
+    k = max(1, int(ceil(fraction * finite_size)))
+    low = cp.partition(flat, k - 1, axis=1)[:, :k]
+    floors = cp.nanmean(low, axis=1)
+    bad = ~cp.isfinite(floors) | (floors <= 0.0)
+    if bool(cp.any(bad).item()):
+        floor_values = cp.asnumpy(floors)
+        for channel_idx in cp.asnumpy(cp.where(bad)[0]):
+            floor_values[int(channel_idx)] = _gpu_low_fraction_noise_floor(
+                cp,
+                power[:, :, int(channel_idx)],
+                fraction=fraction,
+            )
+        floors = cp.asarray(floor_values, dtype=cp.float32)
+    return cp.maximum(floors, cp.asarray(1e-12, dtype=cp.float32))
+
+
 def _gpu_relative_excess(cp: Any, power, noise_floor: float, eps_fraction: float = 1e-6):
     floor = max(float(noise_floor), 1e-12)
     eps = max(1e-12, abs(floor) * float(eps_fraction))
     excess = power / (floor + eps) - 1.0
+    return cp.where(cp.isfinite(excess), excess, 0.0).astype(cp.float32, copy=False)
+
+
+def _gpu_relative_excess_batch(cp: Any, power, noise_floor, eps_fraction: float = 1e-6):
+    floor = cp.maximum(noise_floor.astype(cp.float32, copy=False), cp.asarray(1e-12, dtype=cp.float32))
+    eps = cp.maximum(cp.asarray(1e-12, dtype=cp.float32), cp.abs(floor) * float(eps_fraction))
+    denom = (floor + eps).reshape(1, 1, -1)
+    excess = power / denom - 1.0
     return cp.where(cp.isfinite(excess), excess, 0.0).astype(cp.float32, copy=False)
 
 
@@ -61,6 +102,33 @@ def _gpu_period_robust_zscore(
 ):
     if excess.ndim != 2:
         raise ValueError("excess must have shape (periods, records)")
+    q_bg = min(max(float(baseline_quantile), 0.0), 0.45)
+    q_scale = min(max(float(scale_quantile), q_bg + 1e-6), 0.50)
+    baseline = _gpu_nanquantile(cp, excess, q_bg, axis=1, keepdims=True)
+    centered = excess - baseline
+    low_cut = _gpu_nanquantile(cp, excess, q_scale, axis=1, keepdims=True)
+    low_centered = cp.where(excess <= low_cut, centered, cp.nan)
+    low_median = cp.nanmedian(low_centered, axis=1, keepdims=True)
+    low_mad = cp.nanmedian(cp.abs(low_centered - low_median), axis=1, keepdims=True)
+    scale = 1.4826 * low_mad
+    low_std = cp.nanstd(low_centered, axis=1, keepdims=True)
+    scale = cp.where(cp.isfinite(scale) & (scale > 1e-6), scale, low_std)
+    fallback = cp.nanstd(centered, axis=1, keepdims=True)
+    scale = cp.where(cp.isfinite(scale) & (scale > 1e-6), scale, fallback)
+    scale = cp.where(cp.isfinite(scale) & (scale > 1e-6), scale, 1.0)
+    z = centered / scale
+    return cp.where(cp.isfinite(z), z, 0.0).astype(cp.float32, copy=False)
+
+
+def _gpu_period_robust_zscore_batch(
+    cp: Any,
+    excess,
+    *,
+    baseline_quantile: float = 0.10,
+    scale_quantile: float = 0.20,
+):
+    if excess.ndim != 3:
+        raise ValueError("excess must have shape (periods, records, channels)")
     q_bg = min(max(float(baseline_quantile), 0.0), 0.45)
     q_scale = min(max(float(scale_quantile), q_bg + 1e-6), 0.50)
     baseline = _gpu_nanquantile(cp, excess, q_bg, axis=1, keepdims=True)
@@ -114,6 +182,41 @@ def _gpu_coherent_structure_map(
     return cp.where(cp.isfinite(structured), structured, 0.0).astype(cp.float32, copy=False)
 
 
+def _gpu_coherent_structure_map_batch(
+    cp: Any,
+    uniform_filter1d,
+    excess,
+    *,
+    baseline_quantile: float = 0.10,
+    scale_quantile: float = 0.20,
+    z_threshold: float = 1.0,
+    time_support_records: int = 64,
+    period_support_bins: int = 3,
+    min_support_fraction: float = 0.10,
+):
+    z = _gpu_period_robust_zscore_batch(
+        cp,
+        excess,
+        baseline_quantile=baseline_quantile,
+        scale_quantile=scale_quantile,
+    )
+    positive = cp.maximum(z, 0.0)
+    support = (z > float(z_threshold)).astype(cp.float32)
+    time_width = max(1, int(time_support_records))
+    period_width = max(1, int(period_support_bins))
+    if time_width > 1:
+        support = uniform_filter1d(support, size=time_width, axis=1, mode="nearest")
+    if period_width > 1:
+        support = uniform_filter1d(support, size=period_width, axis=0, mode="nearest")
+    floor = min(max(float(min_support_fraction), 0.0), 0.95)
+    if floor > 0.0:
+        weight = cp.clip((support - floor) / max(1e-6, 1.0 - floor), 0.0, 1.0)
+    else:
+        weight = cp.clip(support, 0.0, 1.0)
+    structured = positive * weight
+    return cp.where(cp.isfinite(structured), structured, 0.0).astype(cp.float32, copy=False)
+
+
 def _gpu_signed_trimmed_period_activity(cp: Any, excess, trim_low: float = 0.05, trim_high: float = 0.95):
     if excess.ndim != 2:
         raise ValueError("excess must have shape (periods, records)")
@@ -130,11 +233,34 @@ def _gpu_signed_trimmed_period_activity(cp: Any, excess, trim_low: float = 0.05,
     return cp.where(cp.isfinite(activity), activity, 0.0).astype(cp.float32, copy=False)
 
 
+def _gpu_signed_trimmed_period_activity_batch(cp: Any, excess, trim_low: float = 0.05, trim_high: float = 0.95):
+    if excess.ndim != 3:
+        raise ValueError("excess must have shape (periods, records, channels)")
+    lo = min(max(float(trim_low), 0.0), 0.49)
+    hi = min(max(float(trim_high), lo + 1e-6), 1.0)
+    period_count = int(excess.shape[0])
+    if period_count == 0:
+        return cp.zeros(excess.shape[1:], dtype=cp.float32)
+    start = int(np.floor(lo * period_count))
+    stop = int(np.ceil(hi * period_count))
+    stop = min(max(start + 1, stop), period_count)
+    sorted_values = cp.sort(excess, axis=0)
+    activity = cp.nanmean(sorted_values[start:stop, :, :], axis=0)
+    return cp.where(cp.isfinite(activity), activity, 0.0).astype(cp.float32, copy=False)
+
+
 def _gpu_smooth_activity(cp: Any, uniform_filter1d, activity, smooth_records: int = 1):
     width = max(1, int(smooth_records))
     if width <= 1 or int(activity.size) == 0:
         return activity.astype(cp.float32, copy=False)
     return uniform_filter1d(activity, size=width, mode="nearest").astype(cp.float32, copy=False)
+
+
+def _gpu_smooth_activity_batch(cp: Any, uniform_filter1d, activity, smooth_records: int = 1):
+    width = max(1, int(smooth_records))
+    if width <= 1 or int(activity.size) == 0:
+        return activity.astype(cp.float32, copy=False)
+    return uniform_filter1d(activity, size=width, axis=0, mode="nearest").astype(cp.float32, copy=False)
 
 
 def _gpu_robust_standardize(cp: Any, values):
@@ -151,6 +277,23 @@ def _gpu_robust_standardize(cp: Any, values):
         return cp.zeros_like(values, dtype=cp.float32)
     z = centered / scale
     z = cp.where(finite, z, 0.0)
+    return z.astype(cp.float32, copy=False)
+
+
+def _gpu_robust_standardize_batch(cp: Any, values):
+    if values.ndim != 2:
+        raise ValueError("values must have shape (records, channels)")
+    finite = cp.isfinite(values)
+    median = cp.nanmedian(cp.where(finite, values, cp.nan), axis=0, keepdims=True)
+    centered = values - median
+    finite_centered = cp.where(finite, centered, cp.nan)
+    mad = cp.nanmedian(cp.abs(finite_centered), axis=0, keepdims=True)
+    scale = 1.4826 * mad
+    fallback = cp.nanstd(finite_centered, axis=0, keepdims=True)
+    scale = cp.where(cp.isfinite(scale) & (scale > 1e-6), scale, fallback)
+    scale = cp.where(cp.isfinite(scale) & (scale > 1e-6), scale, 1.0)
+    z = centered / scale
+    z = cp.where(finite & cp.isfinite(z), z, 0.0)
     return z.astype(cp.float32, copy=False)
 
 
@@ -194,6 +337,7 @@ def detect_block_periods_cuda_power(
     max_candidates_per_record: float = 3.0 / 4096.0,
     pelt_jump_records: int = 1,
     pelt_threads: int = 1,
+    cuda_structure_batch: bool = False,
     timing: dict[str, float] | None = None,
 ) -> tuple[list[dict], list[dict]]:
     cp = _cupy()
@@ -220,6 +364,92 @@ def detect_block_periods_cuda_power(
 
     candidates: list[dict] = []
     windows: list[dict] = []
+    if cuda_structure_batch:
+        stage_start = perf_counter() if timing is not None else 0.0
+        valid_power = power[mask_gpu, :, :]
+        noise_floor_gpu = _gpu_low_fraction_noise_floor_batch(cp, valid_power, fraction=noise_floor_fraction)
+        excess = _gpu_relative_excess_batch(cp, valid_power, noise_floor_gpu, eps_fraction=excess_eps_fraction)
+        if timing is not None:
+            cp.cuda.Stream.null.synchronize()
+            _timing_add(timing, "floor_excess_seconds", perf_counter() - stage_start)
+
+        stage_start = perf_counter() if timing is not None else 0.0
+        structured = _gpu_coherent_structure_map_batch(
+            cp,
+            uniform_filter1d,
+            excess,
+            baseline_quantile=structure_baseline_quantile,
+            scale_quantile=structure_scale_quantile,
+            z_threshold=structure_z_threshold,
+            time_support_records=structure_time_support_records,
+            period_support_bins=structure_period_support_bins,
+            min_support_fraction=structure_min_support_fraction,
+        )
+        if timing is not None:
+            cp.cuda.Stream.null.synchronize()
+            _timing_add(timing, "structure_seconds", perf_counter() - stage_start)
+
+        stage_start = perf_counter() if timing is not None else 0.0
+        activity_raw = _gpu_signed_trimmed_period_activity_batch(
+            cp,
+            structured,
+            trim_low=activity_trim_low,
+            trim_high=activity_trim_high,
+        )
+        activity = _gpu_smooth_activity_batch(cp, uniform_filter1d, activity_raw, smooth_records=activity_smooth_records)
+        activity_z = _gpu_robust_standardize_batch(cp, activity)
+        activity_cpu_batch = np.ascontiguousarray(cp.asnumpy(activity).T)
+        activity_z_cpu_batch = np.ascontiguousarray(cp.asnumpy(activity_z).T)
+        noise_floor_cpu = cp.asnumpy(noise_floor_gpu)
+        if timing is not None:
+            _timing_add(timing, "activity_seconds", perf_counter() - stage_start)
+
+        stage_start = perf_counter() if timing is not None else 0.0
+        segments_batch = pelt_mean_shift_batch(
+            activity_z_cpu_batch,
+            penalty=pelt_penalty,
+            min_size=pelt_min_size_records,
+            jump=pelt_jump_records,
+            threads=pelt_threads,
+        )
+        if timing is not None:
+            _timing_add(timing, "pelt_seconds", perf_counter() - stage_start)
+
+        for channel_idx, segments in enumerate(segments_batch):
+
+            def profile_getter(start: int, stop: int, channel_index=channel_idx) -> np.ndarray:
+                return _gpu_windowed_period_profile(cp, structured[:, :, channel_index], start, stop)
+
+            channel_candidates, channel_windows, _diagnostics = _detect_preprocessed_channel_periods(
+                valid_periods=valid_periods,
+                structured=None,
+                activity=activity_cpu_batch[channel_idx],
+                activity_z=activity_z_cpu_batch[channel_idx],
+                noise_floor=float(noise_floor_cpu[channel_idx]),
+                freq_mhz=float(freqs[channel_idx]),
+                channel_idx=channel_idx,
+                record_start=record_start,
+                pelt_penalty=pelt_penalty,
+                pelt_min_size_records=pelt_min_size_records,
+                pelt_jump_records=pelt_jump_records,
+                window_min_duration_records=window_min_duration_records,
+                window_min_activity_mean=window_min_activity_mean,
+                window_min_activity_raw_mean=window_min_activity_raw_mean,
+                window_merge_gap_records=window_merge_gap_records,
+                profile_min_prominence=profile_min_prominence,
+                profile_max_peaks_per_window=profile_max_peaks_per_window,
+                max_candidates_per_channel=int(channel_cap or 0),
+                segments=segments,
+                timing=timing,
+                profile_getter=profile_getter,
+            )
+            _timing_increment(timing, "channels", 1)
+            candidates.extend(channel_candidates)
+            windows.extend(channel_windows)
+
+        candidates.sort(key=lambda row: (row["integrated_score"], row["period_peak_prominence"]), reverse=True)
+        return candidates, windows
+
     preprocessed_channels: list[tuple[int, Any, np.ndarray, np.ndarray, float]] = []
     for channel_idx in range(power.shape[2]):
         channel_start = perf_counter() if timing is not None else 0.0

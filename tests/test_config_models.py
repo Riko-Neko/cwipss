@@ -24,6 +24,7 @@ def test_structured_config_maps_to_resolved_dataclass() -> None:
                 "pelt_penalty": 6.0,
                 "pelt_jump_records": 4,
                 "pelt_threads": 8,
+                "cuda_structure_batch": True,
                 "window_min_duration_records": 12,
                 "window_min_activity_raw_mean": 11.0,
                 "candidate_period_min_records": 10,
@@ -57,6 +58,7 @@ def test_structured_config_maps_to_resolved_dataclass() -> None:
     assert config.pelt_penalty == 6.0
     assert config.pelt_jump_records == 4
     assert config.pelt_threads == 8
+    assert config.cuda_structure_batch is True
     assert config.window_min_duration_records == 12
     assert config.window_min_activity_raw_mean == 11.0
     assert config.candidate_period_min_records == 10
@@ -94,6 +96,7 @@ def test_structured_config_maps_to_resolved_dataclass() -> None:
     assert nested["detection"]["candidate_period_max_records"] == 200
     assert nested["detection"]["pelt_jump_records"] == 4
     assert nested["detection"]["pelt_threads"] == 8
+    assert nested["detection"]["cuda_structure_batch"] is True
     assert nested["detection"]["max_candidates_per_channel"] == "auto"
     assert nested["detection"]["max_candidates_per_record"] == 0.01
     assert nested["veto"]["max_bandwidth_fraction"] == 0.8

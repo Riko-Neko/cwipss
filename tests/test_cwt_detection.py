@@ -345,6 +345,65 @@ def test_cuda_power_detector_matches_cpu_detector_for_synthetic_peak() -> None:
     assert abs(cuda_rows[0]["peak_score"] - cpu_rows[0]["peak_score"]) < 1e-3
 
 
+def test_cuda_batch_structure_matches_sequential_structure_for_synthetic_peak() -> None:
+    cp = pytest.importorskip("cupy")
+    from cwipss.cwt_cuda import cuda_available
+    from cwipss.detection_cuda import detect_block_periods_cuda_power
+
+    if not cuda_available():
+        pytest.skip("CUDA device is not available")
+
+    periods = period_grid_records(2, 128, 48)
+    target_period_idx = int(np.argmin(np.abs(periods - 64.0)))
+    target_channel = 2
+    power = np.ones((periods.size, 128, 4), dtype=np.float32)
+    power[target_period_idx - 2:target_period_idx + 3, 36:96, target_channel] = 50.0
+    kwargs = dict(
+        power_cube=cp.asarray(power),
+        periods=periods,
+        freqs_mhz=np.arange(4, dtype=np.float64),
+        record_start=10,
+        candidate_period_min_records=10.0,
+        candidate_period_max_records=200.0,
+        noise_floor_fraction=0.2,
+        excess_eps_fraction=1e-6,
+        structure_baseline_quantile=0.1,
+        structure_scale_quantile=0.2,
+        structure_z_threshold=0.0,
+        structure_time_support_records=3,
+        structure_period_support_bins=1,
+        structure_min_support_fraction=0.0,
+        activity_trim_low=0.0,
+        activity_trim_high=1.0,
+        activity_smooth_records=3,
+        pelt_penalty=5.0,
+        pelt_min_size_records=8,
+        window_min_duration_records=16,
+        window_min_activity_mean=0.5,
+        window_min_activity_raw_mean=0.0,
+        window_merge_gap_records=4,
+        profile_min_prominence=0.1,
+        profile_max_peaks_per_window=2,
+        max_candidates_per_channel=2,
+    )
+
+    sequential_rows, sequential_windows = detect_block_periods_cuda_power(
+        **kwargs,
+        cuda_structure_batch=False,
+    )
+    batch_rows, batch_windows = detect_block_periods_cuda_power(
+        **kwargs,
+        cuda_structure_batch=True,
+        pelt_threads=2,
+    )
+
+    assert len(batch_windows) == len(sequential_windows)
+    assert len(batch_rows) == len(sequential_rows)
+    assert batch_rows[0]["channel_index"] == sequential_rows[0]["channel_index"] == target_channel
+    assert abs(batch_rows[0]["peak_period_records"] - sequential_rows[0]["peak_period_records"]) < 1e-6
+    assert abs(batch_rows[0]["peak_score"] - sequential_rows[0]["peak_score"]) < 1e-3
+
+
 def test_default_profile_keeps_one_period_family_per_window() -> None:
     periods = period_grid_records(2, 128, 48)
     first_idx = int(np.argmin(np.abs(periods - 32.0)))

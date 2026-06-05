@@ -73,6 +73,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--pelt-min-size-records", type=int, default=384, help="PELT minimum segment size.")
     parser.add_argument("--pelt-jump-records", type=int, default=1, help="PELT endpoint/candidate grid stride in records; 1 keeps exact current behavior.")
     parser.add_argument("--pelt-threads", type=int, default=1, help="CPU worker threads for native PELT across channels; 1 keeps sequential behavior.")
+    parser.add_argument("--cuda-structure-batch", action=argparse.BooleanOptionalAction, default=False, help="Batch CUDA structure/activity preprocessing across all channels in a block.")
     parser.add_argument("--window-min-duration-records", type=int, default=384, help="Minimum retained PELT window duration.")
     parser.add_argument("--window-min-activity-mean", type=float, default=0.05, help="Minimum retained standardized activity mean.")
     parser.add_argument("--window-min-activity-raw-mean", type=float, default=25.0, help="Minimum retained raw structured activity mean before robust standardization.")
@@ -177,6 +178,7 @@ def main() -> None:
         pelt_min_size_records=args.pelt_min_size_records,
         pelt_jump_records=args.pelt_jump_records,
         pelt_threads=args.pelt_threads,
+        cuda_structure_batch=args.cuda_structure_batch,
         window_min_duration_records=args.window_min_duration_records,
         window_min_activity_mean=args.window_min_activity_mean,
         window_min_activity_raw_mean=args.window_min_activity_raw_mean,
