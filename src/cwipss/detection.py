@@ -347,7 +347,7 @@ def detect_block_periods(
     pelt_jump_records: int = 1,
     pelt_threads: int = 1,
     cuda_structure_batch: bool = False,
-    cuda_structure_batch_channels: int = 16,
+    cuda_structure_batch_channels: int | None = None,
     cuda_device: int | None = None,
     timing: dict[str, float] | None = None,
 ) -> tuple[list[dict], list[dict]]:

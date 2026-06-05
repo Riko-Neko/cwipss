@@ -46,7 +46,7 @@ class CWTSearchConfig:
     pelt_jump_records: int = 1
     pelt_threads: int = 1
     cuda_structure_batch: bool = False
-    cuda_structure_batch_channels: int = 16
+    cuda_structure_batch_channels: int | None = None
     window_min_duration_records: int = 384
     window_min_activity_mean: float = 0.05
     window_min_activity_raw_mean: float = 25.0

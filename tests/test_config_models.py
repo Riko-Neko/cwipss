@@ -119,6 +119,7 @@ def test_flat_config_remains_supported_with_overrides() -> None:
     assert config.input == "data/example.2C"
     assert config.period_count == 50
     assert config.pelt_penalty == 7.0
+    assert config.cuda_structure_batch_channels is None
 
 
 def test_unknown_config_key_is_rejected() -> None:

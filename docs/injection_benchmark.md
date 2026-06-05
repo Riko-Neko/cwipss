@@ -49,7 +49,8 @@ merge gap `256` records, one period-family candidate per PELT window, and
 `pelt_jump_records=1` keeps exact PELT endpoint search; `pelt_threads=1` keeps
 native PELT sequential by default. `cuda_structure_batch=false` keeps the
 stable CUDA preprocessing path unless explicitly enabled; when enabled,
-`cuda_structure_batch_channels=16` controls the channel chunk size. Lower
+`cuda_structure_batch_channels=null` processes the full block at once, while an
+integer value controls the channel chunk size for lower peak memory. Lower
 `pelt_penalty`, `window_min_activity_mean`, or `profile_min_prominence` only for
 high-recall diagnostic sweeps.
 

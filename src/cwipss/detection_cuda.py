@@ -365,7 +365,7 @@ def detect_block_periods_cuda_power(
     pelt_jump_records: int = 1,
     pelt_threads: int = 1,
     cuda_structure_batch: bool = False,
-    cuda_structure_batch_channels: int = 16,
+    cuda_structure_batch_channels: int | None = None,
     cuda_device: int | None = None,
     timing: dict[str, float] | None = None,
 ) -> tuple[list[dict], list[dict]]:
@@ -391,7 +391,10 @@ def detect_block_periods_cuda_power(
         int(power.shape[1]),
     )
     pelt_threads = max(1, int(pelt_threads))
-    batch_channels = min(max(1, int(cuda_structure_batch_channels)), int(power.shape[2]))
+    if cuda_structure_batch_channels is None:
+        batch_channels = int(power.shape[2])
+    else:
+        batch_channels = min(max(1, int(cuda_structure_batch_channels)), int(power.shape[2]))
 
     candidates: list[dict] = []
     windows: list[dict] = []

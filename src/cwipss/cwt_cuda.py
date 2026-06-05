@@ -21,8 +21,8 @@ def _cupy() -> Any:
 def cuda_available(device: int = 0) -> bool:
     try:
         cp = _cupy()
-        with cp.cuda.Device(int(device)):
-            cp.cuda.runtime.getDevice()
+        cp.cuda.Device(int(device)).use()
+        cp.cuda.runtime.getDevice()
         return True
     except Exception:
         return False
@@ -113,38 +113,38 @@ def cwt_power_cube_cuda_gpu(
     wavelet_obj, int_psi, x = _integrated_wavelet(wavelet, data_dtype)
     records, channels = matrix.shape
 
-    with cp.cuda.Device(int(device)):
-        out = cp.empty((period_values.size, records, channels), dtype=cp.float32)
-        # PyWavelets transforms axis 0 by swapping it to the last axis and
-        # batching all channels as independent 1D signals.
-        data_gpu = cp.asarray(np.ascontiguousarray(matrix.T))
-        fft_data = None
-        size_scale0 = -1
-        for scale_index, scale in enumerate(scales):
-            int_psi_scale = _scaled_integrated_wavelet(int_psi, x, float(scale))
-            size_scale = next_fast_len(records + int_psi_scale.size - 1)
-            if size_scale != size_scale0:
-                fft_data = cp.fft.fft(data_gpu, size_scale, axis=-1)
-                size_scale0 = size_scale
-            wav_gpu = cp.asarray(int_psi_scale)
-            fft_wav = cp.fft.fft(wav_gpu, size_scale, axis=-1)
-            conv = cp.fft.ifft(fft_wav[cp.newaxis, :] * fft_data, axis=-1)
-            conv = conv[..., : records + int_psi_scale.size - 1]
-            coef = -cp.sqrt(cp.asarray(scale, dtype=data_gpu.real.dtype)) * cp.diff(conv, axis=-1)
-            if not wavelet_obj.complex_cwt:
-                coef = coef.real
-            d = (coef.shape[-1] - records) / 2.0
-            if d > 0:
-                coef = coef[..., floor(d):-ceil(d)]
-            elif d < 0:
-                raise ValueError(f"Selected scale of {scale} too small.")
-            real = coef.real.astype(cp.float32, copy=False)
-            if coef.dtype.kind == "c":
-                imag = coef.imag.astype(cp.float32, copy=False)
-                power = real * real + imag * imag
-            else:
-                power = real * real
-            out[scale_index, :, :] = power.T.astype(cp.float32, copy=False)
-            del wav_gpu, fft_wav, conv, coef, real, power
-        del data_gpu, fft_data
+    cp.cuda.Device(int(device)).use()
+    out = cp.empty((period_values.size, records, channels), dtype=cp.float32)
+    # PyWavelets transforms axis 0 by swapping it to the last axis and
+    # batching all channels as independent 1D signals.
+    data_gpu = cp.asarray(np.ascontiguousarray(matrix.T))
+    fft_data = None
+    size_scale0 = -1
+    for scale_index, scale in enumerate(scales):
+        int_psi_scale = _scaled_integrated_wavelet(int_psi, x, float(scale))
+        size_scale = next_fast_len(records + int_psi_scale.size - 1)
+        if size_scale != size_scale0:
+            fft_data = cp.fft.fft(data_gpu, size_scale, axis=-1)
+            size_scale0 = size_scale
+        wav_gpu = cp.asarray(int_psi_scale)
+        fft_wav = cp.fft.fft(wav_gpu, size_scale, axis=-1)
+        conv = cp.fft.ifft(fft_wav[cp.newaxis, :] * fft_data, axis=-1)
+        conv = conv[..., : records + int_psi_scale.size - 1]
+        coef = -cp.sqrt(cp.asarray(scale, dtype=data_gpu.real.dtype)) * cp.diff(conv, axis=-1)
+        if not wavelet_obj.complex_cwt:
+            coef = coef.real
+        d = (coef.shape[-1] - records) / 2.0
+        if d > 0:
+            coef = coef[..., floor(d):-ceil(d)]
+        elif d < 0:
+            raise ValueError(f"Selected scale of {scale} too small.")
+        real = coef.real.astype(cp.float32, copy=False)
+        if coef.dtype.kind == "c":
+            imag = coef.imag.astype(cp.float32, copy=False)
+            power = real * real + imag * imag
+        else:
+            power = real * real
+        out[scale_index, :, :] = power.T.astype(cp.float32, copy=False)
+        del wav_gpu, fft_wav, conv, coef, real, power
+    del data_gpu, fft_data
     return out
