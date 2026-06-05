@@ -179,6 +179,18 @@ def test_candidate_cap_resolves_auto_or_hard_channel_limit() -> None:
     assert resolve_channel_candidate_cap("7", rate, records=91104) == 7
 
 
+def test_cuda_quantile_helper_accepts_cupy_without_nanquantile() -> None:
+    from cwipss.detection_cuda import _gpu_nanquantile
+
+    class CompatArrayModule:
+        quantile = staticmethod(np.quantile)
+
+    values = np.array([[1.0, 3.0, 2.0], [4.0, 6.0, 5.0]], dtype=np.float32)
+    result = _gpu_nanquantile(CompatArrayModule, values, 0.5, axis=1, keepdims=True)
+
+    np.testing.assert_allclose(result, np.array([[2.0], [5.0]], dtype=np.float32))
+
+
 def test_lowfloor_pelt_detector_finds_windowed_period_peak() -> None:
     periods = period_grid_records(2, 128, 48)
     target_period_idx = int(np.argmin(np.abs(periods - 64.0)))

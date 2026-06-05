@@ -20,6 +20,13 @@ def _scalar_float(value) -> float:
     return float(value.item() if hasattr(value, "item") else value)
 
 
+def _gpu_nanquantile(cp: Any, values, q: float, *, axis: int | None = None, keepdims: bool = False):
+    nanquantile = getattr(cp, "nanquantile", None)
+    if nanquantile is not None:
+        return nanquantile(values, q, axis=axis, keepdims=keepdims)
+    return cp.quantile(values, q, axis=axis, keepdims=keepdims)
+
+
 def _gpu_low_fraction_noise_floor(cp: Any, power, fraction: float = 0.20) -> float:
     finite = power[cp.isfinite(power)]
     finite_size = int(finite.size)
@@ -55,9 +62,9 @@ def _gpu_period_robust_zscore(
         raise ValueError("excess must have shape (periods, records)")
     q_bg = min(max(float(baseline_quantile), 0.0), 0.45)
     q_scale = min(max(float(scale_quantile), q_bg + 1e-6), 0.50)
-    baseline = cp.nanquantile(excess, q_bg, axis=1, keepdims=True)
+    baseline = _gpu_nanquantile(cp, excess, q_bg, axis=1, keepdims=True)
     centered = excess - baseline
-    low_cut = cp.nanquantile(excess, q_scale, axis=1, keepdims=True)
+    low_cut = _gpu_nanquantile(cp, excess, q_scale, axis=1, keepdims=True)
     low_centered = cp.where(excess <= low_cut, centered, cp.nan)
     low_median = cp.nanmedian(low_centered, axis=1, keepdims=True)
     low_mad = cp.nanmedian(cp.abs(low_centered - low_median), axis=1, keepdims=True)
