@@ -1,6 +1,7 @@
-# CE4 Sample Data
+# CE4 `.2C` Sample Data
 
-Local raw CE4 `.2C` samples for development and smoke testing.
+Local raw CE4 `.2C` samples for Cwipss development and smoke testing. CE4 is
+the currently supported input data format, not the project identity.
 
 The `.2C` files are intentionally ignored by git. Their paired `.2CL` labels are
 kept next to them because the reader uses those labels for frequency and time

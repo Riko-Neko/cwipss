@@ -1,12 +1,14 @@
 # CWIPSS: Continuous Wavelet Investigation for Periodic Spectral Signals
 
-CWIPSS is a reproducible CWT period-candidate search pipeline for time-channel data.
+Cwipss (CWIPSS) is a reproducible CWT period-candidate search pipeline for
+time-channel spectral data.
 
 The core pipeline treats input as a dynamic spectrum or equivalent
 `time x channel` matrix. Mission- or instrument-specific file formats belong to
-the application adapter layer. The bundled adapter reads CE-4 LFRS `.2C/.2CL`
-files, but CWT detection, veto, validation, injection benchmarking, and
-reporting are defined independently of that format.
+the adapter layer. The current supported data format is CE4 LFRS `.2C/.2CL`;
+FilterBank support is planned for the same adapter interface. CWT detection,
+veto, validation, injection benchmarking, and reporting are defined
+independently of any one input format.
 
 The candidate generator is:
 
@@ -36,7 +38,7 @@ not meaningful for this single-channel candidate engine.
   configs/                 JSON configs for reproducible scans
   docs/                    design notes and scientific assumptions
   scripts/                 command-line entrypoints
-  src/ce4_period_search/   implementation package and CE-4 adapter
+  src/cwipss/              Cwipss implementation package and input adapters
   tests/                   synthetic tests
 ```
 
@@ -107,6 +109,8 @@ and detection substages. It is disabled by default.
 The CWT backend defaults to `cpu`, preserving the original PyWavelets path.
 Systems with CuPy/CUDA can opt in with `--cwt-backend cuda --cuda-device 0`.
 `--cwt-backend auto` uses CUDA when available and otherwise falls back to CPU.
+CUDA scans keep CWT power plus structure/activity/profile compression on the GPU
+before returning to the shared CPU PELT/candidate logic.
 
 Each run writes:
 

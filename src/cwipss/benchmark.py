@@ -138,6 +138,19 @@ def _channel_progress(total: int, run_id: str, enabled: bool, leave: bool):
     )
 
 
+def _use_cuda_block_backend(backend: str, method: str, cuda_device: int) -> bool:
+    backend_name = str(backend or "cpu").lower()
+    if backend_name == "cuda":
+        return True
+    if backend_name != "auto" or method != "fft":
+        return False
+    try:
+        from .cwt_cuda import cuda_available
+    except ImportError:
+        return False
+    return cuda_available(device=int(cuda_device))
+
+
 def run_cwt_candidate_search(
     data: np.ndarray,
     freqs_mhz: np.ndarray,
@@ -162,21 +175,40 @@ def run_cwt_candidate_search(
         enabled=search_config.progress_enabled,
         leave=search_config.progress_leave,
     )
+    use_cuda_block_backend = _use_cuda_block_backend(
+        search_config.cwt_backend,
+        search_config.cwt_method,
+        search_config.cuda_device,
+    )
+    if use_cuda_block_backend:
+        from .cwt_cuda import cwt_power_cube_cuda_gpu
+        from .detection_cuda import detect_block_periods_cuda_power
     try:
         for block_index, block_start in enumerate(range(0, matrix.shape[1], search_config.block_channels), start=1):
             block_stop = min(block_start + int(search_config.block_channels), matrix.shape[1])
             block_data = matrix[:, block_start:block_stop]
             block_freqs = freqs_mhz[block_start:block_stop]
-            power = cwt_power_cube(
-                block_data,
-                wavelet=search_config.wavelet,
-                periods=periods,
-                method=search_config.cwt_method,
-                backend=search_config.cwt_backend,
-                cuda_device=search_config.cuda_device,
-                normalize_channels=True,
-            )
-            candidates, windows = detect_block_periods(
+            if use_cuda_block_backend:
+                power = cwt_power_cube_cuda_gpu(
+                    block_data,
+                    wavelet=search_config.wavelet,
+                    periods=periods,
+                    method=search_config.cwt_method,
+                    device=search_config.cuda_device,
+                    normalize_channels=True,
+                )
+            else:
+                power = cwt_power_cube(
+                    block_data,
+                    wavelet=search_config.wavelet,
+                    periods=periods,
+                    method=search_config.cwt_method,
+                    backend=search_config.cwt_backend,
+                    cuda_device=search_config.cuda_device,
+                    normalize_channels=True,
+                )
+            detector = detect_block_periods_cuda_power if use_cuda_block_backend else detect_block_periods
+            candidates, windows = detector(
                 power_cube=power,
                 periods=periods,
                 freqs_mhz=block_freqs,
@@ -205,6 +237,7 @@ def run_cwt_candidate_search(
                 max_candidates_per_channel=search_config.max_candidates_per_channel,
                 max_candidates=search_config.max_candidates_per_block,
             )
+            del power
             for row in windows:
                 row["schema_version"] = 1
                 row["run_id"] = run_id
@@ -649,6 +682,6 @@ def make_background_from_args(
         )
     if mode == "ce4":
         if not input_path:
-            raise ValueError("--input is required for CE-4 background mode")
+            raise ValueError("--input is required for CE4-format background mode")
         return ce4_background(input_path, f_start=f_start, f_stop=f_stop, t_start=t_start, t_stop=t_stop)
     raise ValueError(f"Unknown benchmark background mode: {mode}")

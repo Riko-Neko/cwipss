@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from ce4_period_search.config import cwt_config_from_mapping, cwt_config_to_nested_dict
-from ce4_period_search.models import RAW_CANDIDATE_FIELDNAMES, normalize_candidate_row
+from cwipss.config import cwt_config_from_mapping, cwt_config_to_nested_dict
+from cwipss.models import RAW_CANDIDATE_FIELDNAMES, normalize_candidate_row
 
 
 def test_structured_config_maps_to_resolved_dataclass() -> None:

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from time import perf_counter
-from typing import Iterable
+from collections.abc import Callable, Iterable
 
 import numpy as np
 
@@ -20,6 +20,7 @@ from .windows import active_windows_from_segments, merge_close_windows, pelt_mea
 
 DETECTION_METHOD = "single_channel_lowfloor_pelt_profile"
 WINDOW_METHOD = "single_channel_lowfloor_pelt"
+ProfileGetter = Callable[[int, int], np.ndarray]
 
 
 def _timing_add(timing: dict[str, float] | None, key: str, seconds: float) -> None:
@@ -40,6 +41,140 @@ def _peak_record(activity: np.ndarray, start: int, stop: int, record_start: int)
     if local.size == 0:
         return int(record_start + start)
     return int(record_start + start + int(np.nanargmax(local)))
+
+
+def _detect_preprocessed_channel_periods(
+    *,
+    valid_periods: np.ndarray,
+    structured: np.ndarray | None,
+    activity: np.ndarray,
+    activity_z: np.ndarray,
+    noise_floor: float,
+    freq_mhz: float,
+    channel_idx: int,
+    record_start: int,
+    pelt_penalty: float,
+    pelt_min_size_records: int,
+    window_min_duration_records: int,
+    window_min_activity_mean: float,
+    window_min_activity_raw_mean: float,
+    window_merge_gap_records: int,
+    profile_min_prominence: float,
+    profile_max_peaks_per_window: int,
+    max_candidates_per_channel: int,
+    timing: dict[str, float] | None = None,
+    profile_getter: ProfileGetter | None = None,
+) -> tuple[list[dict], list[dict], dict[str, np.ndarray | float]]:
+    stage_start = perf_counter() if timing is not None else 0.0
+    segments = pelt_mean_shift(activity_z, penalty=pelt_penalty, min_size=pelt_min_size_records)
+    windows = active_windows_from_segments(
+        segments,
+        activity_z,
+        min_duration=window_min_duration_records,
+        min_mean=window_min_activity_mean,
+    )
+    windows = merge_close_windows(windows, max_gap=window_merge_gap_records)
+    if timing is not None:
+        _timing_add(timing, "pelt_seconds", perf_counter() - stage_start)
+        _timing_increment(timing, "segments", len(segments))
+        _timing_increment(timing, "windows_before_raw_floor", len(windows))
+
+    if profile_getter is None:
+        if structured is None:
+            raise ValueError("structured or profile_getter is required")
+
+        def profile_getter(start: int, stop: int) -> np.ndarray:
+            return windowed_period_profile(structured, start, stop)
+
+    window_rows: list[dict] = []
+    candidate_rows: list[dict] = []
+    raw_threshold = max(0.0, float(window_min_activity_raw_mean))
+    stage_start = perf_counter() if timing is not None else 0.0
+    for window_index, window in enumerate(windows, start=1):
+        local_start = int(window["record_start"])
+        local_stop = int(window["record_stop"])
+        duration = int(local_stop - local_start)
+        peak_record = _peak_record(activity_z, local_start, local_stop, record_start)
+        window_id = f"ch{int(channel_idx):04d}_w{window_index:04d}"
+        activity_window = activity_z[local_start:local_stop]
+        raw_activity_window = activity[local_start:local_stop]
+        raw_activity_mean = float(np.nanmean(raw_activity_window)) if raw_activity_window.size else 0.0
+        raw_activity_max = float(np.nanmax(raw_activity_window)) if raw_activity_window.size else 0.0
+        if raw_activity_mean < raw_threshold:
+            continue
+        window_row = {
+            "detection_method": WINDOW_METHOD,
+            "window_id": window_id,
+            "channel_index": int(channel_idx),
+            "freq_mhz": float(freq_mhz),
+            "record_start": int(record_start + local_start),
+            "record_stop": int(record_start + local_stop),
+            "duration_records": duration,
+            "activity_mean": float(np.nanmean(activity_window)) if activity_window.size else 0.0,
+            "activity_max": float(np.nanmax(activity_window)) if activity_window.size else 0.0,
+            "activity_raw_mean": raw_activity_mean,
+            "activity_raw_max": raw_activity_max,
+            "noise_floor": float(noise_floor),
+            "pelt_penalty": float(pelt_penalty),
+            "pelt_cost": float(window.get("pelt_cost", 0.0)),
+        }
+        window_rows.append(window_row)
+
+        profile = profile_getter(local_start, local_stop)
+        peaks = find_period_profile_peaks(
+            profile,
+            valid_periods,
+            min_prominence=profile_min_prominence,
+            max_peaks=profile_max_peaks_per_window,
+        )
+        for peak in peaks:
+            candidate_rows.append(
+                {
+                    "detection_method": DETECTION_METHOD,
+                    "window_id": window_id,
+                    "channel_index": int(channel_idx),
+                    "region_pixels": 0,
+                    "record_start": int(record_start + local_start),
+                    "record_stop": int(record_start + local_stop),
+                    "duration_records": duration,
+                    "period_start_records": peak["period_start_records"],
+                    "period_stop_records": peak["period_stop_records"],
+                    "period_width_records": peak["period_width_records"],
+                    "period_width_bins": peak["period_width_bins"],
+                    "peak_period_records": peak["peak_period_records"],
+                    "freq_start_mhz": float(freq_mhz),
+                    "freq_stop_mhz": float(freq_mhz),
+                    "bandwidth_mhz": 0.0,
+                    "peak_record": peak_record,
+                    "peak_freq_mhz": float(freq_mhz),
+                    "peak_score": float(peak["profile_score"]),
+                    "mean_score": float(window_row["activity_mean"]),
+                    "integrated_score": float(peak["profile_score"]),
+                    "activity_mean": float(window_row["activity_mean"]),
+                    "activity_max": float(window_row["activity_max"]),
+                    "activity_raw_mean": float(window_row["activity_raw_mean"]),
+                    "activity_raw_max": float(window_row["activity_raw_max"]),
+                    "noise_floor": float(noise_floor),
+                    "period_peak_prominence": float(peak["period_peak_prominence"]),
+                }
+            )
+    if timing is not None:
+        _timing_add(timing, "profile_seconds", perf_counter() - stage_start)
+        _timing_increment(timing, "windows_after_raw_floor", len(window_rows))
+
+    stage_start = perf_counter() if timing is not None else 0.0
+    candidate_rows.sort(key=lambda row: (row["integrated_score"], row["period_peak_prominence"]), reverse=True)
+    max_rows = max(1, int(max_candidates_per_channel))
+    diagnostics: dict[str, np.ndarray | float] = {
+        "valid_periods": valid_periods,
+        "structured": structured if structured is not None else np.empty((0, 0), dtype=np.float32),
+        "activity": activity_z,
+        "noise_floor": float(noise_floor),
+    }
+    if timing is not None:
+        _timing_add(timing, "candidate_sort_seconds", perf_counter() - stage_start)
+        _timing_increment(timing, "channel_candidate_rows_before_cap", len(candidate_rows))
+    return candidate_rows[:max_rows], window_rows, diagnostics
 
 
 def detect_channel_periods(
@@ -121,111 +256,30 @@ def detect_channel_periods(
     if timing is not None:
         _timing_add(timing, "activity_seconds", perf_counter() - stage_start)
 
-    stage_start = perf_counter() if timing is not None else 0.0
-    segments = pelt_mean_shift(activity_z, penalty=pelt_penalty, min_size=pelt_min_size_records)
-    windows = active_windows_from_segments(
-        segments,
-        activity_z,
-        min_duration=window_min_duration_records,
-        min_mean=window_min_activity_mean,
+    candidate_rows, window_rows, diagnostics = _detect_preprocessed_channel_periods(
+        valid_periods=valid_periods,
+        structured=structured,
+        activity=activity,
+        activity_z=activity_z,
+        noise_floor=float(noise_floor),
+        freq_mhz=freq_mhz,
+        channel_idx=channel_idx,
+        record_start=record_start,
+        pelt_penalty=pelt_penalty,
+        pelt_min_size_records=pelt_min_size_records,
+        window_min_duration_records=window_min_duration_records,
+        window_min_activity_mean=window_min_activity_mean,
+        window_min_activity_raw_mean=window_min_activity_raw_mean,
+        window_merge_gap_records=window_merge_gap_records,
+        profile_min_prominence=profile_min_prominence,
+        profile_max_peaks_per_window=profile_max_peaks_per_window,
+        max_candidates_per_channel=max_candidates_per_channel,
+        timing=timing,
     )
-    windows = merge_close_windows(windows, max_gap=window_merge_gap_records)
+    diagnostics["excess"] = excess
     if timing is not None:
-        _timing_add(timing, "pelt_seconds", perf_counter() - stage_start)
-        _timing_increment(timing, "segments", len(segments))
-        _timing_increment(timing, "windows_before_raw_floor", len(windows))
-
-    window_rows: list[dict] = []
-    candidate_rows: list[dict] = []
-    raw_threshold = max(0.0, float(window_min_activity_raw_mean))
-    stage_start = perf_counter() if timing is not None else 0.0
-    for window_index, window in enumerate(windows, start=1):
-        local_start = int(window["record_start"])
-        local_stop = int(window["record_stop"])
-        duration = int(local_stop - local_start)
-        peak_record = _peak_record(activity_z, local_start, local_stop, record_start)
-        window_id = f"ch{int(channel_idx):04d}_w{window_index:04d}"
-        activity_window = activity_z[local_start:local_stop]
-        raw_activity_window = activity[local_start:local_stop]
-        raw_activity_mean = float(np.nanmean(raw_activity_window)) if raw_activity_window.size else 0.0
-        raw_activity_max = float(np.nanmax(raw_activity_window)) if raw_activity_window.size else 0.0
-        if raw_activity_mean < raw_threshold:
-            continue
-        window_row = {
-            "detection_method": WINDOW_METHOD,
-            "window_id": window_id,
-            "channel_index": int(channel_idx),
-            "freq_mhz": float(freq_mhz),
-            "record_start": int(record_start + local_start),
-            "record_stop": int(record_start + local_stop),
-            "duration_records": duration,
-            "activity_mean": float(np.nanmean(activity_window)) if activity_window.size else 0.0,
-            "activity_max": float(np.nanmax(activity_window)) if activity_window.size else 0.0,
-            "activity_raw_mean": raw_activity_mean,
-            "activity_raw_max": raw_activity_max,
-            "noise_floor": float(noise_floor),
-            "pelt_penalty": float(pelt_penalty),
-            "pelt_cost": float(window.get("pelt_cost", 0.0)),
-        }
-        window_rows.append(window_row)
-
-        profile = windowed_period_profile(structured, local_start, local_stop)
-        peaks = find_period_profile_peaks(
-            profile,
-            valid_periods,
-            min_prominence=profile_min_prominence,
-            max_peaks=profile_max_peaks_per_window,
-        )
-        for peak in peaks:
-            candidate_rows.append(
-                {
-                    "detection_method": DETECTION_METHOD,
-                    "window_id": window_id,
-                    "channel_index": int(channel_idx),
-                    "region_pixels": 0,
-                    "record_start": int(record_start + local_start),
-                    "record_stop": int(record_start + local_stop),
-                    "duration_records": duration,
-                    "period_start_records": peak["period_start_records"],
-                    "period_stop_records": peak["period_stop_records"],
-                    "period_width_records": peak["period_width_records"],
-                    "period_width_bins": peak["period_width_bins"],
-                    "peak_period_records": peak["peak_period_records"],
-                    "freq_start_mhz": float(freq_mhz),
-                    "freq_stop_mhz": float(freq_mhz),
-                    "bandwidth_mhz": 0.0,
-                    "peak_record": peak_record,
-                    "peak_freq_mhz": float(freq_mhz),
-                    "peak_score": float(peak["profile_score"]),
-                    "mean_score": float(window_row["activity_mean"]),
-                    "integrated_score": float(peak["profile_score"]),
-                    "activity_mean": float(window_row["activity_mean"]),
-                    "activity_max": float(window_row["activity_max"]),
-                    "activity_raw_mean": float(window_row["activity_raw_mean"]),
-                    "activity_raw_max": float(window_row["activity_raw_max"]),
-                    "noise_floor": float(noise_floor),
-                    "period_peak_prominence": float(peak["period_peak_prominence"]),
-                }
-            )
-    if timing is not None:
-        _timing_add(timing, "profile_seconds", perf_counter() - stage_start)
-        _timing_increment(timing, "windows_after_raw_floor", len(window_rows))
-
-    stage_start = perf_counter() if timing is not None else 0.0
-    candidate_rows.sort(key=lambda row: (row["integrated_score"], row["period_peak_prominence"]), reverse=True)
-    max_rows = max(1, int(max_candidates_per_channel))
-    diagnostics: dict[str, np.ndarray | float] = {
-        "valid_periods": valid_periods,
-        "excess": excess,
-        "structured": structured,
-        "activity": activity_z,
-        "noise_floor": float(noise_floor),
-    }
-    if timing is not None:
-        _timing_add(timing, "candidate_sort_seconds", perf_counter() - stage_start)
-        _timing_increment(timing, "channel_candidate_rows_before_cap", len(candidate_rows))
         _timing_add(timing, "channel_total_seconds", perf_counter() - channel_start)
-    return candidate_rows[:max_rows], window_rows, diagnostics
+    return candidate_rows, window_rows, diagnostics
 
 
 def detect_block_periods(

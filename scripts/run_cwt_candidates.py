@@ -11,8 +11,8 @@ SRC_DIR = PROJECT_DIR / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from ce4_period_search import run_cwt_search
-from ce4_period_search.config import CWTSearchConfig, load_cwt_config, resolve_output_dir
+from cwipss import run_cwt_search
+from cwipss.config import CWTSearchConfig, load_cwt_config, resolve_output_dir
 
 
 def parse_args() -> argparse.Namespace:

@@ -12,8 +12,8 @@ SRC_DIR = PROJECT_DIR / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from ce4_period_search.config import CWTSearchConfig, load_cwt_config
-from ce4_period_search.validation import (
+from cwipss.config import CWTSearchConfig, load_cwt_config
+from cwipss.validation import (
     ValidationConfig,
     read_csv_rows,
     validate_candidate_rows,

@@ -1,6 +1,6 @@
 # Injection Benchmark
 
-The injection benchmark tests whether the CWT period-search pipeline recovers
+The injection benchmark tests whether the Cwipss pipeline recovers
 controlled synthetic periodic signals.
 
 The standard injected signal model is `single_channel_periodic`: a
@@ -31,6 +31,9 @@ python scripts/run_injection_benchmark.py \
   --injection-config configs/injection_lowfreq_random_weak.json \
   --visualize
 ```
+
+`--background ce4` uses the currently supported CE4 `.2C/.2CL` data-format
+adapter. The benchmark logic itself remains format-independent.
 
 When a config is supplied, it is copied to `injection_config.json` inside the
 run directory. The command line controls background selection, search,

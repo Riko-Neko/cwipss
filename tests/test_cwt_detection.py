@@ -3,15 +3,15 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from ce4_period_search.activity import (
+from cwipss.activity import (
     coherent_structure_map,
     low_fraction_noise_floor,
     relative_excess,
     signed_trimmed_period_activity,
 )
-from ce4_period_search.cwt import aggregate_cwt_time, cwt_power_cube, period_grid_records
-from ce4_period_search.detection import detect_block_periods
-from ce4_period_search.windows import pelt_mean_shift
+from cwipss.cwt import aggregate_cwt_time, cwt_power_cube, period_grid_records
+from cwipss.detection import detect_block_periods
+from cwipss.windows import pelt_mean_shift
 
 
 def test_cwt_power_cube_shape() -> None:
@@ -37,7 +37,7 @@ def test_cwt_power_cube_cpu_backend_matches_default() -> None:
 
 
 def test_cwt_power_cube_auto_falls_back_to_cpu_when_cuda_unavailable() -> None:
-    from ce4_period_search.cwt_cuda import cuda_available
+    from cwipss.cwt_cuda import cuda_available
 
     if cuda_available():
         pytest.skip("auto uses CUDA when a CUDA device is available")
@@ -72,7 +72,7 @@ def test_cwt_power_cube_auto_uses_cpu_for_conv_method() -> None:
 
 def test_cwt_power_cube_cuda_matches_cpu_for_small_fft_case() -> None:
     pytest.importorskip("cupy")
-    from ce4_period_search.cwt_cuda import cuda_available
+    from cwipss.cwt_cuda import cuda_available
 
     if not cuda_available():
         pytest.skip("CUDA device is not available")
@@ -207,6 +207,58 @@ def test_lowfloor_pelt_detector_finds_windowed_period_peak() -> None:
     assert timing["channels"] == 5.0
     assert timing["structure_seconds"] >= 0.0
     assert timing["pelt_seconds"] >= 0.0
+
+
+def test_cuda_power_detector_matches_cpu_detector_for_synthetic_peak() -> None:
+    cp = pytest.importorskip("cupy")
+    from cwipss.cwt_cuda import cuda_available
+    from cwipss.detection_cuda import detect_block_periods_cuda_power
+
+    if not cuda_available():
+        pytest.skip("CUDA device is not available")
+
+    periods = period_grid_records(2, 128, 48)
+    target_period_idx = int(np.argmin(np.abs(periods - 64.0)))
+    target_channel = 2
+    power = np.ones((periods.size, 128, 4), dtype=np.float32)
+    power[target_period_idx - 2:target_period_idx + 3, 36:96, target_channel] = 50.0
+    kwargs = dict(
+        periods=periods,
+        freqs_mhz=np.arange(4, dtype=np.float64),
+        record_start=10,
+        candidate_period_min_records=10.0,
+        candidate_period_max_records=200.0,
+        noise_floor_fraction=0.2,
+        excess_eps_fraction=1e-6,
+        structure_baseline_quantile=0.1,
+        structure_scale_quantile=0.2,
+        structure_z_threshold=0.0,
+        structure_time_support_records=3,
+        structure_period_support_bins=1,
+        structure_min_support_fraction=0.0,
+        activity_trim_low=0.0,
+        activity_trim_high=1.0,
+        activity_smooth_records=3,
+        pelt_penalty=5.0,
+        pelt_min_size_records=8,
+        window_min_duration_records=16,
+        window_min_activity_mean=0.5,
+        window_min_activity_raw_mean=0.0,
+        window_merge_gap_records=4,
+        profile_min_prominence=0.1,
+        profile_max_peaks_per_window=2,
+        max_candidates_per_channel=2,
+        max_candidates=10,
+    )
+
+    cpu_rows, cpu_windows = detect_block_periods(power_cube=power, **kwargs)
+    cuda_rows, cuda_windows = detect_block_periods_cuda_power(power_cube=cp.asarray(power), **kwargs)
+
+    assert len(cuda_windows) == len(cpu_windows)
+    assert len(cuda_rows) == len(cpu_rows)
+    assert cuda_rows[0]["channel_index"] == cpu_rows[0]["channel_index"] == target_channel
+    assert abs(cuda_rows[0]["peak_period_records"] - cpu_rows[0]["peak_period_records"]) < 1e-6
+    assert abs(cuda_rows[0]["peak_score"] - cpu_rows[0]["peak_score"]) < 1e-3
 
 
 def test_default_profile_keeps_one_period_family_per_window() -> None:

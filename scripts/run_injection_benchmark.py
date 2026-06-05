@@ -12,22 +12,27 @@ SRC_DIR = PROJECT_DIR / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from ce4_period_search.benchmark import (
+from cwipss.benchmark import (
     CWTBenchmarkConfig,
     MatchConfig,
     make_background_from_args,
     run_injection_benchmark,
 )
-from ce4_period_search.injection_config import load_injection_config, make_injections_from_config
-from ce4_period_search.validation import ValidationConfig
-from ce4_period_search.visualization import CWTVisualizationConfig
-from ce4_period_search.veto import VetoConfig
+from cwipss.injection_config import load_injection_config, make_injections_from_config
+from cwipss.validation import ValidationConfig
+from cwipss.visualization import CWTVisualizationConfig
+from cwipss.veto import VetoConfig
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run synthetic/injected CWT period-search benchmark.")
-    parser.add_argument("--background", choices=["synthetic", "ce4"], default="synthetic", help="Background source.")
-    parser.add_argument("--input", type=str, default=None, help="Input file for --background ce4.")
+    parser.add_argument(
+        "--background",
+        choices=["synthetic", "ce4"],
+        default="synthetic",
+        help="Background source; ce4 means the currently supported CE4 .2C/.2CL data format.",
+    )
+    parser.add_argument("--input", type=str, default=None, help="CE4 .2C input file for --background ce4.")
     parser.add_argument("--output-dir", type=Path, default=None, help="Output directory. Defaults to runs/injection_<run-id>.")
     parser.add_argument("--run-id", type=str, default="injection_benchmark", help="Run id written to output tables.")
 
@@ -37,8 +42,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=12345, help="Synthetic noise RNG seed.")
     parser.add_argument("--f-start", type=float, default=None, help="Frequency/channel-coordinate start.")
     parser.add_argument("--f-stop", type=float, default=None, help="Frequency/channel-coordinate stop.")
-    parser.add_argument("--t-start", type=int, default=None, help="Record start for CE-4 background.")
-    parser.add_argument("--t-stop", type=int, default=None, help="Record stop for CE-4 background.")
+    parser.add_argument("--t-start", type=int, default=None, help="Record start for CE4-format background.")
+    parser.add_argument("--t-stop", type=int, default=None, help="Record stop for CE4-format background.")
 
     parser.add_argument("--injection-config", type=Path, required=True, help="JSON config for simulation injections.")
 

@@ -75,6 +75,29 @@ def cwt_power_cube_cuda(
     if method != "fft":
         raise ValueError("CUDA CWT backend currently supports method='fft' only.")
     cp = _cupy()
+    power_gpu = cwt_power_cube_cuda_gpu(
+        data,
+        periods,
+        wavelet=wavelet,
+        normalize_channels=normalize_channels,
+        method=method,
+        device=device,
+    )
+    return cp.asnumpy(power_gpu)
+
+
+def cwt_power_cube_cuda_gpu(
+    data: np.ndarray,
+    periods: np.ndarray,
+    wavelet: str = "cmor1.5-1.0",
+    normalize_channels: bool = True,
+    method: str = "fft",
+    device: int = 0,
+):
+    """Return CWT power as a CuPy `(periods, records, channels)` array."""
+    if method != "fft":
+        raise ValueError("CUDA CWT backend currently supports method='fft' only.")
+    cp = _cupy()
     matrix = np.asarray(data, dtype=np.float32)
     if matrix.ndim != 2:
         raise ValueError("data must have shape (records, channels)")
@@ -89,9 +112,9 @@ def cwt_power_cube_cuda(
     scales = periods_to_scales(period_values, wavelet)
     wavelet_obj, int_psi, x = _integrated_wavelet(wavelet, data_dtype)
     records, channels = matrix.shape
-    out = np.empty((period_values.size, records, channels), dtype=np.float32)
 
     with cp.cuda.Device(int(device)):
+        out = cp.empty((period_values.size, records, channels), dtype=cp.float32)
         # PyWavelets transforms axis 0 by swapping it to the last axis and
         # batching all channels as independent 1D signals.
         data_gpu = cp.asarray(np.ascontiguousarray(matrix.T))
@@ -121,7 +144,7 @@ def cwt_power_cube_cuda(
                 power = real * real + imag * imag
             else:
                 power = real * real
-            out[scale_index, :, :] = cp.asnumpy(power.T.astype(cp.float32, copy=False))
+            out[scale_index, :, :] = power.T.astype(cp.float32, copy=False)
             del wav_gpu, fft_wav, conv, coef, real, power
         del data_gpu, fft_data
     return out

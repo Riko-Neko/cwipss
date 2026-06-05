@@ -4,7 +4,7 @@ import csv
 import json
 from pathlib import Path
 
-from ce4_period_search.reporting import generate_report_markdown, veto_distribution, write_report
+from cwipss.reporting import generate_report_markdown, veto_distribution, write_report
 
 
 def _write_csv(path: Path, fieldnames: list[str], rows: list[dict]) -> None:
@@ -80,7 +80,7 @@ def test_generate_single_run_report(tmp_path: Path) -> None:
 
     markdown = generate_report_markdown(run_dir, top_n=5)
 
-    assert "# CWT Period Search Report: run_a" in markdown
+    assert "# Cwipss Report: run_a" in markdown
     assert "## Veto Distribution" in markdown
     assert "example.2C" in markdown
     assert "does not claim a confirmed periodic signal" in markdown
@@ -102,7 +102,7 @@ def test_generate_batch_report_and_write_file(tmp_path: Path) -> None:
 
     assert report_path == batch_dir / "report.md"
     text = report_path.read_text()
-    assert "# CWT Period Search Batch Report: batch_a" in text
+    assert "# Cwipss Batch Report: batch_a" in text
     assert "## File Summary" in text
     assert "run_a" in text
 

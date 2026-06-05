@@ -4,10 +4,10 @@ import csv
 import json
 from pathlib import Path
 
-from ce4_period_search import batch
-from ce4_period_search.batch import BatchConfig, BatchJob, discover_input_files, ensure_run_ids, read_batch_manifest
-from ce4_period_search.config import CWTSearchConfig
-from ce4_period_search.models import (
+from cwipss import batch
+from cwipss.batch import BatchConfig, BatchJob, discover_input_files, ensure_run_ids, read_batch_manifest
+from cwipss.config import CWTSearchConfig
+from cwipss.models import (
     RAW_CANDIDATE_FIELDNAMES,
     REVIEWED_CANDIDATE_FIELDNAMES,
     VALIDATION_FIELDNAMES,

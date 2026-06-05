@@ -1,7 +1,9 @@
-# CWT Period Search Pipeline
+# Cwipss Pipeline
 
-This project generates period candidates from `time x channel` data using a
-per-channel continuous wavelet transform.
+Cwipss generates period candidates from `time x channel` data using a
+per-channel continuous wavelet transform. CE4 `.2C/.2CL` is the currently
+supported input format; FilterBank support belongs in the same input adapter
+layer.
 
 ## Core Flow
 
@@ -69,9 +71,9 @@ unit variance and segmented into visually plausible but weak false windows.
 The default candidate domain rejects periods below 10 records and above 200
 records. This is a detection-domain filter, not a CWT-grid limit.
 
-For CE-4 files with labels, one record is about one second. In the current
-4096-record low-frequency review windows, the assumed minimum real signal span
-is at least half the window:
+For currently supported CE4 files with `.2CL` labels, one record is about one
+second. In the current 4096-record low-frequency review windows, the assumed
+minimum real signal span is at least half the window:
 
 ```text
 N_window = 4096 records
@@ -114,10 +116,12 @@ This is the compatibility path and remains the default for all existing configs
 and commands.
 
 `--cwt-backend cuda` enables the optional CuPy FFT backend for CWT power
-generation. It currently supports `--cwt-method fft` and returns the same
-`period x time x channel` NumPy power cube expected by the existing CPU
-detector. `--cwt-backend auto` uses CUDA only when CuPy and the selected CUDA
-device are available; otherwise it falls back to the CPU backend. Explicit
+generation. It currently supports `--cwt-method fft`. In the main scan and
+injection benchmark paths, CUDA keeps the CWT power and array-heavy structure /
+activity / profile compression on the GPU; PELT, window handling, profile peak
+selection, and candidate row construction reuse the same CPU logic as the
+default backend. `--cwt-backend auto` uses CUDA only when CuPy and the selected
+CUDA device are available; otherwise it falls back to the CPU backend. Explicit
 `cuda` mode fails fast if CUDA cannot be initialized.
 
 ## Time Aggregation

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from ce4_period_search.validation import (
+from cwipss.validation import (
     ValidationConfig,
     best_acf_peak,
     best_fold_period,

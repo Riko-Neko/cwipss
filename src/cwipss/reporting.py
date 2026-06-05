@@ -227,7 +227,7 @@ def generate_single_run_report(run_dir: str | Path, top_n: int = 10) -> str:
     runtime = summary.get("runtime", injection_summary.get("runtime", {}))
     visualization_index = run_dir / "visualization" / "index.md"
     lines = [
-        f"# CWT Period Search Report: {run_dir.name}",
+        f"# Cwipss Report: {run_dir.name}",
         "",
         "This report summarizes candidate evidence for review. It does not claim a confirmed periodic signal.",
         "",
@@ -326,7 +326,7 @@ def generate_batch_report(run_dir: str | Path, top_n: int = 10) -> str:
     complete_count = sum(1 for row in manifest if row.get("status") == "complete")
     error_count = sum(1 for row in manifest if row.get("status") == "error")
     lines = [
-        f"# CWT Period Search Batch Report: {run_dir.name}",
+        f"# Cwipss Batch Report: {run_dir.name}",
         "",
         "This report summarizes candidate evidence for review. It does not claim a confirmed periodic signal.",
         "",

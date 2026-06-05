@@ -12,7 +12,7 @@ SRC_DIR = PROJECT_DIR / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from ce4_period_search.batch import (
+from cwipss.batch import (
     BatchConfig,
     BatchJob,
     default_batch_id,
@@ -21,7 +21,7 @@ from ce4_period_search.batch import (
     read_batch_manifest,
     run_batch,
 )
-from ce4_period_search.config import CWTSearchConfig, load_cwt_config
+from cwipss.config import CWTSearchConfig, load_cwt_config
 
 
 def parse_args() -> argparse.Namespace:

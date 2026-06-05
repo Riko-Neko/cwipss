@@ -1,7 +1,7 @@
 [project]
-name = "cwt-period-search"
+name = "cwipss"
 version = "0.1.0"
-description = "Reproducible CWT period-candidate search pipeline for time-channel data"
+description = "CWIPSS: reproducible CWT period-candidate search for time-channel spectral data"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 dependencies = [

@@ -4,7 +4,7 @@ from pathlib import Path
 
 import numpy as np
 
-from ce4_period_search.visualization import (
+from cwipss.visualization import (
     CWTVisualizationConfig,
     SearchVisualizationConfig,
     visualize_cwt_stages,

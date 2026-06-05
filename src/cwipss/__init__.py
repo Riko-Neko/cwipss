@@ -1,4 +1,4 @@
-"""CWT period-candidate search pipeline with a bundled CE-4 application adapter."""
+"""Cwipss CWT period-candidate search pipeline."""
 
 from .config import CWTSearchConfig
 from .pipeline import run_cwt_search

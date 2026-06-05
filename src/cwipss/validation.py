@@ -10,7 +10,7 @@ from typing import Any
 
 import numpy as np
 
-from .io import CE4Reader
+from .io import SpectrumReader, open_spectrum_reader
 from .models import VALIDATION_FIELDNAMES
 from .cwt import robust_zscore, robust_zscore_channels
 
@@ -319,7 +319,7 @@ def refined_period_from_metrics(
 
 def candidate_record_window(
     row: Mapping[str, Any],
-    reader: CE4Reader,
+    reader: SpectrumReader,
     config: ValidationConfig,
 ) -> slice:
     peak = int(_float(row, "peak_record", _float(row, "record_start", 0)))
@@ -340,7 +340,7 @@ def candidate_record_window(
     return slice(int(start), int(stop))
 
 
-def candidate_freq_slice(row: Mapping[str, Any], reader: CE4Reader) -> slice:
+def candidate_freq_slice(row: Mapping[str, Any], reader: SpectrumReader) -> slice:
     freqs = reader.freqs_mhz
     lo = _float(row, "freq_start_mhz", _float(row, "peak_freq_mhz", 0.0))
     hi = _float(row, "freq_stop_mhz", lo)
@@ -368,7 +368,7 @@ def aggregate_frequency_series(data: np.ndarray) -> np.ndarray:
 
 
 def extract_candidate_series(
-    reader: CE4Reader,
+    reader: SpectrumReader,
     row: Mapping[str, Any],
     config: ValidationConfig,
 ) -> tuple[np.ndarray, dict[str, Any]]:
@@ -388,7 +388,7 @@ def extract_candidate_series(
 
 
 def validate_candidate(
-    reader: CE4Reader,
+    reader: SpectrumReader,
     row: Mapping[str, Any],
     config: ValidationConfig,
     rng: np.random.Generator,
@@ -472,7 +472,7 @@ def validate_candidate_rows(
 
     results: list[dict[str, Any]] = []
     for source_file, group_rows in grouped.items():
-        reader = CE4Reader(_resolve_source_path(source_file, project_dir))
+        reader = open_spectrum_reader(_resolve_source_path(source_file, project_dir))
         for row in group_rows:
             candidate_id = int(_float(row, "candidate_id", len(results) + 1))
             rng = np.random.default_rng(int(config.random_seed) + candidate_id)

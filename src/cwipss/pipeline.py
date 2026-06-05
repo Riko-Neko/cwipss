@@ -10,7 +10,7 @@ import numpy as np
 from .config import CWTSearchConfig, cwt_config_to_nested_dict
 from .cwt import cwt_power_cube, period_grid_records
 from .detection import add_candidate_ids, detect_block_periods
-from .io import CE4Reader
+from .io import SpectrumReader, open_spectrum_reader
 from .models import (
     MANIFEST_FIELDNAMES,
     RAW_CANDIDATE_FIELDNAMES,
@@ -28,7 +28,7 @@ def _token(value: object) -> str:
     return text.replace(".", "p").replace("/", "_").replace(" ", "_")
 
 
-def build_run_id(config: CWTSearchConfig, reader: CE4Reader) -> str:
+def build_run_id(config: CWTSearchConfig, reader: SpectrumReader) -> str:
     if config.run_id:
         return _token(config.run_id)
     source = Path(config.input).stem
@@ -42,7 +42,7 @@ def build_run_id(config: CWTSearchConfig, reader: CE4Reader) -> str:
     )
 
 
-def build_run_dir(config: CWTSearchConfig, reader: CE4Reader) -> Path:
+def build_run_dir(config: CWTSearchConfig, reader: SpectrumReader) -> Path:
     return Path(config.output_dir) / build_run_id(config, reader)
 
 
@@ -73,7 +73,7 @@ def write_manifest_csv(path: Path, rows: list[dict]) -> None:
 def write_summary_json(
     path: Path,
     config: CWTSearchConfig,
-    reader: CE4Reader,
+    reader: SpectrumReader,
     run_id: str,
     candidates: list[dict],
     reviewed_candidates: list[dict],
@@ -173,11 +173,24 @@ def _timing_summary_message(run_id: str, totals: dict[str, float], blocks: int) 
     )
 
 
+def _use_cuda_block_backend(backend: str, method: str, cuda_device: int) -> bool:
+    backend_name = str(backend or "cpu").lower()
+    if backend_name == "cuda":
+        return True
+    if backend_name != "auto" or method != "fft":
+        return False
+    try:
+        from .cwt_cuda import cuda_available
+    except ImportError:
+        return False
+    return cuda_available(device=int(cuda_device))
+
+
 def run_cwt_search(config: CWTSearchConfig) -> Path:
     run_start = perf_counter()
     if not config.input:
         raise ValueError("config.input is required")
-    reader = CE4Reader(config.input)
+    reader = open_spectrum_reader(config.input)
     run_id = build_run_id(config, reader)
     run_dir = build_run_dir(config, reader)
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -205,6 +218,10 @@ def run_cwt_search(config: CWTSearchConfig) -> Path:
     timing_enabled = bool(config.timing_enabled)
     timing_totals: dict[str, float] = {}
     block_count = 0
+    use_cuda_block_backend = _use_cuda_block_backend(config.cwt_backend, config.cwt_method, config.cuda_device)
+    if use_cuda_block_backend:
+        from .cwt_cuda import cwt_power_cube_cuda_gpu
+        from .detection_cuda import detect_block_periods_cuda_power
     try:
         block_channels = max(1, int(config.block_channels))
         for block_index, block_start in enumerate(range(int(selected_channels.start), int(selected_channels.stop), block_channels), start=1):
@@ -216,20 +233,35 @@ def run_cwt_search(config: CWTSearchConfig) -> Path:
             block_count += 1
             block_id = f"block_{block_index:04d}"
             cwt_start = perf_counter()
-            power = cwt_power_cube(
-                block.data,
-                periods,
-                wavelet=config.wavelet,
-                method=config.cwt_method,
-                backend=config.cwt_backend,
-                cuda_device=config.cuda_device,
-                normalize_channels=True,
-            )
+            if use_cuda_block_backend:
+                power = cwt_power_cube_cuda_gpu(
+                    block.data,
+                    periods,
+                    wavelet=config.wavelet,
+                    method=config.cwt_method,
+                    device=config.cuda_device,
+                    normalize_channels=True,
+                )
+                if timing_enabled:
+                    from .cwt_cuda import _cupy
+
+                    _cupy().cuda.Stream.null.synchronize()
+            else:
+                power = cwt_power_cube(
+                    block.data,
+                    periods,
+                    wavelet=config.wavelet,
+                    method=config.cwt_method,
+                    backend=config.cwt_backend,
+                    cuda_device=config.cuda_device,
+                    normalize_channels=True,
+                )
             cwt_seconds = perf_counter() - cwt_start
             _timing_add(timing_totals, "cwt_seconds", cwt_seconds)
             detection_timing: dict[str, float] | None = {} if timing_enabled else None
             detect_start = perf_counter()
-            candidates, windows = detect_block_periods(
+            detector = detect_block_periods_cuda_power if use_cuda_block_backend else detect_block_periods
+            candidates, windows = detector(
                 power_cube=power,
                 periods=periods,
                 freqs_mhz=block.freqs_mhz,
@@ -260,6 +292,7 @@ def run_cwt_search(config: CWTSearchConfig) -> Path:
                 timing=detection_timing,
             )
             detect_seconds = perf_counter() - detect_start
+            del power
             _timing_add(timing_totals, "detect_seconds", detect_seconds)
             if timing_enabled and detection_timing is not None:
                 _emit(

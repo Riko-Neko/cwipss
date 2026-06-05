@@ -11,7 +11,7 @@ SRC_DIR = PROJECT_DIR / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from ce4_period_search.stats import run_stats
+from cwipss.stats import run_stats
 
 
 def parse_args() -> argparse.Namespace:

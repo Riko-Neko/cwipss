@@ -1,4 +1,4 @@
-# CWT Period Search Output Schema
+# Cwipss Output Schema
 
 Schema version 1 covers the current single-channel low-floor,
 structure-gated PELT/profile candidate generator.

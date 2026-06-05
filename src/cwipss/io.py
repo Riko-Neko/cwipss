@@ -6,7 +6,7 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterator
+from typing import Iterator, Protocol
 
 import numpy as np
 
@@ -17,11 +17,41 @@ PDS_NS = {"pds": "http://pds.nasa.gov/pds4/pds/v1"}
 
 
 @dataclass(frozen=True)
-class CE4Block:
+class SpectrumBlock:
     freqs_mhz: np.ndarray
     data: np.ndarray
     record_range: tuple[int, int]
     channel_range: tuple[int, int]
+
+
+class SpectrumReader(Protocol):
+    filename: Path
+    n_records: int
+    n_channels: int
+    freqs_mhz: np.ndarray
+    tsamp_seconds: float
+
+    def info(self) -> dict:
+        ...
+
+    def freq_slice(self, f_start: float | None = None, f_stop: float | None = None) -> slice:
+        ...
+
+    def record_slice(self, t_start: int | None = None, t_stop: int | None = None) -> slice:
+        ...
+
+    def read_block(self, record_slice: slice, channel_slice: slice) -> SpectrumBlock:
+        ...
+
+    def iter_frequency_blocks(
+        self,
+        f_start: float | None = None,
+        f_stop: float | None = None,
+        t_start: int | None = None,
+        t_stop: int | None = None,
+        block_channels: int = 128,
+    ) -> Iterator[SpectrumBlock]:
+        ...
 
 
 def read_ce4_2c(path: str | Path, nrec: int | None = None) -> np.memmap:
@@ -117,7 +147,7 @@ def infer_freq_axis_from_2cl(path_2cl: str | None, nchans: int) -> tuple[np.ndar
 
 
 class CE4Reader:
-    """Standalone CE4 `.2C` reader for this project."""
+    """Reader for the currently supported CE4 `.2C/.2CL` input format."""
 
     def __init__(
         self,
@@ -129,7 +159,7 @@ class CE4Reader:
     ) -> None:
         self.filename = Path(filename)
         if self.filename.suffix.lower() != ".2c":
-            raise ValueError(f"Expected a CE4 .2C file, got: {filename}")
+            raise ValueError(f"Expected a CE4 .2C input-format file, got: {filename}")
         self.path_2cl = str(xml_path) if xml_path is not None else match_2cl_for_2c(self.filename)
         self.mm = read_ce4_2c(self.filename)
         self.spec = self.mm["spec"]
@@ -178,10 +208,10 @@ class CE4Reader:
         stop = max(start + 1, min(stop, self.n_records))
         return slice(start, stop)
 
-    def read_block(self, record_slice: slice, channel_slice: slice) -> CE4Block:
+    def read_block(self, record_slice: slice, channel_slice: slice) -> SpectrumBlock:
         raw = self.spec[record_slice, channel_slice]
         data = np.asarray(raw, dtype=np.float32)
-        return CE4Block(
+        return SpectrumBlock(
             freqs_mhz=self.freqs_mhz[channel_slice].copy(),
             data=data,
             record_range=(int(record_slice.start), int(record_slice.stop)),
@@ -195,7 +225,7 @@ class CE4Reader:
         t_start: int | None = None,
         t_stop: int | None = None,
         block_channels: int = 128,
-    ) -> Iterator[CE4Block]:
+    ) -> Iterator[SpectrumBlock]:
         records = self.record_slice(t_start, t_stop)
         selected = self.freq_slice(f_start, f_stop)
         start = int(selected.start)
@@ -204,3 +234,15 @@ class CE4Reader:
         for block_start in range(start, stop, block_channels):
             block_stop = min(block_start + block_channels, stop)
             yield self.read_block(records, slice(block_start, block_stop))
+
+
+def open_spectrum_reader(path: str | Path) -> SpectrumReader:
+    """Open an input file through the available Cwipss format adapters."""
+    input_path = Path(path)
+    suffix = input_path.suffix.lower()
+    if suffix == ".2c":
+        return CE4Reader(input_path)
+    raise ValueError(
+        "Unsupported input data format. Cwipss currently supports CE4 .2C/.2CL inputs; "
+        "FilterBank support is planned for the same adapter layer."
+    )

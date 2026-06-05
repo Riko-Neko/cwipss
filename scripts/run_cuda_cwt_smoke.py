@@ -14,7 +14,7 @@ SRC_DIR = PROJECT_DIR / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from ce4_period_search.cwt import cwt_power_cube, period_grid_records
+from cwipss.cwt import cwt_power_cube, period_grid_records
 
 
 def parse_args() -> argparse.Namespace:
