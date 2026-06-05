@@ -64,6 +64,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--activity-smooth-records", type=int, default=None, help="Moving-average width for activity curves.")
     parser.add_argument("--pelt-penalty", type=float, default=None, help="PELT mean-shift penalty.")
     parser.add_argument("--pelt-min-size-records", type=int, default=None, help="PELT minimum segment size.")
+    parser.add_argument("--pelt-jump-records", type=int, default=None, help="PELT endpoint/candidate grid stride in records; 1 keeps exact current behavior.")
     parser.add_argument("--window-min-duration-records", type=int, default=None, help="Minimum retained PELT window duration.")
     parser.add_argument("--window-min-activity-mean", type=float, default=None, help="Minimum retained standardized activity mean.")
     parser.add_argument("--window-min-activity-raw-mean", type=float, default=None, help="Minimum retained raw structured activity mean before robust standardization.")
@@ -72,8 +73,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--profile-max-peaks-per-window", type=int, default=None, help="Maximum period peaks retained per time window.")
     parser.add_argument("--candidate-period-min-records", type=float, default=None, help="Reject candidates below this period in records.")
     parser.add_argument("--candidate-period-max-records", type=float, default=None, help="Reject candidates above this period in records.")
-    parser.add_argument("--max-candidates-per-channel", type=int, default=None, help="Cap retained candidates per frequency channel.")
-    parser.add_argument("--max-candidates-per-block", type=int, default=None, help="Cap retained candidates per block.")
+    parser.add_argument("--max-candidates-per-channel", type=str, default=None, help="Hard cap per channel, or 'auto' to use --max-candidates-per-record.")
+    parser.add_argument("--max-candidates-per-record", type=float, default=None, help="Per-record candidate rate used when --max-candidates-per-channel auto.")
     parser.add_argument("--validation-max-candidates", type=int, default=None, help="Maximum candidates to validate per file.")
     parser.add_argument("--validation-shuffle-trials", type=int, default=None, help="Shuffle/null trials per candidate.")
     parser.add_argument(
@@ -145,6 +146,7 @@ def _scan_overrides(args: argparse.Namespace) -> dict:
         "activity_smooth_records",
         "pelt_penalty",
         "pelt_min_size_records",
+        "pelt_jump_records",
         "window_min_duration_records",
         "window_min_activity_mean",
         "window_min_activity_raw_mean",
@@ -154,7 +156,7 @@ def _scan_overrides(args: argparse.Namespace) -> dict:
         "candidate_period_min_records",
         "candidate_period_max_records",
         "max_candidates_per_channel",
-        "max_candidates_per_block",
+        "max_candidates_per_record",
         "validation_max_candidates",
         "validation_shuffle_trials",
         "validation_include_vetoed",

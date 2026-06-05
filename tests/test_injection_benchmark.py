@@ -227,7 +227,6 @@ def test_run_injection_benchmark_writes_expected_outputs(tmp_path: Path) -> None
             profile_min_prominence=0.1,
             profile_max_peaks_per_window=2,
             max_candidates_per_channel=2,
-            max_candidates_per_block=20,
         ),
         veto_config=VetoConfig(enabled=False),
         validation_config=ValidationConfig(

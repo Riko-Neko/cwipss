@@ -69,14 +69,15 @@ class CWTBenchmarkConfig:
     activity_smooth_records: int = 16
     pelt_penalty: float = 16.0
     pelt_min_size_records: int = 384
+    pelt_jump_records: int = 1
     window_min_duration_records: int = 384
     window_min_activity_mean: float = 0.05
     window_min_activity_raw_mean: float = 25.0
     window_merge_gap_records: int = 256
     profile_min_prominence: float = 0.5
     profile_max_peaks_per_window: int = 1
-    max_candidates_per_channel: int = 3
-    max_candidates_per_block: int = 50
+    max_candidates_per_channel: int | str = "auto"
+    max_candidates_per_record: float = 3.0 / 4096.0
     progress_enabled: bool = True
     progress_leave: bool = False
 
@@ -228,6 +229,7 @@ def run_cwt_candidate_search(
                 activity_smooth_records=search_config.activity_smooth_records,
                 pelt_penalty=search_config.pelt_penalty,
                 pelt_min_size_records=search_config.pelt_min_size_records,
+                pelt_jump_records=search_config.pelt_jump_records,
                 window_min_duration_records=search_config.window_min_duration_records,
                 window_min_activity_mean=search_config.window_min_activity_mean,
                 window_min_activity_raw_mean=search_config.window_min_activity_raw_mean,
@@ -235,7 +237,7 @@ def run_cwt_candidate_search(
                 profile_min_prominence=search_config.profile_min_prominence,
                 profile_max_peaks_per_window=search_config.profile_max_peaks_per_window,
                 max_candidates_per_channel=search_config.max_candidates_per_channel,
-                max_candidates=search_config.max_candidates_per_block,
+                max_candidates_per_record=search_config.max_candidates_per_record,
             )
             del power
             for row in windows:

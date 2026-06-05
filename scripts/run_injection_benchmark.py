@@ -71,6 +71,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--activity-smooth-records", type=int, default=16, help="Moving-average width for activity curves.")
     parser.add_argument("--pelt-penalty", type=float, default=16.0, help="PELT mean-shift penalty.")
     parser.add_argument("--pelt-min-size-records", type=int, default=384, help="PELT minimum segment size.")
+    parser.add_argument("--pelt-jump-records", type=int, default=1, help="PELT endpoint/candidate grid stride in records; 1 keeps exact current behavior.")
     parser.add_argument("--window-min-duration-records", type=int, default=384, help="Minimum retained PELT window duration.")
     parser.add_argument("--window-min-activity-mean", type=float, default=0.05, help="Minimum retained standardized activity mean.")
     parser.add_argument("--window-min-activity-raw-mean", type=float, default=25.0, help="Minimum retained raw structured activity mean before robust standardization.")
@@ -79,8 +80,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--profile-max-peaks-per-window", type=int, default=1, help="Maximum period peaks retained per time window.")
     parser.add_argument("--candidate-period-min-records", type=float, default=10.0, help="Reject candidates below this period in records.")
     parser.add_argument("--candidate-period-max-records", type=float, default=200.0, help="Reject candidates above this period in records.")
-    parser.add_argument("--max-candidates-per-channel", type=int, default=2, help="Candidate cap per frequency channel.")
-    parser.add_argument("--max-candidates-per-block", type=int, default=50, help="Candidate cap per block.")
+    parser.add_argument("--max-candidates-per-channel", type=str, default="auto", help="Hard cap per channel, or 'auto' to use --max-candidates-per-record.")
+    parser.add_argument("--max-candidates-per-record", type=float, default=3.0 / 4096.0, help="Per-record candidate rate used when --max-candidates-per-channel auto.")
     parser.add_argument(
         "--progress",
         action=argparse.BooleanOptionalAction,
@@ -173,6 +174,7 @@ def main() -> None:
         activity_smooth_records=args.activity_smooth_records,
         pelt_penalty=args.pelt_penalty,
         pelt_min_size_records=args.pelt_min_size_records,
+        pelt_jump_records=args.pelt_jump_records,
         window_min_duration_records=args.window_min_duration_records,
         window_min_activity_mean=args.window_min_activity_mean,
         window_min_activity_raw_mean=args.window_min_activity_raw_mean,
@@ -182,7 +184,7 @@ def main() -> None:
         candidate_period_min_records=args.candidate_period_min_records,
         candidate_period_max_records=args.candidate_period_max_records,
         max_candidates_per_channel=args.max_candidates_per_channel,
-        max_candidates_per_block=args.max_candidates_per_block,
+        max_candidates_per_record=args.max_candidates_per_record,
         progress_enabled=args.progress,
         progress_leave=args.progress_leave,
     )

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from math import ceil
 from time import perf_counter
 from collections.abc import Callable, Iterable
 
@@ -33,6 +34,21 @@ def _timing_increment(timing: dict[str, float] | None, key: str, value: int = 1)
         timing[key] = float(timing.get(key, 0.0)) + float(value)
 
 
+def resolve_channel_candidate_cap(
+    max_candidates_per_channel: int | str,
+    max_candidates_per_record: float,
+    records: int,
+) -> int:
+    """Resolve per-channel candidate cap from a hard count or per-record rate."""
+    if isinstance(max_candidates_per_channel, str):
+        value = max_candidates_per_channel.strip().lower()
+        if value == "auto":
+            rate = max(0.0, float(max_candidates_per_record))
+            return max(0, int(ceil(rate * max(0, int(records)))))
+        return max(0, int(value))
+    return max(0, int(max_candidates_per_channel))
+
+
 def _peak_record(activity: np.ndarray, start: int, stop: int, record_start: int) -> int:
     values = np.asarray(activity, dtype=np.float32)
     start = max(0, min(int(start), values.size))
@@ -55,6 +71,7 @@ def _detect_preprocessed_channel_periods(
     record_start: int,
     pelt_penalty: float,
     pelt_min_size_records: int,
+    pelt_jump_records: int,
     window_min_duration_records: int,
     window_min_activity_mean: float,
     window_min_activity_raw_mean: float,
@@ -66,7 +83,12 @@ def _detect_preprocessed_channel_periods(
     profile_getter: ProfileGetter | None = None,
 ) -> tuple[list[dict], list[dict], dict[str, np.ndarray | float]]:
     stage_start = perf_counter() if timing is not None else 0.0
-    segments = pelt_mean_shift(activity_z, penalty=pelt_penalty, min_size=pelt_min_size_records)
+    segments = pelt_mean_shift(
+        activity_z,
+        penalty=pelt_penalty,
+        min_size=pelt_min_size_records,
+        jump=pelt_jump_records,
+    )
     windows = active_windows_from_segments(
         segments,
         activity_z,
@@ -164,7 +186,7 @@ def _detect_preprocessed_channel_periods(
 
     stage_start = perf_counter() if timing is not None else 0.0
     candidate_rows.sort(key=lambda row: (row["integrated_score"], row["period_peak_prominence"]), reverse=True)
-    max_rows = max(1, int(max_candidates_per_channel))
+    max_rows = max(0, int(max_candidates_per_channel))
     diagnostics: dict[str, np.ndarray | float] = {
         "valid_periods": valid_periods,
         "structured": structured if structured is not None else np.empty((0, 0), dtype=np.float32),
@@ -205,7 +227,9 @@ def detect_channel_periods(
     window_merge_gap_records: int,
     profile_min_prominence: float,
     profile_max_peaks_per_window: int,
-    max_candidates_per_channel: int,
+    max_candidates_per_channel: int | str,
+    max_candidates_per_record: float = 3.0 / 4096.0,
+    pelt_jump_records: int = 1,
     timing: dict[str, float] | None = None,
 ) -> tuple[list[dict], list[dict], dict[str, np.ndarray | float]]:
     """Detect period candidates from one channel's CWT power map.
@@ -256,6 +280,11 @@ def detect_channel_periods(
     if timing is not None:
         _timing_add(timing, "activity_seconds", perf_counter() - stage_start)
 
+    channel_cap = resolve_channel_candidate_cap(
+        max_candidates_per_channel,
+        max_candidates_per_record,
+        power.shape[1],
+    )
     candidate_rows, window_rows, diagnostics = _detect_preprocessed_channel_periods(
         valid_periods=valid_periods,
         structured=structured,
@@ -267,13 +296,14 @@ def detect_channel_periods(
         record_start=record_start,
         pelt_penalty=pelt_penalty,
         pelt_min_size_records=pelt_min_size_records,
+        pelt_jump_records=pelt_jump_records,
         window_min_duration_records=window_min_duration_records,
         window_min_activity_mean=window_min_activity_mean,
         window_min_activity_raw_mean=window_min_activity_raw_mean,
         window_merge_gap_records=window_merge_gap_records,
         profile_min_prominence=profile_min_prominence,
         profile_max_peaks_per_window=profile_max_peaks_per_window,
-        max_candidates_per_channel=max_candidates_per_channel,
+        max_candidates_per_channel=channel_cap,
         timing=timing,
     )
     diagnostics["excess"] = excess
@@ -309,8 +339,9 @@ def detect_block_periods(
     window_merge_gap_records: int,
     profile_min_prominence: float,
     profile_max_peaks_per_window: int,
-    max_candidates_per_channel: int,
-    max_candidates: int | None = None,
+    max_candidates_per_channel: int | str,
+    max_candidates_per_record: float = 3.0 / 4096.0,
+    pelt_jump_records: int = 1,
     timing: dict[str, float] | None = None,
 ) -> tuple[list[dict], list[dict]]:
     power = np.asarray(power_cube, dtype=np.float32)
@@ -345,6 +376,7 @@ def detect_block_periods(
             activity_smooth_records=activity_smooth_records,
             pelt_penalty=pelt_penalty,
             pelt_min_size_records=pelt_min_size_records,
+            pelt_jump_records=pelt_jump_records,
             window_min_duration_records=window_min_duration_records,
             window_min_activity_mean=window_min_activity_mean,
             window_min_activity_raw_mean=window_min_activity_raw_mean,
@@ -352,6 +384,7 @@ def detect_block_periods(
             profile_min_prominence=profile_min_prominence,
             profile_max_peaks_per_window=profile_max_peaks_per_window,
             max_candidates_per_channel=max_candidates_per_channel,
+            max_candidates_per_record=max_candidates_per_record,
             timing=timing,
         )
         _timing_increment(timing, "channels", 1)
@@ -359,8 +392,6 @@ def detect_block_periods(
         windows.extend(channel_windows)
 
     candidates.sort(key=lambda row: (row["integrated_score"], row["period_peak_prominence"]), reverse=True)
-    if max_candidates is not None:
-        candidates = candidates[: max(0, int(max_candidates))]
     return candidates, windows
 
 

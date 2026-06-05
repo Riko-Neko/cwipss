@@ -8,7 +8,12 @@ import numpy as np
 
 from .activity import valid_period_mask
 from .cwt_cuda import _cupy
-from .detection import _detect_preprocessed_channel_periods, _timing_add, _timing_increment
+from .detection import (
+    _detect_preprocessed_channel_periods,
+    _timing_add,
+    _timing_increment,
+    resolve_channel_candidate_cap,
+)
 
 
 def _scalar_float(value) -> float:
@@ -177,8 +182,9 @@ def detect_block_periods_cuda_power(
     window_merge_gap_records: int,
     profile_min_prominence: float,
     profile_max_peaks_per_window: int,
-    max_candidates_per_channel: int,
-    max_candidates: int | None = None,
+    max_candidates_per_channel: int | str,
+    max_candidates_per_record: float = 3.0 / 4096.0,
+    pelt_jump_records: int = 1,
     timing: dict[str, float] | None = None,
 ) -> tuple[list[dict], list[dict]]:
     cp = _cupy()
@@ -196,6 +202,11 @@ def detect_block_periods_cuda_power(
         raise ValueError("No CWT periods remain after candidate period filtering.")
     mask_gpu = cp.asarray(mask)
     valid_periods = period_values[mask]
+    channel_cap = resolve_channel_candidate_cap(
+        max_candidates_per_channel,
+        max_candidates_per_record,
+        int(power.shape[1]),
+    )
 
     candidates: list[dict] = []
     windows: list[dict] = []
@@ -254,13 +265,14 @@ def detect_block_periods_cuda_power(
             record_start=record_start,
             pelt_penalty=pelt_penalty,
             pelt_min_size_records=pelt_min_size_records,
+            pelt_jump_records=pelt_jump_records,
             window_min_duration_records=window_min_duration_records,
             window_min_activity_mean=window_min_activity_mean,
             window_min_activity_raw_mean=window_min_activity_raw_mean,
             window_merge_gap_records=window_merge_gap_records,
             profile_min_prominence=profile_min_prominence,
             profile_max_peaks_per_window=profile_max_peaks_per_window,
-            max_candidates_per_channel=max_candidates_per_channel,
+            max_candidates_per_channel=int(channel_cap or 0),
             timing=timing,
             profile_getter=profile_getter,
         )
@@ -272,6 +284,4 @@ def detect_block_periods_cuda_power(
         del valid_power, excess, structured, activity_raw, activity, activity_z
 
     candidates.sort(key=lambda row: (row["integrated_score"], row["period_peak_prominence"]), reverse=True)
-    if max_candidates is not None:
-        candidates = candidates[: max(0, int(max_candidates))]
     return candidates, windows

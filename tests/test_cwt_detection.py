@@ -10,7 +10,7 @@ from cwipss.activity import (
     signed_trimmed_period_activity,
 )
 from cwipss.cwt import aggregate_cwt_time, cwt_power_cube, period_grid_records
-from cwipss.detection import detect_block_periods
+from cwipss.detection import detect_block_periods, resolve_channel_candidate_cap
 from cwipss.windows import pelt_mean_shift
 
 
@@ -156,6 +156,29 @@ def test_pelt_mean_shift_finds_active_segment() -> None:
     assert any(start <= 40 and stop >= 90 for start, stop in bounds)
 
 
+def test_pelt_jump_one_preserves_exact_segments() -> None:
+    activity = np.zeros(160, dtype=np.float32)
+    activity[30:70] = 2.0
+    activity[95:130] = 3.0
+
+    exact = pelt_mean_shift(activity, penalty=4.0, min_size=8)
+    explicit_jump_one = pelt_mean_shift(activity, penalty=4.0, min_size=8, jump=1)
+
+    assert [(segment.start, segment.stop) for segment in explicit_jump_one] == [
+        (segment.start, segment.stop) for segment in exact
+    ]
+
+
+def test_candidate_cap_resolves_auto_or_hard_channel_limit() -> None:
+    rate = 3.0 / 4096.0
+
+    assert resolve_channel_candidate_cap("auto", rate, records=4096) == 3
+    assert resolve_channel_candidate_cap("auto", rate, records=744) == 1
+    assert resolve_channel_candidate_cap("auto", rate, records=91104) == 67
+    assert resolve_channel_candidate_cap(2, rate, records=91104) == 2
+    assert resolve_channel_candidate_cap("7", rate, records=91104) == 7
+
+
 def test_lowfloor_pelt_detector_finds_windowed_period_peak() -> None:
     periods = period_grid_records(2, 128, 48)
     target_period_idx = int(np.argmin(np.abs(periods - 64.0)))
@@ -191,7 +214,6 @@ def test_lowfloor_pelt_detector_finds_windowed_period_peak() -> None:
         profile_min_prominence=0.1,
         profile_max_peaks_per_window=2,
         max_candidates_per_channel=2,
-        max_candidates=10,
         timing=timing,
     )
 
@@ -248,7 +270,6 @@ def test_cuda_power_detector_matches_cpu_detector_for_synthetic_peak() -> None:
         profile_min_prominence=0.1,
         profile_max_peaks_per_window=2,
         max_candidates_per_channel=2,
-        max_candidates=10,
     )
 
     cpu_rows, cpu_windows = detect_block_periods(power_cube=power, **kwargs)
@@ -296,7 +317,6 @@ def test_default_profile_keeps_one_period_family_per_window() -> None:
         profile_min_prominence=0.1,
         profile_max_peaks_per_window=1,
         max_candidates_per_channel=3,
-        max_candidates=10,
     )
 
     assert len(windows) >= 1

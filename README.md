@@ -76,8 +76,10 @@ Default candidate generation is intentionally conservative:
   `structure_min_support_fraction=0.10`: suppress isolated noise texture before
   the period-axis activity compression.
 - `activity_smooth_records=16`, `pelt_penalty=16`, `pelt_min_size_records=384`,
-  and `window_min_duration_records=384`: reject
+  `pelt_jump_records=1`, and `window_min_duration_records=384`: reject
   short unstable activity windows.
+  Increase `pelt_jump_records` only for long-record performance sweeps; `1`
+  keeps the exact PELT endpoint search.
 - `window_min_activity_raw_mean=25.0`: after PELT proposes a window on the
   standardized activity curve, require enough raw structured CWT activity
   before the window can emit period candidates. This prevents per-channel
@@ -88,7 +90,9 @@ Default candidate generation is intentionally conservative:
 - `profile_max_peaks_per_window=1`: treat one PELT time window as one
   period-family candidate; Sa-like side lobes or harmonics are not emitted as
   separate default candidates.
-- `max_candidates_per_block=50`: cap retained candidates per frequency block.
+- `max_candidates_per_channel=auto` and `max_candidates_per_record=3/4096`:
+  derive a per-channel cap from the current record length. Set
+  `max_candidates_per_channel` to an integer to use that hard per-channel cap.
 - `validation.max_candidates=25`: cap rows passed to validation by default.
 
 For diagnostic/high-recall sweeps, lower `--pelt-penalty`,

@@ -47,6 +47,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--activity-smooth-records", type=int, default=None, help="Moving-average width for activity curves.")
     parser.add_argument("--pelt-penalty", type=float, default=None, help="PELT mean-shift penalty.")
     parser.add_argument("--pelt-min-size-records", type=int, default=None, help="PELT minimum segment size.")
+    parser.add_argument("--pelt-jump-records", type=int, default=None, help="PELT endpoint/candidate grid stride in records; 1 keeps exact current behavior.")
     parser.add_argument("--window-min-duration-records", type=int, default=None, help="Minimum retained PELT window duration.")
     parser.add_argument("--window-min-activity-mean", type=float, default=None, help="Minimum retained standardized activity mean.")
     parser.add_argument("--window-min-activity-raw-mean", type=float, default=None, help="Minimum retained raw structured activity mean before robust standardization.")
@@ -55,7 +56,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--profile-max-peaks-per-window", type=int, default=None, help="Maximum period peaks retained per time window.")
     parser.add_argument("--candidate-period-min-records", type=float, default=None, help="Reject candidates below this period in records.")
     parser.add_argument("--candidate-period-max-records", type=float, default=None, help="Reject candidates above this period in records.")
-    parser.add_argument("--max-candidates-per-channel", type=int, default=None, help="Cap retained peaks per frequency channel.")
+    parser.add_argument("--max-candidates-per-channel", type=str, default=None, help="Hard cap per channel, or 'auto' to use --max-candidates-per-record.")
+    parser.add_argument("--max-candidates-per-record", type=float, default=None, help="Per-record candidate rate used when --max-candidates-per-channel auto.")
     parser.add_argument(
         "--veto-enabled",
         action=argparse.BooleanOptionalAction,
@@ -64,12 +66,6 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--output-dir", type=str, default=None, help="Output directory.")
     parser.add_argument("--run-id", type=str, default=None, help="Optional stable run directory name.")
-    parser.add_argument(
-        "--max-candidates-per-block",
-        type=int,
-        default=None,
-        help="Cap peaks retained per block.",
-    )
     parser.add_argument("--visualize", action="store_true", default=None, help="Write staged visualization PNGs.")
     parser.add_argument("--viz-max-blocks", type=int, default=None, help="Maximum blocks to visualize; 0 means all.")
     parser.add_argument("--viz-max-channels", type=int, default=None, help="Representative channels per block for period-time CWT plots; 0 means all channels.")

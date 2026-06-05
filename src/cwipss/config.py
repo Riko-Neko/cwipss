@@ -43,15 +43,16 @@ class CWTSearchConfig:
     activity_smooth_records: int = 16
     pelt_penalty: float = 16.0
     pelt_min_size_records: int = 384
+    pelt_jump_records: int = 1
     window_min_duration_records: int = 384
     window_min_activity_mean: float = 0.05
     window_min_activity_raw_mean: float = 25.0
     window_merge_gap_records: int = 256
     profile_min_prominence: float = 0.5
     profile_max_peaks_per_window: int = 1
-    max_candidates_per_channel: int = 3
+    max_candidates_per_channel: int | str = "auto"
+    max_candidates_per_record: float = 3.0 / 4096.0
     output_dir: str = "runs"
-    max_candidates_per_block: int = 50
     veto_enabled: bool = True
     veto_edge_time_records: int = -1
     veto_edge_freq_mhz: float = 0.0
@@ -126,6 +127,7 @@ _SECTION_KEY_MAP: dict[str, dict[str, str]] = {
         "activity_smooth_records": "activity_smooth_records",
         "pelt_penalty": "pelt_penalty",
         "pelt_min_size_records": "pelt_min_size_records",
+        "pelt_jump_records": "pelt_jump_records",
         "window_min_duration_records": "window_min_duration_records",
         "window_min_activity_mean": "window_min_activity_mean",
         "window_min_activity_raw_mean": "window_min_activity_raw_mean",
@@ -133,7 +135,7 @@ _SECTION_KEY_MAP: dict[str, dict[str, str]] = {
         "profile_min_prominence": "profile_min_prominence",
         "profile_max_peaks_per_window": "profile_max_peaks_per_window",
         "max_candidates_per_channel": "max_candidates_per_channel",
-        "max_candidates_per_block": "max_candidates_per_block",
+        "max_candidates_per_record": "max_candidates_per_record",
     },
     "veto": {
         "enabled": "veto_enabled",
@@ -275,6 +277,7 @@ def cwt_config_to_nested_dict(config: CWTSearchConfig) -> dict[str, Any]:
             "activity_smooth_records": config.activity_smooth_records,
             "pelt_penalty": config.pelt_penalty,
             "pelt_min_size_records": config.pelt_min_size_records,
+            "pelt_jump_records": config.pelt_jump_records,
             "window_min_duration_records": config.window_min_duration_records,
             "window_min_activity_mean": config.window_min_activity_mean,
             "window_min_activity_raw_mean": config.window_min_activity_raw_mean,
@@ -282,7 +285,7 @@ def cwt_config_to_nested_dict(config: CWTSearchConfig) -> dict[str, Any]:
             "profile_min_prominence": config.profile_min_prominence,
             "profile_max_peaks_per_window": config.profile_max_peaks_per_window,
             "max_candidates_per_channel": config.max_candidates_per_channel,
-            "max_candidates_per_block": config.max_candidates_per_block,
+            "max_candidates_per_record": config.max_candidates_per_record,
         },
         "veto": {
             "enabled": config.veto_enabled,

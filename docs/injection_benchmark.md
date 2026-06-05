@@ -45,7 +45,8 @@ PELT/profile detector as the main pipeline: candidate period domain `10..200`
 records, low-floor fraction `0.20`, structure support defaults, PELT penalty
 `16`, minimum window `384` records, raw structured-activity mean floor `25.0`,
 merge gap `256` records, one period-family candidate per PELT window, and
-`max_candidates_per_block=50`. Lower
+`max_candidates_per_channel=auto` with `max_candidates_per_record=3/4096`.
+`pelt_jump_records=1` keeps exact PELT endpoint search. Lower
 `pelt_penalty`, `window_min_activity_mean`, or `profile_min_prominence` only for
 high-recall diagnostic sweeps.
 

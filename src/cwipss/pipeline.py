@@ -281,6 +281,7 @@ def run_cwt_search(config: CWTSearchConfig) -> Path:
                 activity_smooth_records=config.activity_smooth_records,
                 pelt_penalty=config.pelt_penalty,
                 pelt_min_size_records=config.pelt_min_size_records,
+                pelt_jump_records=config.pelt_jump_records,
                 window_min_duration_records=config.window_min_duration_records,
                 window_min_activity_mean=config.window_min_activity_mean,
                 window_min_activity_raw_mean=config.window_min_activity_raw_mean,
@@ -288,7 +289,7 @@ def run_cwt_search(config: CWTSearchConfig) -> Path:
                 profile_min_prominence=config.profile_min_prominence,
                 profile_max_peaks_per_window=config.profile_max_peaks_per_window,
                 max_candidates_per_channel=config.max_candidates_per_channel,
-                max_candidates=config.max_candidates_per_block,
+                max_candidates_per_record=config.max_candidates_per_record,
                 timing=detection_timing,
             )
             detect_seconds = perf_counter() - detect_start

@@ -43,15 +43,18 @@ The default detector is set for low sensitivity and higher review purity:
 - per-period structure background quantile `0.10`, scale quantile `0.20`,
   structure z threshold `1.0`, time support `64` records, period support `3`
   bins, and minimum local support fraction `0.10`;
-- PELT penalty `16`, activity smoothing `16` records, and minimum
-  segment/window size `384` records;
+- PELT penalty `16`, activity smoothing `16` records, minimum segment/window
+  size `384` records, and exact PELT endpoint search
+  (`pelt_jump_records=1`);
 - after PELT, a raw structured-activity mean floor of `25.0` is applied before
   period-profile candidates are emitted;
 - nearby PELT windows are merged across gaps up to `256` records;
 - each PELT time window emits one default period-family candidate
   (`profile_max_peaks_per_window=1`), so Sa-like side lobes are not split into
   separate default candidates;
-- retained candidates capped at `max_candidates_per_block=50`;
+- retained candidates capped per channel: `max_candidates_per_channel=auto`
+  uses `max_candidates_per_record=3/4096`, while an integer value is a hard
+  per-channel cap;
 - validation capped at `validation.max_candidates=25`.
 
 Lower PELT/profile thresholds or `profile_max_peaks_per_window > 1` are
