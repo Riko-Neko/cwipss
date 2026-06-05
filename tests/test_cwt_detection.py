@@ -11,7 +11,7 @@ from cwipss.activity import (
 )
 from cwipss.cwt import aggregate_cwt_time, cwt_power_cube, period_grid_records
 from cwipss.detection import detect_block_periods, resolve_channel_candidate_cap
-from cwipss.windows import pelt_mean_shift
+from cwipss.windows import _pelt_mean_shift_python, native_pelt_available, pelt_mean_shift
 
 
 def test_cwt_power_cube_shape() -> None:
@@ -167,6 +167,32 @@ def test_pelt_jump_one_preserves_exact_segments() -> None:
     assert [(segment.start, segment.stop) for segment in explicit_jump_one] == [
         (segment.start, segment.stop) for segment in exact
     ]
+
+
+def test_native_pelt_matches_python_reference_when_available() -> None:
+    if not native_pelt_available():
+        pytest.skip("native PELT extension is not built")
+
+    rng = np.random.default_rng(321)
+    activity = rng.normal(0.0, 0.3, 240).astype(np.float64)
+    activity[45:100] += 2.0
+    activity[150:205] -= 1.5
+    activity[3] = np.nan
+    activity[19] = np.inf
+
+    for jump in (1, 4, 8):
+        expected = _pelt_mean_shift_python(activity, penalty=4.0, min_size=12, jump=jump)
+        actual = pelt_mean_shift(activity, penalty=4.0, min_size=12, jump=jump)
+
+        assert [(segment.start, segment.stop) for segment in actual] == [
+            (segment.start, segment.stop) for segment in expected
+        ]
+        np.testing.assert_allclose(
+            [(segment.cost, segment.mean) for segment in actual],
+            [(segment.cost, segment.mean) for segment in expected],
+            rtol=1e-10,
+            atol=1e-10,
+        )
 
 
 def test_candidate_cap_resolves_auto_or_hard_channel_limit() -> None:

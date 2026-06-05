@@ -1,8 +1,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 
 import numpy as np
+
+if os.environ.get("CWIPSS_DISABLE_NATIVE_PELT", "").strip().lower() in {"1", "true", "yes"}:
+    _pelt_ext = None
+else:
+    try:
+        from . import _pelt_ext
+    except ImportError:
+        _pelt_ext = None
 
 
 @dataclass(frozen=True)
@@ -33,7 +42,7 @@ def _segment_mean(prefix_sum: np.ndarray, start: int, stop: int) -> float:
     return float((prefix_sum[stop] - prefix_sum[start]) / n)
 
 
-def pelt_mean_shift(
+def _pelt_mean_shift_python(
     activity: np.ndarray,
     penalty: float = 16.0,
     min_size: int = 384,
@@ -173,6 +182,22 @@ def _pelt_mean_shift_subsampled(y: np.ndarray, *, penalty: float, min_size: int,
             )
         )
     return segments
+
+
+def native_pelt_available() -> bool:
+    return _pelt_ext is not None
+
+
+def pelt_mean_shift(
+    activity: np.ndarray,
+    penalty: float = 16.0,
+    min_size: int = 384,
+    jump: int = 1,
+) -> list[Segment]:
+    if _pelt_ext is None:
+        return _pelt_mean_shift_python(activity, penalty=penalty, min_size=min_size, jump=jump)
+    rows = _pelt_ext.pelt_mean_shift(activity, penalty=float(penalty), min_size=int(min_size), jump=int(jump))
+    return [Segment(int(start), int(stop), float(cost), float(mean)) for start, stop, cost, mean in rows]
 
 
 def active_windows_from_segments(

@@ -1,6 +1,8 @@
 __pycache__/
 *.py[cod]
 *.egg-info/
+*.so
+*.dylib
 .DS_Store
 .mplconfig/
 .pytest_cache/

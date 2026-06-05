@@ -1,3 +1,10 @@
+[build-system]
+requires = [
+  "scikit-build-core>=0.10",
+  "pybind11>=2.12",
+]
+build-backend = "scikit_build_core.build"
+
 [project]
 name = "cwipss"
 version = "0.1.0"
@@ -15,3 +22,6 @@ dependencies = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+
+[tool.scikit-build]
+wheel.packages = ["src/cwipss"]
