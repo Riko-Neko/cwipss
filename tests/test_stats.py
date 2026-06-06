@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from cwipss.stats import benjamini_hochberg, review_validation_rows
+from cwipss.analysis.statistics import benjamini_hochberg, review_validation_rows
 
 
 def test_benjamini_hochberg_preserves_order_and_monotonic_adjustment() -> None:

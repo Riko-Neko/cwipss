@@ -1,3 +1,5 @@
+"""CSV field schemas and row normalization."""
+
 from __future__ import annotations
 
 from collections.abc import Mapping

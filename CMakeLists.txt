@@ -5,7 +5,7 @@ project(cwipss_native LANGUAGES CXX)
 find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
 find_package(pybind11 CONFIG REQUIRED)
 
-pybind11_add_module(_pelt_ext MODULE src/cwipss/native/pelt_ext.cpp)
+pybind11_add_module(_pelt_ext MODULE src/cwipss/signal/native/pelt_ext.cpp)
 target_compile_features(_pelt_ext PRIVATE cxx_std_17)
 
 if(NOT CMAKE_BUILD_TYPE)

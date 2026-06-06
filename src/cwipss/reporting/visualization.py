@@ -1,3 +1,5 @@
+"""Staged search and benchmark visualizations."""
+
 from __future__ import annotations
 
 import math
@@ -8,7 +10,7 @@ from typing import Any, Iterable, Mapping
 import numpy as np
 from matplotlib import pyplot as plt
 
-from .activity import (
+from ..signal.activity import (
     coherent_structure_map,
     crop_valid_periods,
     low_fraction_noise_floor,
@@ -17,9 +19,9 @@ from .activity import (
     signed_trimmed_period_activity,
     smooth_activity,
 )
-from .cwt import aggregate_cwt_time, cwt_power_cube
-from .profile import windowed_period_profile
-from .visualization_core import (
+from ..signal.cwt import aggregate_cwt_time, cwt_power_cube
+from ..signal.profile import windowed_period_profile
+from .plotting import (
     CANDIDATE_COLOR,
     TRUTH_COLOR,
     VETO_COLOR,

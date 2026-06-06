@@ -3,6 +3,10 @@
 `scripts/run_report.py` generates a Markdown review report for a single run,
 batch run, or injection benchmark.
 
+Report generation is implemented in `cwipss.reporting.report`; shared plots,
+staged visualization, and candidate galleries remain in the same
+`cwipss.reporting` package.
+
 The report includes:
 
 - run or batch summary;

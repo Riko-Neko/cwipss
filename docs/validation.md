@@ -3,6 +3,9 @@
 Validation re-examines CWT candidates in the original time series. It does not
 operate on the CWT response map.
 
+Validation and multiple-testing correction are implemented in
+`cwipss.analysis.validation` and `cwipss.analysis.statistics`.
+
 For each selected candidate:
 
 1. choose the candidate channel span;

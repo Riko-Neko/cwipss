@@ -1,3 +1,4 @@
+// Native PELT backend for the signal-processing package.
 #include <pybind11/numpy.h>
 #include <pybind11/pybind11.h>
 

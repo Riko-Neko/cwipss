@@ -2,6 +2,8 @@
 
 Veto rules are deterministic filters applied after candidate generation.
 
+The rules and review context are defined in `cwipss.analysis.veto`.
+
 Current flags:
 
 - `broadband`: candidate spans too much of the scanned channel/frequency range.

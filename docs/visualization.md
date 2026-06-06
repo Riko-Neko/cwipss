@@ -14,6 +14,9 @@ function-based plotting core:
 The runtime and gallery code only select data and pass plotting parameters.
 They do not maintain separate raw/CWT plotting implementations.
 
+The modules are `cwipss.reporting.visualization`,
+`cwipss.reporting.gallery`, and `cwipss.reporting.plotting`.
+
 ## Enable
 
 ```bash
@@ -99,15 +102,14 @@ statistics exist, otherwise it uses `integrated_score`. Override this with
 `--sort-by integrated_score` or `--sort-by global_q_value`. Use `--top 0` to
 render every candidate and `--include-vetoed` to include rejected rows.
 
-Each selected candidate gets a directory named approximately
-`<rank>_<run_id>_candidate_<candidate_id>/`. It contains the same single-panel
-formats used by runtime visualization:
+Images are grouped by type and reuse the former candidate-directory identifier
+as their filename:
 
-- `stage_01_input_matrix.png`: raw time-frequency window around the candidate;
-- `stage_02_cwt_scalogram.png`: single-channel period-time CWT scalogram;
+- `candidate_gallery/raw/0001_<run>_candidate_<id>.png`: raw candidate window;
+- `candidate_gallery/cwt/0001_<run>_candidate_<id>.png`: matching CWT scalogram.
 
 Candidate boxes are drawn on both views. The validation-refined period is drawn
-on the CWT view when available.
+on the CWT view when available. No separate filename-mapping CSV is generated.
 
 If the result CSV contains server paths that are unavailable on the current
 machine, point to a directory containing the same source basenames:
@@ -119,9 +121,11 @@ python scripts/run_candidate_gallery.py \
   --top 100
 ```
 
-Outputs are written to `candidate_gallery/index.md`,
-`candidate_gallery/gallery.csv`, and one directory per candidate under
-`candidate_gallery/candidates/`.
+Outputs are written to `candidate_gallery/index.md`, `candidate_gallery/raw/`,
+and `candidate_gallery/cwt/`. Existing unrelated or stale files are not
+automatically removed. The index is created before rendering starts and updated
+after each candidate, so completed entries remain browsable if a long run is
+interrupted.
 
 Useful gallery controls:
 

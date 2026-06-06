@@ -1,3 +1,5 @@
+"""CWT structure preprocessing and period-axis activity reduction."""
+
 from __future__ import annotations
 
 import numpy as np

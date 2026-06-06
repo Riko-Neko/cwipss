@@ -5,13 +5,14 @@ import json
 from pathlib import Path
 
 import numpy as np
+import pytest
 
-from cwipss.candidate_gallery import (
+from cwipss.reporting.gallery import (
     CandidateGalleryConfig,
     select_candidate_rows,
     visualize_candidate_gallery,
 )
-from cwipss.io import SpectrumBlock
+from cwipss.data.readers import SpectrumBlock
 
 
 class FakeReader:
@@ -111,6 +112,7 @@ def test_visualize_candidate_gallery_writes_raw_and_cwt_figure(tmp_path: Path) -
             }
         ],
     )
+    gallery = run_dir / "candidate_gallery"
 
     index = visualize_candidate_gallery(
         run_dir,
@@ -128,9 +130,21 @@ def test_visualize_candidate_gallery_writes_raw_and_cwt_figure(tmp_path: Path) -
     assert index.exists()
     assert "Stage 01 Input Matrix" in index.read_text()
     assert "Stage 02 CWT Scalogram" in index.read_text()
-    images = list((run_dir / "candidate_gallery" / "images").glob("*.png"))
-    assert not images
-    images = list((run_dir / "candidate_gallery" / "candidates").glob("*/*.png"))
-    assert len(images) == 2
-    rows = list(csv.DictReader((run_dir / "candidate_gallery" / "gallery.csv").open()))
-    assert rows[0]["status"] == "complete"
+    filename = "0001_run_a_candidate_1.png"
+    assert [path.name for path in (gallery / "raw").glob("*.png")] == [filename]
+    assert [path.name for path in (gallery / "cwt").glob("*.png")] == [filename]
+    assert not (gallery / "gallery.csv").exists()
+
+    interrupted = tmp_path / "interrupted_gallery"
+
+    def interrupt(_path):
+        raise KeyboardInterrupt
+
+    with pytest.raises(KeyboardInterrupt):
+        visualize_candidate_gallery(
+            run_dir,
+            interrupted,
+            config=CandidateGalleryConfig(top_n=1),
+            reader_factory=interrupt,
+        )
+    assert (interrupted / "index.md").exists()

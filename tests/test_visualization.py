@@ -4,7 +4,7 @@ from pathlib import Path
 
 import numpy as np
 
-from cwipss.visualization import (
+from cwipss.reporting.visualization import (
     CWTVisualizationConfig,
     SearchVisualizationConfig,
     visualize_cwt_stages,

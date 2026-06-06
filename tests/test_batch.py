@@ -4,10 +4,10 @@ import csv
 import json
 from pathlib import Path
 
-from cwipss import batch
-from cwipss.batch import BatchConfig, BatchJob, discover_input_files, ensure_run_ids, read_batch_manifest
+from cwipss.workflows import batch
+from cwipss.workflows.batch import BatchConfig, BatchJob, discover_input_files, ensure_run_ids, read_batch_manifest
 from cwipss.config import CWTSearchConfig
-from cwipss.models import (
+from cwipss.data.schemas import (
     RAW_CANDIDATE_FIELDNAMES,
     REVIEWED_CANDIDATE_FIELDNAMES,
     VALIDATION_FIELDNAMES,

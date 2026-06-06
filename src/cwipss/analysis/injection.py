@@ -1,3 +1,5 @@
+"""Synthetic and instrument-background signal injection."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -5,7 +7,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .io import CE4Reader
+from ..data.readers import CE4Reader
 from .simulation import InjectionSpec, default_frequency_axis, inject_periodic_signal, make_noise_background
 
 

@@ -7,11 +7,11 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-import cwipss.cwt_cuda as cwt_cuda
-import cwipss.detection_cuda as detection_cuda
-import cwipss.pipeline as pipeline
+import cwipss.signal.cwt_cuda as cwt_cuda
+import cwipss.signal.detection_cuda as detection_cuda
+import cwipss.workflows.search as pipeline
 from cwipss.config import CWTSearchConfig
-from cwipss.io import SpectrumBlock
+from cwipss.data.readers import SpectrumBlock
 
 
 class _FakeReader:

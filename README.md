@@ -38,9 +38,18 @@ not meaningful for this single-channel candidate engine.
   configs/                 JSON configs for reproducible scans
   docs/                    design notes and scientific assumptions
   scripts/                 command-line entrypoints
-  src/cwipss/              Cwipss implementation package and input adapters
+  src/cwipss/
+    signal/                CWT, structure activity, PELT, detection, CPU/CUDA
+    data/                  spectrum readers and CSV schemas
+    workflows/             single-file search and multi-file batch orchestration
+    analysis/              veto, validation, statistics, injection benchmarks
+    reporting/             reports, plots, stage views, candidate galleries
+    config.py              resolved project configuration
+    runtime.py             runtime and dependency metadata
   tests/                   synthetic tests
 ```
+
+See `docs/architecture.md` for package boundaries and dependency direction.
 
 Generated products go under `runs/` and are ignored by git.
 
@@ -226,11 +235,10 @@ python scripts/run_candidate_gallery.py \
 ```
 
 The default ordering uses validation `evidence_rank` when available and falls
-back to `integrated_score`. Results are written under
-`candidate_gallery/candidates/<rank>_<run>_candidate_<id>/`, with
-`stage_01_input_matrix.png` and `stage_02_cwt_scalogram.png` for every rendered
-candidate. Use `--source-root` when result CSVs contain source paths from
-another machine.
+back to `integrated_score`. Raw views are written as
+`candidate_gallery/raw/<rank>_<run>_candidate_<id>.png`, and CWT views use the
+same filename under `candidate_gallery/cwt/`. Use `--source-root` when result
+CSVs contain source paths from another machine.
 
 ## Injection Benchmark
 

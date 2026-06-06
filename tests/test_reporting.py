@@ -4,7 +4,7 @@ import csv
 import json
 from pathlib import Path
 
-from cwipss.reporting import generate_report_markdown, veto_distribution, write_report
+from cwipss.reporting.report import generate_report_markdown, veto_distribution, write_report
 
 
 def _write_csv(path: Path, fieldnames: list[str], rows: list[dict]) -> None:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from cwipss.validation import (
+from cwipss.analysis.validation import (
     ValidationConfig,
     best_acf_peak,
     best_fold_period,

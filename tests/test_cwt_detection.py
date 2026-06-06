@@ -3,16 +3,16 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-import cwipss.windows as windows_module
-from cwipss.activity import (
+import cwipss.signal.windows as windows_module
+from cwipss.signal.activity import (
     coherent_structure_map,
     low_fraction_noise_floor,
     relative_excess,
     signed_trimmed_period_activity,
 )
-from cwipss.cwt import aggregate_cwt_time, cwt_power_cube, period_grid_records
-from cwipss.detection import detect_block_periods, resolve_channel_candidate_cap
-from cwipss.windows import native_pelt_available, pelt_mean_shift, pelt_mean_shift_batch
+from cwipss.signal.cwt import aggregate_cwt_time, cwt_power_cube, period_grid_records
+from cwipss.signal.detection import detect_block_periods, resolve_channel_candidate_cap
+from cwipss.signal.windows import native_pelt_available, pelt_mean_shift, pelt_mean_shift_batch
 
 
 def test_cwt_power_cube_shape() -> None:
@@ -38,7 +38,7 @@ def test_cwt_power_cube_cpu_backend_matches_default() -> None:
 
 
 def test_cwt_power_cube_auto_falls_back_to_cpu_when_cuda_unavailable() -> None:
-    from cwipss.cwt_cuda import cuda_available
+    from cwipss.signal.cwt_cuda import cuda_available
 
     if cuda_available():
         pytest.skip("auto uses CUDA when a CUDA device is available")
@@ -73,7 +73,7 @@ def test_cwt_power_cube_auto_uses_cpu_for_conv_method() -> None:
 
 def test_cwt_power_cube_cuda_matches_cpu_for_small_fft_case() -> None:
     pytest.importorskip("cupy")
-    from cwipss.cwt_cuda import cuda_available
+    from cwipss.signal.cwt_cuda import cuda_available
 
     if not cuda_available():
         pytest.skip("CUDA device is not available")
@@ -236,7 +236,7 @@ def test_candidate_cap_resolves_auto_or_hard_channel_limit() -> None:
 
 
 def test_cuda_quantile_helper_accepts_cupy_without_nanquantile() -> None:
-    from cwipss.detection_cuda import _gpu_nanquantile
+    from cwipss.signal.detection_cuda import _gpu_nanquantile
 
     class CompatArrayModule:
         quantile = staticmethod(np.quantile)
@@ -301,8 +301,8 @@ def test_lowfloor_pelt_detector_finds_windowed_period_peak() -> None:
 
 def test_cuda_power_detector_matches_cpu_detector_for_synthetic_peak() -> None:
     cp = pytest.importorskip("cupy")
-    from cwipss.cwt_cuda import cuda_available
-    from cwipss.detection_cuda import detect_block_periods_cuda_power
+    from cwipss.signal.cwt_cuda import cuda_available
+    from cwipss.signal.detection_cuda import detect_block_periods_cuda_power
 
     if not cuda_available():
         pytest.skip("CUDA device is not available")
@@ -352,8 +352,8 @@ def test_cuda_power_detector_matches_cpu_detector_for_synthetic_peak() -> None:
 
 def test_cuda_batch_structure_matches_sequential_structure_for_synthetic_peak() -> None:
     cp = pytest.importorskip("cupy")
-    from cwipss.cwt_cuda import cuda_available
-    from cwipss.detection_cuda import detect_block_periods_cuda_power
+    from cwipss.signal.cwt_cuda import cuda_available
+    from cwipss.signal.detection_cuda import detect_block_periods_cuda_power
 
     if not cuda_available():
         pytest.skip("CUDA device is not available")

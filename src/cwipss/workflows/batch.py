@@ -1,3 +1,5 @@
+"""Multi-file search workflow and batch aggregation."""
+
 from __future__ import annotations
 
 import csv
@@ -8,8 +10,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from .config import CWTSearchConfig, cwt_config_to_nested_dict
-from .models import (
+from ..config import CWTSearchConfig, cwt_config_to_nested_dict
+from ..data.schemas import (
     BATCH_MANIFEST_FIELDNAMES,
     RAW_CANDIDATE_FIELDNAMES,
     REVIEWED_CANDIDATE_FIELDNAMES,
@@ -17,9 +19,9 @@ from .models import (
     VALIDATION_FIELDNAMES,
     VALIDATION_REVIEWED_FIELDNAMES,
 )
-from .pipeline import run_cwt_search
-from .stats import run_stats
-from .validation import (
+from .search import run_cwt_search
+from ..analysis.statistics import run_stats
+from ..analysis.validation import (
     read_csv_rows,
     validate_candidate_rows,
     validation_config_from_scan_config,

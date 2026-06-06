@@ -1,3 +1,5 @@
+"""Markdown run and batch reports."""
+
 from __future__ import annotations
 
 import csv

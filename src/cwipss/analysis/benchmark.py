@@ -1,3 +1,5 @@
+"""Injection benchmark orchestration and recovery metrics."""
+
 from __future__ import annotations
 
 import csv
@@ -9,10 +11,10 @@ from typing import Any
 
 import numpy as np
 
-from .cwt import cwt_power_cube, period_grid_records
-from .detection import add_candidate_ids, detect_block_periods
+from ..signal.cwt import cwt_power_cube, period_grid_records
+from ..signal.detection import add_candidate_ids, detect_block_periods
 from .injection import BackgroundData, ce4_background, inject_many, synthetic_background
-from .models import (
+from ..data.schemas import (
     INJECTION_PERFORMANCE_FIELDNAMES,
     INJECTION_RESULT_FIELDNAMES,
     INJECTION_TRUTH_FIELDNAMES,
@@ -23,9 +25,9 @@ from .models import (
     VALIDATION_REVIEWED_FIELDNAMES,
     normalize_candidate_row,
 )
-from .runtime import runtime_info
+from ..runtime import runtime_info
 from .simulation import InjectionSpec
-from .stats import review_validation_rows
+from .statistics import review_validation_rows
 from .validation import (
     ValidationConfig,
     aggregate_frequency_series,
@@ -38,7 +40,7 @@ from .validation import (
     validation_period_bounds,
 )
 from .veto import VetoConfig, VetoContext, review_candidates
-from .windows import require_native_pelt
+from ..signal.windows import require_native_pelt
 
 
 @dataclass(frozen=True)
@@ -150,7 +152,7 @@ def _use_cuda_block_backend(backend: str, method: str, cuda_device: int) -> bool
     if backend_name != "auto" or method != "fft":
         return False
     try:
-        from .cwt_cuda import cuda_available
+        from ..signal.cwt_cuda import cuda_available
     except ImportError:
         return False
     return cuda_available(device=int(cuda_device))
@@ -187,8 +189,8 @@ def run_cwt_candidate_search(
         search_config.cuda_device,
     )
     if use_cuda_block_backend:
-        from .cwt_cuda import cwt_power_cube_cuda_gpu
-        from .detection_cuda import detect_block_periods_cuda_power
+        from ..signal.cwt_cuda import cwt_power_cube_cuda_gpu
+        from ..signal.detection_cuda import detect_block_periods_cuda_power
     try:
         for block_index, block_start in enumerate(range(0, matrix.shape[1], search_config.block_channels), start=1):
             block_stop = min(block_start + int(search_config.block_channels), matrix.shape[1])
@@ -615,7 +617,11 @@ def run_injection_benchmark(
     }
     (output_dir / "injection_summary.json").write_text(json.dumps(summary, indent=2, ensure_ascii=True))
     if visualization_config is not None and getattr(visualization_config, "enabled", False):
-        from .visualization import CWTVisualizationConfig, SearchVisualizationConfig, visualize_cwt_stages
+        from ..reporting.visualization import (
+            CWTVisualizationConfig,
+            SearchVisualizationConfig,
+            visualize_cwt_stages,
+        )
 
         periods = period_grid_records(
             search_config.period_min_records,

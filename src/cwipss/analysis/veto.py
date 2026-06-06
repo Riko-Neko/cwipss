@@ -1,3 +1,5 @@
+"""Candidate veto rules and review status."""
+
 from __future__ import annotations
 
 import json

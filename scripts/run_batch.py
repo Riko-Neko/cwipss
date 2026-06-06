@@ -12,7 +12,7 @@ SRC_DIR = PROJECT_DIR / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from cwipss.batch import (
+from cwipss.workflows.batch import (
     BatchConfig,
     BatchJob,
     default_batch_id,

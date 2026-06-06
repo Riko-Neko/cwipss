@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from cwipss.config import cwt_config_from_mapping, cwt_config_to_nested_dict
-from cwipss.models import RAW_CANDIDATE_FIELDNAMES, normalize_candidate_row
+from cwipss.data.schemas import RAW_CANDIDATE_FIELDNAMES, normalize_candidate_row
 
 
 def test_structured_config_maps_to_resolved_dataclass() -> None:

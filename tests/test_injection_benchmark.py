@@ -6,18 +6,18 @@ from pathlib import Path
 
 import numpy as np
 
-from cwipss.benchmark import (
+from cwipss.analysis.benchmark import (
     MatchConfig,
     CWTBenchmarkConfig,
     aggregate_injection_performance,
     evaluate_injections,
     run_injection_benchmark,
 )
-from cwipss.injection import synthetic_background
-from cwipss.injection_config import make_injections_from_config
-from cwipss.simulation import InjectionSpec, inject_periodic_signal
-from cwipss.validation import ValidationConfig
-from cwipss.veto import VetoConfig
+from cwipss.analysis.injection import synthetic_background
+from cwipss.analysis.injection_config import make_injections_from_config
+from cwipss.analysis.simulation import InjectionSpec, inject_periodic_signal
+from cwipss.analysis.validation import ValidationConfig
+from cwipss.analysis.veto import VetoConfig
 
 
 def _read_csv(path: Path) -> list[dict[str, str]]:

@@ -12,16 +12,16 @@ SRC_DIR = PROJECT_DIR / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from cwipss.benchmark import (
+from cwipss.analysis.benchmark import (
     CWTBenchmarkConfig,
     MatchConfig,
     make_background_from_args,
     run_injection_benchmark,
 )
-from cwipss.injection_config import load_injection_config, make_injections_from_config
-from cwipss.validation import ValidationConfig
-from cwipss.visualization import CWTVisualizationConfig
-from cwipss.veto import VetoConfig
+from cwipss.analysis.injection_config import load_injection_config, make_injections_from_config
+from cwipss.analysis.validation import ValidationConfig
+from cwipss.reporting.visualization import CWTVisualizationConfig
+from cwipss.analysis.veto import VetoConfig
 
 
 def parse_args() -> argparse.Namespace:

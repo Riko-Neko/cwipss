@@ -3,6 +3,9 @@
 The injection benchmark tests whether the Cwipss pipeline recovers
 controlled synthetic periodic signals.
 
+Simulation, injection, validation, and benchmark orchestration live under
+`cwipss.analysis`.
+
 The standard injected signal model is `single_channel_periodic`: a
 time-modulated periodic signal added to one channel only. Cross-channel models
 are explicit stress tests, not the default scientific assumption.

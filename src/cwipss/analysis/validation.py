@@ -1,3 +1,5 @@
+"""Original-series candidate validation."""
+
 from __future__ import annotations
 
 import csv
@@ -10,9 +12,9 @@ from typing import Any
 
 import numpy as np
 
-from .io import SpectrumReader, open_spectrum_reader
-from .models import VALIDATION_FIELDNAMES
-from .cwt import robust_zscore, robust_zscore_channels
+from ..data.readers import SpectrumReader, open_spectrum_reader
+from ..data.schemas import VALIDATION_FIELDNAMES
+from ..signal.cwt import robust_zscore, robust_zscore_channels
 
 
 VALIDATION_SCHEMA_VERSION = 1

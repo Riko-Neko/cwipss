@@ -1,3 +1,5 @@
+"""Single-file CWT search workflow."""
+
 from __future__ import annotations
 
 import csv
@@ -11,11 +13,11 @@ from typing import Any
 
 import numpy as np
 
-from .config import CWTSearchConfig, cwt_config_to_nested_dict
-from .cwt import cwt_power_cube, period_grid_records
-from .detection import add_candidate_ids, detect_block_periods
-from .io import SpectrumReader, open_spectrum_reader
-from .models import (
+from ..config import CWTSearchConfig, cwt_config_to_nested_dict
+from ..signal.cwt import cwt_power_cube, period_grid_records
+from ..signal.detection import add_candidate_ids, detect_block_periods
+from ..data.readers import SpectrumReader, open_spectrum_reader
+from ..data.schemas import (
     MANIFEST_FIELDNAMES,
     RAW_CANDIDATE_FIELDNAMES,
     REVIEWED_CANDIDATE_FIELDNAMES,
@@ -23,9 +25,9 @@ from .models import (
     make_manifest_row,
     normalize_candidate_row,
 )
-from .runtime import runtime_info
-from .veto import VetoContext, review_candidates, veto_config_from_scan_config
-from .windows import require_native_pelt
+from ..runtime import runtime_info
+from ..analysis.veto import VetoContext, review_candidates, veto_config_from_scan_config
+from ..signal.windows import require_native_pelt
 
 
 @dataclass
@@ -200,7 +202,7 @@ def _use_cuda_block_backend(backend: str, method: str, cuda_device: int) -> bool
     if backend_name != "auto" or method != "fft":
         return False
     try:
-        from .cwt_cuda import cuda_available
+        from ..signal.cwt_cuda import cuda_available
     except ImportError:
         return False
     return cuda_available(device=int(cuda_device))
@@ -242,10 +244,10 @@ def run_cwt_search(config: CWTSearchConfig) -> Path:
     use_cuda_block_backend = _use_cuda_block_backend(config.cwt_backend, config.cwt_method, config.cuda_device)
     use_cuda_pipeline = use_cuda_block_backend and bool(config.cuda_structure_batch)
     if use_cuda_block_backend:
-        from .cwt_cuda import cwt_power_cube_cuda_gpu
-        from .detection_cuda import detect_block_periods_cuda_power
+        from ..signal.cwt_cuda import cwt_power_cube_cuda_gpu
+        from ..signal.detection_cuda import detect_block_periods_cuda_power
         if use_cuda_pipeline:
-            from .detection_cuda import (
+            from ..signal.detection_cuda import (
                 finalize_prepared_cuda_period_chunks,
                 prepare_block_period_chunks_cuda_power,
                 run_prepared_cuda_pelt,
@@ -359,7 +361,7 @@ def run_cwt_search(config: CWTSearchConfig) -> Path:
                     normalize_channels=True,
                 )
                 if timing_enabled:
-                    from .cwt_cuda import _cupy
+                    from ..signal.cwt_cuda import _cupy
 
                     _cupy().cuda.Stream.null.synchronize()
             else:
@@ -510,7 +512,11 @@ def run_cwt_search(config: CWTSearchConfig) -> Path:
     _timing_add(timing_totals, "write_seconds", perf_counter() - write_start)
     if config.visualization_enabled:
         visualization_start = perf_counter()
-        from .visualization import CWTVisualizationConfig, SearchVisualizationConfig, visualize_cwt_stages
+        from ..reporting.visualization import (
+            CWTVisualizationConfig,
+            SearchVisualizationConfig,
+            visualize_cwt_stages,
+        )
 
         selected_block = reader.read_block(selected_records, reader.freq_slice(config.f_start, config.f_stop))
         visualize_cwt_stages(

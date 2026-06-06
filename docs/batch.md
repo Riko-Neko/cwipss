@@ -3,6 +3,9 @@
 Batch processing runs the single-file CWT candidate pipeline over multiple input
 files.
 
+The implementation entry point is `cwipss.workflows.batch`; each job delegates
+the actual search to `cwipss.workflows.search`.
+
 Inputs can come from:
 
 - `--input-dir` and `--pattern`;
@@ -60,4 +63,6 @@ python scripts/run_candidate_gallery.py \
 ```
 
 The gallery reads merged candidate and validation tables, so it does not rerun
-detection or validation.
+detection or validation. Raw and CWT images are grouped separately under
+`candidate_gallery/raw/` and `candidate_gallery/cwt/`; matching
+`<rank>_<run>_candidate_<id>.png` filenames refer to the same candidate.

@@ -13,7 +13,7 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from cwipss.config import CWTSearchConfig, load_cwt_config
-from cwipss.validation import (
+from cwipss.analysis.validation import (
     ValidationConfig,
     read_csv_rows,
     validate_candidate_rows,

@@ -1,3 +1,5 @@
+"""Synthetic periodic-signal models."""
+
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass

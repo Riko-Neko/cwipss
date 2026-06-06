@@ -1,3 +1,5 @@
+"""Windowed period profiles and peak extraction."""
+
 from __future__ import annotations
 
 import numpy as np

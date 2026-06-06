@@ -9,6 +9,10 @@ The PELT stage requires the compiled `cwipss._pelt_ext` C++ extension. The
 pipeline intentionally has no Python PELT fallback and fails before reading
 input data when the extension is unavailable.
 
+Implementation is split between `cwipss.workflows.search` for orchestration,
+`cwipss.signal` for CWT/detection algorithms, and `cwipss.data.readers` for
+input adapters. See `architecture.md` for package boundaries.
+
 ## Core Flow
 
 ```text
@@ -173,6 +177,7 @@ Each run writes:
 Candidate rows include `peak_period_records`, `period_start_records`,
 `period_stop_records`, `peak_freq_mhz`, and `peak_record`.
 
-Post-processing may additionally create `candidate_gallery/index.md`,
-`candidate_gallery/gallery.csv`, and per-candidate Stage 01/02 PNGs. These are
-derived review artifacts, not primary detector outputs.
+Post-processing may additionally create `candidate_gallery/index.md` and
+candidate-identified PNGs grouped under `candidate_gallery/raw/` and
+`candidate_gallery/cwt/`. These are derived review artifacts, not primary
+detector outputs.

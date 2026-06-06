@@ -1,6 +1,7 @@
+"""Per-candidate raw and CWT image gallery generation."""
+
 from __future__ import annotations
 
-import csv
 import math
 from collections.abc import Callable
 from dataclasses import dataclass, replace
@@ -9,11 +10,11 @@ from typing import Any
 
 import numpy as np
 
-from .config import CWTSearchConfig, cwt_config_from_mapping
-from .cwt import cwt_power_cube, period_grid_records
-from .io import SpectrumReader, open_spectrum_reader
-from .reporting import read_csv_rows, read_json
-from .visualization_core import ImageIndex, cwt_view, number, raw_view
+from ..config import CWTSearchConfig, cwt_config_from_mapping
+from ..signal.cwt import cwt_power_cube, period_grid_records
+from ..data.readers import SpectrumReader, open_spectrum_reader
+from .report import read_csv_rows, read_json
+from .plotting import ImageIndex, cwt_view, number, raw_view
 
 
 @dataclass(frozen=True)
@@ -129,26 +130,22 @@ def _render(row, reader, scan, cfg, output, rank):
         cuda_device=scan.cuda_device if cfg.cuda_device is None else cfg.cuda_device,
     )[:, :, 0]
     title = f"rank {rank}, candidate {row.get('candidate_id', '-')}"
+    filename = (
+        f"{rank:04d}_{row.get('run_id', 'run')}_candidate_{row.get('candidate_id', '-')}.png"
+        .replace("/", "_")
+    )
     raw = raw_view(
-        output / "stage_01_input_matrix.png", block.data, block.freqs_mhz,
+        output / "raw" / filename, block.data, block.freqs_mhz,
         offset=records.start, title=f"Stage 01 input matrix: {title}", candidates=[row], dpi=cfg.dpi,
     )
     seed, radius = number(row, "peak_period_records"), max(1, cfg.period_radius)
     cwt = cwt_view(
-        output / "stage_02_cwt_scalogram.png", power, periods,
+        output / "cwt" / filename, power, periods,
         offset=records.start, title=f"Stage 02 CWT scalogram: {title}, channel {channel}",
         candidates=[row], refined=number(row, "refined_period_records"),
         ylim=(max(periods.min(), seed / radius), min(periods.max(), seed * radius)), dpi=cfg.dpi,
     )
     return {"raw_image": raw, "cwt_image": cwt, "backend": backend}
-
-
-CSV_FIELDS = [
-    "display_rank", "run_id", "candidate_id", "candidate_status", "source_file",
-    "status", "error", "raw_image", "cwt_image", "evidence_rank",
-    "integrated_score", "peak_period_records", "refined_period_records",
-    "peak_freq_mhz", "record_start", "record_stop",
-]
 
 
 def visualize_candidate_gallery(
@@ -166,7 +163,13 @@ def visualize_candidate_gallery(
     selected = select_candidate_rows(
         _rows(run_dir), top_n=cfg.top_n, sort_by=cfg.sort_by, include_vetoed=cfg.include_vetoed
     )
-    index, readers, results = ImageIndex(output, f"Candidate Gallery: {run_dir.name}"), {}, []
+    index = ImageIndex(
+        output,
+        f"Candidate Gallery: {run_dir.name}",
+        {"gallery_config": cfg.__dict__, "candidate_count": len(selected), "rendered_count": 0, "error_count": 0},
+    )
+    index.write()
+    readers, results = {}, []
     root = Path(source_root) if source_root else None
     project = Path(project_dir) if project_dir else Path.cwd()
     for rank, row in enumerate(selected, 1):
@@ -176,8 +179,7 @@ def visualize_candidate_gallery(
             if path not in readers:
                 readers[path] = reader_factory(path)
             reader = readers[path]
-            name = f"{rank:04d}_{row.get('run_id', 'run')}_candidate_{row.get('candidate_id', '-')}".replace("/", "_")
-            rendered = _render(row, reader, _scan(run_dir, str(row.get("run_id", ""))), cfg, output / "candidates" / name, rank)
+            rendered = _render(row, reader, _scan(run_dir, str(row.get("run_id", ""))), cfg, output, rank)
             result.update({key: str(Path(value).relative_to(output)) if key.endswith("_image") else value for key, value in rendered.items()})
             result["status"] = "complete"
             label = f"Rank {rank}: {row.get('run_id', '')} candidate {row.get('candidate_id', '')}"
@@ -186,13 +188,9 @@ def visualize_candidate_gallery(
         except Exception as exc:
             result["error"] = str(exc)
         results.append(result)
-    index.metadata = {
-        "gallery_config": cfg.__dict__, "candidate_count": len(selected),
-        "rendered_count": sum(row["status"] == "complete" for row in results),
-        "error_count": sum(row["status"] != "complete" for row in results),
-    }
-    with (output / "gallery.csv").open("w", newline="") as fp:
-        writer = csv.DictWriter(fp, fieldnames=CSV_FIELDS)
-        writer.writeheader()
-        writer.writerows({key: row.get(key, "") for key in CSV_FIELDS} for row in results)
+        index.metadata.update(
+            rendered_count=sum(item["status"] == "complete" for item in results),
+            error_count=sum(item["status"] != "complete" for item in results),
+        )
+        index.write()
     return index.write()

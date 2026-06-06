@@ -1,3 +1,5 @@
+"""Multiple-testing correction and evidence ranking."""
+
 from __future__ import annotations
 
 import csv
@@ -7,7 +9,7 @@ from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
-from .models import VALIDATION_REVIEWED_FIELDNAMES
+from ..data.schemas import VALIDATION_REVIEWED_FIELDNAMES
 
 
 def read_csv_rows(path: str | Path) -> list[dict[str, str]]:

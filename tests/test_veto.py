@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from cwipss.veto import VetoConfig, VetoContext, evaluate_vetoes
+from cwipss.analysis.veto import VetoConfig, VetoContext, evaluate_vetoes
 
 
 def _row(**overrides):

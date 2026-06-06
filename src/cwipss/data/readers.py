@@ -1,3 +1,5 @@
+"""Spectrum reader protocols and instrument adapters."""
+
 from __future__ import annotations
 
 import glob

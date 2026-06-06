@@ -1,3 +1,5 @@
+"""Shared plotting primitives for non-interactive review artifacts."""
+
 from __future__ import annotations
 
 import json

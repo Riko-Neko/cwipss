@@ -3,6 +3,9 @@
 Schema version 1 covers the current single-channel low-floor,
 structure-gated PELT/profile candidate generator.
 
+Canonical field lists and row normalization are defined in
+`cwipss.data.schemas`.
+
 ## Candidate Tables
 
 `candidates_raw.csv` and `candidates_reviewed.csv` contain one row per period

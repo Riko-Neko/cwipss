@@ -1,3 +1,5 @@
+"""Single-channel period-candidate detection."""
+
 from __future__ import annotations
 
 from math import ceil

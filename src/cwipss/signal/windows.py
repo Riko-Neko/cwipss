@@ -1,3 +1,5 @@
+"""Native PELT time-window segmentation."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -5,7 +7,7 @@ from dataclasses import dataclass
 import numpy as np
 
 try:
-    from . import _pelt_ext
+    from .. import _pelt_ext
 except ImportError as exc:
     _pelt_ext = None
     _pelt_import_error = exc
