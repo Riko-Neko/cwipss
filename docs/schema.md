@@ -78,8 +78,6 @@ and amplitude.
 Batch runs write merged tables under the batch directory:
 
 - `manifest.csv`: one row per source file run.
-- `per_file_results/<run_id>.*.csv`: per-source CSV copies written
-  incrementally as each file completes.
 - `candidates_raw.all.csv` and `candidates_reviewed.all.csv`: merged candidate
   tables.
 - `time_windows.all.csv`: merged PELT time-window table.

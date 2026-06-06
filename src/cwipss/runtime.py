@@ -17,6 +17,6 @@ def runtime_info() -> dict:
             "enabled": True,
             "noise_floor": "numpy.partition low-fraction mean",
             "activity_smoother": "scipy.ndimage.uniform_filter1d",
-            "window_detector": "internal PELT mean-shift",
+            "window_detector": "required native C++ PELT mean-shift",
         },
     }

@@ -13,3 +13,8 @@ The report includes:
 - a link to `visualization/index.md` when staged figures were generated.
 
 Reports are review artifacts. They do not claim a confirmed periodic signal.
+
+Per-candidate galleries are generated separately with
+`scripts/run_candidate_gallery.py`. Their entry point is
+`candidate_gallery/index.md`; the report generator does not currently embed
+all gallery images.

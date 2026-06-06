@@ -2,8 +2,12 @@ from __future__ import annotations
 
 import csv
 import json
+from collections import deque
+from concurrent.futures import Future, ThreadPoolExecutor
+from dataclasses import dataclass
 from pathlib import Path
 from time import perf_counter
+from typing import Any
 
 import numpy as np
 
@@ -21,6 +25,20 @@ from .models import (
 )
 from .runtime import runtime_info
 from .veto import VetoContext, review_candidates, veto_config_from_scan_config
+from .windows import require_native_pelt
+
+
+@dataclass
+class _PendingCudaBlock:
+    block_id: str
+    channel_range: tuple[int, int]
+    records: int
+    read_seconds: float
+    cwt_seconds: float
+    prepare_seconds: float
+    detection_timing: dict[str, float] | None
+    prepared_chunks: list[Any]
+    pelt_future: Future
 
 
 def _token(value: object) -> str:
@@ -148,6 +166,7 @@ def _timing_block_message(
         f"structure={_timing_value(detection_timing, 'structure_seconds'):.3f}s "
         f"activity={_timing_value(detection_timing, 'activity_seconds'):.3f}s "
         f"pelt={_timing_value(detection_timing, 'pelt_seconds'):.3f}s "
+        f"pelt_wait={_timing_value(detection_timing, 'pelt_wait_seconds'):.3f}s "
         f"profile={_timing_value(detection_timing, 'profile_seconds'):.3f}s"
     )
     return (
@@ -166,6 +185,7 @@ def _timing_summary_message(run_id: str, totals: dict[str, float], blocks: int) 
         f"read={_timing_value(totals, 'read_seconds'):.3f}s "
         f"cwt={_timing_value(totals, 'cwt_seconds'):.3f}s "
         f"detect={_timing_value(totals, 'detect_seconds'):.3f}s "
+        f"pelt_wait={_timing_value(totals, 'pelt_wait_seconds'):.3f}s "
         f"write={_timing_value(totals, 'write_seconds'):.3f}s "
         f"veto={_timing_value(totals, 'veto_seconds'):.3f}s "
         f"visualization={_timing_value(totals, 'visualization_seconds'):.3f}s "
@@ -188,6 +208,7 @@ def _use_cuda_block_backend(backend: str, method: str, cuda_device: int) -> bool
 
 def run_cwt_search(config: CWTSearchConfig) -> Path:
     run_start = perf_counter()
+    require_native_pelt()
     if not config.input:
         raise ValueError("config.input is required")
     reader = open_spectrum_reader(config.input)
@@ -219,9 +240,104 @@ def run_cwt_search(config: CWTSearchConfig) -> Path:
     timing_totals: dict[str, float] = {}
     block_count = 0
     use_cuda_block_backend = _use_cuda_block_backend(config.cwt_backend, config.cwt_method, config.cuda_device)
+    use_cuda_pipeline = use_cuda_block_backend and bool(config.cuda_structure_batch)
     if use_cuda_block_backend:
         from .cwt_cuda import cwt_power_cube_cuda_gpu
         from .detection_cuda import detect_block_periods_cuda_power
+        if use_cuda_pipeline:
+            from .detection_cuda import (
+                finalize_prepared_cuda_period_chunks,
+                prepare_block_period_chunks_cuda_power,
+                run_prepared_cuda_pelt,
+            )
+    max_pending_blocks = max(1, int(config.cuda_max_pending_blocks))
+    pending_blocks: deque[_PendingCudaBlock] = deque()
+    pelt_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="cwipss-pelt") if use_cuda_pipeline else None
+
+    def record_block_results(
+        *,
+        block_id: str,
+        channel_range: tuple[int, int],
+        records: int,
+        read_seconds: float,
+        cwt_seconds: float,
+        detect_seconds: float,
+        detection_timing: dict[str, float] | None,
+        candidates: list[dict],
+        windows: list[dict],
+    ) -> None:
+        if timing_enabled and detection_timing is not None:
+            _emit(
+                _timing_block_message(
+                    run_id,
+                    block_id,
+                    channel_range,
+                    records,
+                    {
+                        "read_seconds": read_seconds,
+                        "cwt_seconds": cwt_seconds,
+                        "detect_seconds": detect_seconds,
+                    },
+                    detection_timing,
+                    candidates=len(candidates),
+                    windows=len(windows),
+                ),
+                progress=progress,
+            )
+        for row in windows:
+            row["schema_version"] = 1
+            row["run_id"] = run_id
+            row["source_file"] = str(config.input)
+            row["block_id"] = block_id
+            row["block_channel_start"] = channel_range[0]
+            row["block_channel_stop"] = channel_range[1]
+            all_windows.append(row)
+        for row in candidates:
+            row["cwt_wavelet"] = config.wavelet
+            row["time_aggregation"] = config.time_aggregation
+            row["block_channel_start"] = channel_range[0]
+            row["block_channel_stop"] = channel_range[1]
+            all_candidates.append(
+                normalize_candidate_row(
+                    row,
+                    run_id=run_id,
+                    source_file=config.input,
+                    block_id=block_id,
+                    tsamp_seconds=reader.tsamp_seconds,
+                )
+            )
+        if progress is not None:
+            progress.update(int(channel_range[1] - channel_range[0]))
+
+    def finalize_pending_block(pending: _PendingCudaBlock) -> None:
+        wait_start = perf_counter()
+        segments_batch, pelt_seconds = pending.pelt_future.result()
+        pelt_wait_seconds = perf_counter() - wait_start
+        if pending.detection_timing is not None:
+            _timing_add(pending.detection_timing, "pelt_seconds", pelt_seconds)
+            _timing_add(pending.detection_timing, "pelt_wait_seconds", pelt_wait_seconds)
+        _timing_add(timing_totals, "pelt_wait_seconds", pelt_wait_seconds)
+        finalize_start = perf_counter()
+        candidates, windows = finalize_prepared_cuda_period_chunks(
+            pending.prepared_chunks,
+            segments_batch,
+            timing=pending.detection_timing,
+        )
+        finalize_seconds = perf_counter() - finalize_start
+        detect_seconds = pending.prepare_seconds + pelt_wait_seconds + finalize_seconds
+        _timing_add(timing_totals, "detect_seconds", detect_seconds)
+        record_block_results(
+            block_id=pending.block_id,
+            channel_range=pending.channel_range,
+            records=pending.records,
+            read_seconds=pending.read_seconds,
+            cwt_seconds=pending.cwt_seconds,
+            detect_seconds=detect_seconds,
+            detection_timing=pending.detection_timing,
+            candidates=candidates,
+            windows=windows,
+        )
+
     try:
         block_channels = max(1, int(config.block_channels))
         for block_index, block_start in enumerate(range(int(selected_channels.start), int(selected_channels.stop), block_channels), start=1):
@@ -259,10 +375,7 @@ def run_cwt_search(config: CWTSearchConfig) -> Path:
             cwt_seconds = perf_counter() - cwt_start
             _timing_add(timing_totals, "cwt_seconds", cwt_seconds)
             detection_timing: dict[str, float] | None = {} if timing_enabled else None
-            detect_start = perf_counter()
-            detector = detect_block_periods_cuda_power if use_cuda_block_backend else detect_block_periods
-            candidates, windows = detector(
-                power_cube=power,
+            detector_kwargs = dict(
                 periods=periods,
                 freqs_mhz=block.freqs_mhz,
                 record_start=block.record_range[0],
@@ -283,7 +396,6 @@ def run_cwt_search(config: CWTSearchConfig) -> Path:
                 pelt_min_size_records=config.pelt_min_size_records,
                 pelt_jump_records=config.pelt_jump_records,
                 pelt_threads=config.pelt_threads,
-                cuda_structure_batch=config.cuda_structure_batch,
                 cuda_structure_batch_channels=config.cuda_structure_batch_channels,
                 cuda_device=config.cuda_device,
                 window_min_duration_records=config.window_min_duration_records,
@@ -294,54 +406,62 @@ def run_cwt_search(config: CWTSearchConfig) -> Path:
                 profile_max_peaks_per_window=config.profile_max_peaks_per_window,
                 max_candidates_per_channel=config.max_candidates_per_channel,
                 max_candidates_per_record=config.max_candidates_per_record,
+            )
+            if use_cuda_pipeline:
+                prepare_start = perf_counter()
+                prepared_chunks = list(
+                    prepare_block_period_chunks_cuda_power(
+                        power_cube=power,
+                        timing=detection_timing,
+                        **detector_kwargs,
+                    )
+                )
+                prepare_seconds = perf_counter() - prepare_start
+                del power
+                pending_blocks.append(
+                    _PendingCudaBlock(
+                        block_id=block_id,
+                        channel_range=block.channel_range,
+                        records=int(block.data.shape[0]),
+                        read_seconds=read_seconds,
+                        cwt_seconds=cwt_seconds,
+                        prepare_seconds=prepare_seconds,
+                        detection_timing=detection_timing,
+                        prepared_chunks=prepared_chunks,
+                        pelt_future=pelt_executor.submit(run_prepared_cuda_pelt, prepared_chunks),
+                    )
+                )
+                if len(pending_blocks) >= max_pending_blocks:
+                    finalize_pending_block(pending_blocks.popleft())
+                continue
+
+            detect_start = perf_counter()
+            detector = detect_block_periods_cuda_power if use_cuda_block_backend else detect_block_periods
+            candidates, windows = detector(
+                power_cube=power,
+                cuda_structure_batch=config.cuda_structure_batch,
                 timing=detection_timing,
+                **detector_kwargs,
             )
             detect_seconds = perf_counter() - detect_start
             del power
             _timing_add(timing_totals, "detect_seconds", detect_seconds)
-            if timing_enabled and detection_timing is not None:
-                _emit(
-                    _timing_block_message(
-                        run_id,
-                        block_id,
-                        block.channel_range,
-                        int(block.data.shape[0]),
-                        {
-                            "read_seconds": read_seconds,
-                            "cwt_seconds": cwt_seconds,
-                            "detect_seconds": detect_seconds,
-                        },
-                        detection_timing,
-                        candidates=len(candidates),
-                        windows=len(windows),
-                    ),
-                    progress=progress,
-                )
-            for row in windows:
-                row["schema_version"] = 1
-                row["run_id"] = run_id
-                row["source_file"] = str(config.input)
-                row["block_id"] = block_id
-                row["block_channel_start"] = block.channel_range[0]
-                row["block_channel_stop"] = block.channel_range[1]
-                all_windows.append(row)
-            for row in candidates:
-                row["cwt_wavelet"] = config.wavelet
-                row["time_aggregation"] = config.time_aggregation
-                row["block_channel_start"] = block.channel_range[0]
-                row["block_channel_stop"] = block.channel_range[1]
-                all_candidates.append(
-                    normalize_candidate_row(
-                        row,
-                        run_id=run_id,
-                        source_file=config.input,
-                        block_id=block_id,
-                        tsamp_seconds=reader.tsamp_seconds,
-                    )
-                )
-            if progress is not None:
-                progress.update(int(block.data.shape[1]))
+            record_block_results(
+                block_id=block_id,
+                channel_range=block.channel_range,
+                records=int(block.data.shape[0]),
+                read_seconds=read_seconds,
+                cwt_seconds=cwt_seconds,
+                detect_seconds=detect_seconds,
+                detection_timing=detection_timing,
+                candidates=candidates,
+                windows=windows,
+            )
+        while pending_blocks:
+            finalize_pending_block(pending_blocks.popleft())
     finally:
+        if pelt_executor is not None:
+            pelt_executor.shutdown(wait=True, cancel_futures=True)
         if progress is not None:
             progress.close()
 

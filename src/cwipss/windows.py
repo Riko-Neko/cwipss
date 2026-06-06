@@ -1,17 +1,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import os
 
 import numpy as np
 
-if os.environ.get("CWIPSS_DISABLE_NATIVE_PELT", "").strip().lower() in {"1", "true", "yes"}:
+try:
+    from . import _pelt_ext
+except ImportError as exc:
     _pelt_ext = None
+    _pelt_import_error = exc
 else:
-    try:
-        from . import _pelt_ext
-    except ImportError:
-        _pelt_ext = None
+    _pelt_import_error = None
 
 
 @dataclass(frozen=True)
@@ -26,166 +25,19 @@ class Segment:
         return max(0, int(self.stop) - int(self.start))
 
 
-def _segment_cost(prefix_sum: np.ndarray, prefix_sq: np.ndarray, start: int, stop: int) -> float:
-    n = int(stop) - int(start)
-    if n <= 0:
-        return 0.0
-    total = float(prefix_sum[stop] - prefix_sum[start])
-    total_sq = float(prefix_sq[stop] - prefix_sq[start])
-    return max(0.0, total_sq - total * total / n)
-
-
-def _segment_mean(prefix_sum: np.ndarray, start: int, stop: int) -> float:
-    n = int(stop) - int(start)
-    if n <= 0:
-        return 0.0
-    return float((prefix_sum[stop] - prefix_sum[start]) / n)
-
-
-def _pelt_mean_shift_python(
-    activity: np.ndarray,
-    penalty: float = 16.0,
-    min_size: int = 384,
-    jump: int = 1,
-) -> list[Segment]:
-    """Segment one activity curve with a mean-shift PELT cost.
-
-    The cost is within-segment squared error. This implementation uses the
-    standard PELT pruning rule and is intended for record-scale curves.
-    """
-    y = np.asarray(activity, dtype=np.float64)
-    y = np.nan_to_num(y, nan=0.0, posinf=0.0, neginf=0.0)
-    n = int(y.size)
-    min_size = max(1, int(min_size))
-    jump = max(1, int(jump))
-    penalty = max(0.0, float(penalty))
-    if n == 0:
-        return []
-    if n <= min_size:
-        prefix_sum = np.concatenate([[0.0], np.cumsum(y)])
-        prefix_sq = np.concatenate([[0.0], np.cumsum(y * y)])
-        return [Segment(0, n, _segment_cost(prefix_sum, prefix_sq, 0, n), _segment_mean(prefix_sum, 0, n))]
-    if jump > 1:
-        return _pelt_mean_shift_subsampled(y, penalty=penalty, min_size=min_size, jump=jump)
-
-    prefix_sum = np.concatenate([[0.0], np.cumsum(y)])
-    prefix_sq = np.concatenate([[0.0], np.cumsum(y * y)])
-    best = np.full(n + 1, np.inf, dtype=np.float64)
-    previous = np.full(n + 1, -1, dtype=np.int64)
-    best[0] = -penalty
-    candidates: list[int] = [0]
-
-    for t in range(min_size, n + 1):
-        valid = [s for s in candidates if t - s >= min_size]
-        if not valid:
-            candidates.append(t - min_size + 1)
-            continue
-        costs = np.array(
-            [best[s] + _segment_cost(prefix_sum, prefix_sq, s, t) + penalty for s in valid],
-            dtype=np.float64,
-        )
-        idx = int(np.argmin(costs))
-        best[t] = float(costs[idx])
-        previous[t] = int(valid[idx])
-        cutoff = best[t] + penalty
-        candidates = [
-            s
-            for s in candidates
-            if t - s < min_size or best[s] + _segment_cost(prefix_sum, prefix_sq, s, t) <= cutoff
-        ]
-        candidates.append(t - min_size + 1)
-
-    if previous[n] < 0:
-        return [Segment(0, n, _segment_cost(prefix_sum, prefix_sq, 0, n), _segment_mean(prefix_sum, 0, n))]
-
-    bounds = [n]
-    cursor = n
-    while cursor > 0 and previous[cursor] >= 0:
-        cursor = int(previous[cursor])
-        bounds.append(cursor)
-    bounds = sorted(set(bounds))
-    if bounds[0] != 0:
-        bounds.insert(0, 0)
-
-    segments: list[Segment] = []
-    for start, stop in zip(bounds[:-1], bounds[1:]):
-        if stop <= start:
-            continue
-        segments.append(
-            Segment(
-                int(start),
-                int(stop),
-                _segment_cost(prefix_sum, prefix_sq, int(start), int(stop)),
-                _segment_mean(prefix_sum, int(start), int(stop)),
-            )
-        )
-    return segments
-
-
-def _pelt_mean_shift_subsampled(y: np.ndarray, *, penalty: float, min_size: int, jump: int) -> list[Segment]:
-    n = int(y.size)
-    prefix_sum = np.concatenate([[0.0], np.cumsum(y)])
-    prefix_sq = np.concatenate([[0.0], np.cumsum(y * y)])
-    endpoints = [t for t in range(jump, n + 1, jump) if t >= min_size]
-    if not endpoints or endpoints[-1] != n:
-        endpoints.append(n)
-
-    best = np.full(n + 1, np.inf, dtype=np.float64)
-    previous = np.full(n + 1, -1, dtype=np.int64)
-    best[0] = -penalty
-    candidates: list[int] = [0]
-
-    for t in endpoints:
-        valid = [s for s in candidates if t - s >= min_size and np.isfinite(best[s])]
-        if not valid:
-            if t < n and t not in candidates:
-                candidates.append(t)
-            continue
-        costs = np.array(
-            [best[s] + _segment_cost(prefix_sum, prefix_sq, s, t) + penalty for s in valid],
-            dtype=np.float64,
-        )
-        idx = int(np.argmin(costs))
-        best[t] = float(costs[idx])
-        previous[t] = int(valid[idx])
-        cutoff = best[t] + penalty
-        candidates = [
-            s
-            for s in candidates
-            if t - s < min_size or best[s] + _segment_cost(prefix_sum, prefix_sq, s, t) <= cutoff
-        ]
-        if t < n and t not in candidates:
-            candidates.append(t)
-
-    if previous[n] < 0:
-        return [Segment(0, n, _segment_cost(prefix_sum, prefix_sq, 0, n), _segment_mean(prefix_sum, 0, n))]
-
-    bounds = [n]
-    cursor = n
-    while cursor > 0 and previous[cursor] >= 0:
-        cursor = int(previous[cursor])
-        bounds.append(cursor)
-    bounds = sorted(set(bounds))
-    if bounds[0] != 0:
-        bounds.insert(0, 0)
-
-    segments: list[Segment] = []
-    for start, stop in zip(bounds[:-1], bounds[1:]):
-        if stop <= start:
-            continue
-        segments.append(
-            Segment(
-                int(start),
-                int(stop),
-                _segment_cost(prefix_sum, prefix_sq, int(start), int(stop)),
-                _segment_mean(prefix_sum, int(start), int(stop)),
-            )
-        )
-    return segments
-
-
 def native_pelt_available() -> bool:
     return _pelt_ext is not None
+
+
+def require_native_pelt() -> None:
+    if _pelt_ext is not None:
+        return
+    message = (
+        "The native cwipss._pelt_ext extension is required; Python PELT fallback "
+        "is intentionally unsupported. Build/install the project with "
+        "`python -m pip install -e .` using a C++17 compiler and CMake."
+    )
+    raise RuntimeError(message) from _pelt_import_error
 
 
 def pelt_mean_shift(
@@ -194,8 +46,7 @@ def pelt_mean_shift(
     min_size: int = 384,
     jump: int = 1,
 ) -> list[Segment]:
-    if _pelt_ext is None:
-        return _pelt_mean_shift_python(activity, penalty=penalty, min_size=min_size, jump=jump)
+    require_native_pelt()
     rows = _pelt_ext.pelt_mean_shift(activity, penalty=float(penalty), min_size=int(min_size), jump=int(jump))
     return [Segment(int(start), int(stop), float(cost), float(mean)) for start, stop, cost, mean in rows]
 
@@ -211,11 +62,7 @@ def pelt_mean_shift_batch(
     if values.ndim != 2:
         raise ValueError("activity must have shape (channels, records)")
     threads = max(1, int(threads))
-    if _pelt_ext is None:
-        return [
-            _pelt_mean_shift_python(row, penalty=penalty, min_size=min_size, jump=jump)
-            for row in values
-        ]
+    require_native_pelt()
     batch_rows = _pelt_ext.pelt_mean_shift_batch(
         values,
         penalty=float(penalty),

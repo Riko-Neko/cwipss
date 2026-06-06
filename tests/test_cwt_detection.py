@@ -3,6 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+import cwipss.windows as windows_module
 from cwipss.activity import (
     coherent_structure_map,
     low_fraction_noise_floor,
@@ -11,7 +12,7 @@ from cwipss.activity import (
 )
 from cwipss.cwt import aggregate_cwt_time, cwt_power_cube, period_grid_records
 from cwipss.detection import detect_block_periods, resolve_channel_candidate_cap
-from cwipss.windows import _pelt_mean_shift_python, native_pelt_available, pelt_mean_shift, pelt_mean_shift_batch
+from cwipss.windows import native_pelt_available, pelt_mean_shift, pelt_mean_shift_batch
 
 
 def test_cwt_power_cube_shape() -> None:
@@ -169,10 +170,8 @@ def test_pelt_jump_one_preserves_exact_segments() -> None:
     ]
 
 
-def test_native_pelt_matches_python_reference_when_available() -> None:
-    if not native_pelt_available():
-        pytest.skip("native PELT extension is not built")
-
+def test_native_pelt_regression_boundaries() -> None:
+    assert native_pelt_available()
     rng = np.random.default_rng(321)
     activity = rng.normal(0.0, 0.3, 240).astype(np.float64)
     activity[45:100] += 2.0
@@ -180,22 +179,17 @@ def test_native_pelt_matches_python_reference_when_available() -> None:
     activity[3] = np.nan
     activity[19] = np.inf
 
-    for jump in (1, 4, 8):
-        expected = _pelt_mean_shift_python(activity, penalty=4.0, min_size=12, jump=jump)
+    expected_bounds = {
+        1: [(0, 45), (45, 100), (100, 150), (150, 205), (205, 240)],
+        4: [(0, 44), (44, 100), (100, 152), (152, 204), (204, 240)],
+        8: [(0, 48), (48, 104), (104, 152), (152, 208), (208, 240)],
+    }
+    for jump, expected in expected_bounds.items():
         actual = pelt_mean_shift(activity, penalty=4.0, min_size=12, jump=jump)
-
-        assert [(segment.start, segment.stop) for segment in actual] == [
-            (segment.start, segment.stop) for segment in expected
-        ]
-        np.testing.assert_allclose(
-            [(segment.cost, segment.mean) for segment in actual],
-            [(segment.cost, segment.mean) for segment in expected],
-            rtol=1e-10,
-            atol=1e-10,
-        )
+        assert [(segment.start, segment.stop) for segment in actual] == expected
 
 
-def test_pelt_batch_matches_python_reference() -> None:
+def test_pelt_batch_matches_single_channel_native() -> None:
     rng = np.random.default_rng(322)
     activity = rng.normal(0.0, 0.3, (4, 180)).astype(np.float64)
     activity[0, 30:90] += 1.5
@@ -204,7 +198,7 @@ def test_pelt_batch_matches_python_reference() -> None:
 
     actual = pelt_mean_shift_batch(activity, penalty=4.0, min_size=10, jump=4, threads=2)
     expected = [
-        _pelt_mean_shift_python(row, penalty=4.0, min_size=10, jump=4)
+        pelt_mean_shift(row, penalty=4.0, min_size=10, jump=4)
         for row in activity
     ]
 
@@ -218,6 +212,17 @@ def test_pelt_batch_matches_python_reference() -> None:
             rtol=1e-10,
             atol=1e-10,
         )
+
+
+def test_pelt_fails_fast_when_native_extension_is_missing(monkeypatch) -> None:
+    monkeypatch.setattr(windows_module, "_pelt_ext", None)
+    monkeypatch.setattr(windows_module, "_pelt_import_error", ImportError("missing test extension"))
+
+    with pytest.raises(RuntimeError, match="Python PELT fallback is intentionally unsupported"):
+        pelt_mean_shift(np.zeros(32, dtype=np.float64), min_size=8)
+
+    with pytest.raises(RuntimeError, match="python -m pip install -e"):
+        pelt_mean_shift_batch(np.zeros((2, 32), dtype=np.float64), min_size=8)
 
 
 def test_candidate_cap_resolves_auto_or_hard_channel_limit() -> None:

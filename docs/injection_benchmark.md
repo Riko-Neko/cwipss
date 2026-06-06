@@ -54,6 +54,9 @@ integer value controls the channel chunk size for lower peak memory. Lower
 `pelt_penalty`, `window_min_activity_mean`, or `profile_min_prominence` only for
 high-recall diagnostic sweeps.
 
+The benchmark requires the compiled `cwipss._pelt_ext` extension. Python PELT
+fallback is intentionally unsupported.
+
 ## Injection Config
 
 The config is a reproducible simulation plan. A top-level `seed` controls all
@@ -87,6 +90,10 @@ Sampler fields accept a raw value, a list, `{ "values": [...] }`,
 - `injection_performance.csv`
 - `injection_summary.json`
 - optional `visualization/index.md`
+
+The optional visualization uses the same function-based raw/CWT rendering core
+as normal scans. Injection-specific Stage 10 and Stage 11 summaries are added
+only when injection result rows are present.
 
 ## Failure Stages
 

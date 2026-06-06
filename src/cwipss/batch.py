@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import csv
 import json
-import shutil
 import time
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime
@@ -50,7 +49,6 @@ ANSI_RESET = "\033[0m"
 ANSI_BOLD_CYAN = "\033[1;36m"
 ANSI_BOLD_GREEN = "\033[1;32m"
 ANSI_BOLD_RED = "\033[1;31m"
-ANSI_BOLD_YELLOW = "\033[1;33m"
 
 
 def default_batch_id() -> str:
@@ -158,30 +156,6 @@ def _write_rows_csv(path: Path, rows: list[dict[str, Any]], fieldnames: list[str
             writer.writerow({key: row.get(key, "") for key in fieldnames})
 
 
-def _copy_csv_if_exists(source: Path, target: Path) -> bool:
-    if not source.exists():
-        return False
-    target.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(source, target)
-    return True
-
-
-def _copy_per_file_csv_outputs(run_dir: Path, per_file_dir: Path, run_id: str) -> list[Path]:
-    prefix = _token(run_id)
-    copied: list[Path] = []
-    for source_name, suffix in [
-        ("candidates_raw.csv", "candidates_raw.csv"),
-        ("candidates_reviewed.csv", "candidates_reviewed.csv"),
-        ("time_windows.csv", "time_windows.csv"),
-        ("validation_summary.csv", "validation_summary.csv"),
-        ("validation_reviewed.csv", "validation_reviewed.csv"),
-    ]:
-        target = per_file_dir / f"{prefix}.{suffix}"
-        if _copy_csv_if_exists(run_dir / source_name, target):
-            copied.append(target)
-    return copied
-
-
 def _read_rows_if_exists(path: Path) -> list[dict[str, str]]:
     if not path.exists():
         return []
@@ -251,7 +225,6 @@ def run_batch(
     project_dir = Path(project_dir)
     batch_dir = Path(batch_config.output_dir) / batch_config.batch_id
     files_dir = batch_dir / "files"
-    per_file_dir = batch_dir / "per_file_results"
     batch_dir.mkdir(parents=True, exist_ok=True)
     jobs = ensure_run_ids(jobs)
     _write_batch_config(batch_dir, batch_config, base_config, jobs)
@@ -279,19 +252,16 @@ def run_batch(
             error = ""
             validation_count = 0
             stats_count = 0
-            copied_paths: list[Path] = []
             try:
                 scan_config = _job_scan_config(base_config, job, files_dir)
                 run_dir = run_cwt_search(scan_config)
                 successful_run_dirs.append(run_dir)
-                copied_paths = _copy_per_file_csv_outputs(run_dir, per_file_dir, str(job.run_id))
                 if batch_config.validate:
                     validation_rows = _run_validation_for_dir(run_dir, scan_config, project_dir=project_dir)
                     validation_count = len(validation_rows)
                 if batch_config.stats and (run_dir / "validation_summary.csv").exists():
                     stats_rows = run_stats(run_dir / "validation_summary.csv", run_dir / "validation_reviewed.csv")
                     stats_count = len(stats_rows)
-                copied_paths = _copy_per_file_csv_outputs(run_dir, per_file_dir, str(job.run_id))
                 counts = _summary_counts(run_dir)
             except Exception as exc:
                 status = "error"
@@ -319,19 +289,11 @@ def run_batch(
                     _color(
                         f"[CWT BATCH] DONE  {job_index}/{len(jobs)} run_id={job.run_id} "
                         f"candidates={counts['candidate_count']} validation={validation_count} "
-                        f"csv_files={len(copied_paths)} duration={duration:.1f}s",
+                        f"duration={duration:.1f}s results={run_dir}",
                         ANSI_BOLD_GREEN,
                     ),
                     progress=progress,
                 )
-                if copied_paths:
-                    _emit(
-                        _color(
-                            f"[CWT BATCH] CSV   {per_file_dir / (_token(str(job.run_id)) + '.*.csv')}",
-                            ANSI_BOLD_YELLOW,
-                        ),
-                        progress=progress,
-                    )
             else:
                 _emit(
                     _color(

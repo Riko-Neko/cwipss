@@ -112,14 +112,9 @@ def test_run_batch_merges_outputs_and_recomputes_global_stats(tmp_path: Path, mo
 
     manifest_rows = list(csv.DictReader((batch_dir / "manifest.csv").open()))
     reviewed_rows = list(csv.DictReader((batch_dir / "validation_reviewed.all.csv").open()))
-    per_file_dir = batch_dir / "per_file_results"
 
     assert [row["status"] for row in manifest_rows] == ["complete", "complete"]
     assert len(list(csv.DictReader((batch_dir / "candidates_reviewed.all.csv").open()))) == 2
     assert len(reviewed_rows) == 2
     assert reviewed_rows[0]["global_q_value"] == "0.02"
     assert reviewed_rows[1]["global_q_value"] == "0.2"
-    assert (per_file_dir / "run_a.candidates_reviewed.csv").exists()
-    assert (per_file_dir / "run_a.validation_reviewed.csv").exists()
-    assert (per_file_dir / "run_b.candidates_reviewed.csv").exists()
-    assert (per_file_dir / "run_b.validation_reviewed.csv").exists()

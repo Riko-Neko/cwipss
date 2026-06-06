@@ -5,6 +5,10 @@ per-channel continuous wavelet transform. CE4 `.2C/.2CL` is the currently
 supported input format; FilterBank support belongs in the same input adapter
 layer.
 
+The PELT stage requires the compiled `cwipss._pelt_ext` C++ extension. The
+pipeline intentionally has no Python PELT fallback and fails before reading
+input data when the extension is unavailable.
+
 ## Core Flow
 
 ```text
@@ -51,6 +55,10 @@ The default detector is set for low sensitivity and higher review purity:
   `cuda_structure_batch=true` batches structure/activity preprocessing across
   the full channel block unless `cuda_structure_batch_channels` is set to an
   integer chunk size for lower peak memory;
+- `cuda_max_pending_blocks=1` keeps CUDA block processing sequential, while
+  `2` allows one prepared `structured` block to wait for CPU PELT as the GPU
+  prepares the following block; PELT still uses one executor job with
+  `pelt_threads` native workers;
 - after PELT, a raw structured-activity mean floor of `25.0` is applied before
   period-profile candidates are emitted;
 - nearby PELT windows are merged across gaps up to `256` records;
@@ -146,6 +154,11 @@ curves, and windowed period profiles. These are the required middleware views
 for inspecting whether a period response is persistent, burst-like, coherent
 over neighboring period-time pixels, or contaminated by isolated texture.
 
+Runtime visualization is intentionally representative. A completed run or
+batch can be post-processed with `scripts/run_candidate_gallery.py` to produce
+the standard raw time-frequency and period-time CWT views for each selected
+Top-N candidate without rerunning candidate detection.
+
 ## Outputs
 
 Each run writes:
@@ -159,3 +172,7 @@ Each run writes:
 
 Candidate rows include `peak_period_records`, `period_start_records`,
 `period_stop_records`, `peak_freq_mhz`, and `peak_record`.
+
+Post-processing may additionally create `candidate_gallery/index.md`,
+`candidate_gallery/gallery.csv`, and per-candidate Stage 01/02 PNGs. These are
+derived review artifacts, not primary detector outputs.

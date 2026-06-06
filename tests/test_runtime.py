@@ -11,4 +11,4 @@ def test_runtime_info_records_required_filter_stack() -> None:
     assert info["scipy"]
     assert info["local_filter"]["enabled"] is True
     assert info["local_filter"]["noise_floor"] == "numpy.partition low-fraction mean"
-    assert info["local_filter"]["window_detector"] == "internal PELT mean-shift"
+    assert info["local_filter"]["window_detector"] == "required native C++ PELT mean-shift"

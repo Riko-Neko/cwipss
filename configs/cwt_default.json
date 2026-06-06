@@ -41,6 +41,7 @@
     "pelt_threads": 1,
     "cuda_structure_batch": false,
     "cuda_structure_batch_channels": null,
+    "cuda_max_pending_blocks": 1,
     "window_min_duration_records": 384,
     "window_min_activity_mean": 0.05,
     "window_min_activity_raw_mean": 25.0,

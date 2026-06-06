@@ -38,6 +38,7 @@ from .validation import (
     validation_period_bounds,
 )
 from .veto import VetoConfig, VetoContext, review_candidates
+from .windows import require_native_pelt
 
 
 @dataclass(frozen=True)
@@ -164,6 +165,7 @@ def run_cwt_candidate_search(
     search_config: CWTBenchmarkConfig,
     veto_config: VetoConfig,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    require_native_pelt()
     matrix = np.asarray(data, dtype=np.float32)
     periods = period_grid_records(
         search_config.period_min_records,

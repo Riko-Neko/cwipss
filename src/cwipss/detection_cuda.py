@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from math import ceil
 from time import perf_counter
 from typing import Any
@@ -333,6 +334,265 @@ def _gpu_windowed_period_profile(cp: Any, structured, start: int, stop: int) -> 
     return cp.asnumpy(profile)
 
 
+@dataclass
+class PreparedCudaPeriodChunk:
+    structured: Any
+    activity: np.ndarray
+    activity_z: np.ndarray
+    noise_floor: np.ndarray
+    valid_periods: np.ndarray
+    freqs_mhz: np.ndarray
+    channel_start: int
+    record_start: int
+    channel_cap: int
+    cuda_device: int
+    pelt_penalty: float
+    pelt_min_size_records: int
+    pelt_jump_records: int
+    pelt_threads: int
+    window_min_duration_records: int
+    window_min_activity_mean: float
+    window_min_activity_raw_mean: float
+    window_merge_gap_records: int
+    profile_min_prominence: float
+    profile_max_peaks_per_window: int
+
+
+def prepare_block_period_chunks_cuda_power(
+    power_cube,
+    periods: np.ndarray,
+    freqs_mhz: np.ndarray,
+    record_start: int,
+    *,
+    candidate_period_min_records: float | None,
+    candidate_period_max_records: float | None,
+    noise_floor_fraction: float,
+    excess_eps_fraction: float,
+    structure_baseline_quantile: float,
+    structure_scale_quantile: float,
+    structure_z_threshold: float,
+    structure_time_support_records: int,
+    structure_period_support_bins: int,
+    structure_min_support_fraction: float,
+    activity_trim_low: float,
+    activity_trim_high: float,
+    activity_smooth_records: int,
+    pelt_penalty: float,
+    pelt_min_size_records: int,
+    window_min_duration_records: int,
+    window_min_activity_mean: float,
+    window_min_activity_raw_mean: float,
+    window_merge_gap_records: int,
+    profile_min_prominence: float,
+    profile_max_peaks_per_window: int,
+    max_candidates_per_channel: int | str,
+    max_candidates_per_record: float = 3.0 / 4096.0,
+    pelt_jump_records: int = 1,
+    pelt_threads: int = 1,
+    cuda_structure_batch_channels: int | None = None,
+    cuda_device: int | None = None,
+    timing: dict[str, float] | None = None,
+):
+    cp = _cupy()
+    device_id = _resolve_cuda_device(cp, power_cube, cuda_device)
+    cp.cuda.Device(device_id).use()
+    from cupyx.scipy.ndimage import uniform_filter1d
+
+    power = cp.asarray(power_cube, dtype=cp.float32)
+    period_values = np.asarray(periods, dtype=np.float64)
+    freqs = np.asarray(freqs_mhz, dtype=np.float64)
+    if power.ndim != 3:
+        raise ValueError("power_cube must have shape (periods, records, channels)")
+    if power.shape[0] != period_values.size or power.shape[2] != freqs.size:
+        raise ValueError("power_cube shape must match periods and freqs_mhz")
+    mask = valid_period_mask(period_values, candidate_period_min_records, candidate_period_max_records)
+    if not np.any(mask):
+        raise ValueError("No CWT periods remain after candidate period filtering.")
+    mask_gpu = cp.asarray(mask)
+    valid_periods = period_values[mask]
+    channel_cap = resolve_channel_candidate_cap(
+        max_candidates_per_channel,
+        max_candidates_per_record,
+        int(power.shape[1]),
+    )
+    if cuda_structure_batch_channels is None:
+        batch_channels = int(power.shape[2])
+    else:
+        batch_channels = min(max(1, int(cuda_structure_batch_channels)), int(power.shape[2]))
+
+    for chunk_start in range(0, int(power.shape[2]), batch_channels):
+        chunk_stop = min(chunk_start + batch_channels, int(power.shape[2]))
+        stage_start = perf_counter() if timing is not None else 0.0
+        valid_power = power[mask_gpu, :, chunk_start:chunk_stop]
+        noise_floor_gpu = _gpu_low_fraction_noise_floor_batch(cp, valid_power, fraction=noise_floor_fraction)
+        excess = _gpu_relative_excess_batch(cp, valid_power, noise_floor_gpu, eps_fraction=excess_eps_fraction)
+        if timing is not None:
+            cp.cuda.Stream.null.synchronize()
+            _timing_add(timing, "floor_excess_seconds", perf_counter() - stage_start)
+
+        stage_start = perf_counter() if timing is not None else 0.0
+        structured = _gpu_coherent_structure_map_batch(
+            cp,
+            uniform_filter1d,
+            excess,
+            baseline_quantile=structure_baseline_quantile,
+            scale_quantile=structure_scale_quantile,
+            z_threshold=structure_z_threshold,
+            time_support_records=structure_time_support_records,
+            period_support_bins=structure_period_support_bins,
+            min_support_fraction=structure_min_support_fraction,
+        )
+        if timing is not None:
+            cp.cuda.Stream.null.synchronize()
+            _timing_add(timing, "structure_seconds", perf_counter() - stage_start)
+
+        stage_start = perf_counter() if timing is not None else 0.0
+        activity_raw = _gpu_signed_trimmed_period_activity_batch(
+            cp,
+            structured,
+            trim_low=activity_trim_low,
+            trim_high=activity_trim_high,
+        )
+        activity = _gpu_smooth_activity_batch(
+            cp,
+            uniform_filter1d,
+            activity_raw,
+            smooth_records=activity_smooth_records,
+        )
+        activity_z = _gpu_robust_standardize_batch(cp, activity)
+        activity_cpu_batch = np.ascontiguousarray(cp.asnumpy(activity).T)
+        activity_z_cpu_batch = np.ascontiguousarray(cp.asnumpy(activity_z).T)
+        noise_floor_cpu = np.ascontiguousarray(cp.asnumpy(noise_floor_gpu))
+        if timing is not None:
+            _timing_add(timing, "activity_seconds", perf_counter() - stage_start)
+
+        prepared = PreparedCudaPeriodChunk(
+            structured=structured,
+            activity=activity_cpu_batch,
+            activity_z=activity_z_cpu_batch,
+            noise_floor=noise_floor_cpu,
+            valid_periods=valid_periods,
+            freqs_mhz=freqs[chunk_start:chunk_stop],
+            channel_start=chunk_start,
+            record_start=int(record_start),
+            channel_cap=int(channel_cap or 0),
+            cuda_device=device_id,
+            pelt_penalty=float(pelt_penalty),
+            pelt_min_size_records=int(pelt_min_size_records),
+            pelt_jump_records=max(1, int(pelt_jump_records)),
+            pelt_threads=max(1, int(pelt_threads)),
+            window_min_duration_records=int(window_min_duration_records),
+            window_min_activity_mean=float(window_min_activity_mean),
+            window_min_activity_raw_mean=float(window_min_activity_raw_mean),
+            window_merge_gap_records=int(window_merge_gap_records),
+            profile_min_prominence=float(profile_min_prominence),
+            profile_max_peaks_per_window=int(profile_max_peaks_per_window),
+        )
+        del valid_power, noise_floor_gpu, excess, activity_raw, activity, activity_z
+        yield prepared
+
+
+def run_prepared_cuda_pelt(prepared_chunks: list[PreparedCudaPeriodChunk]):
+    if not prepared_chunks:
+        return [], 0.0
+    first = prepared_chunks[0]
+    if len(prepared_chunks) == 1:
+        activity_z = first.activity_z
+    else:
+        activity_z = np.ascontiguousarray(
+            np.concatenate([prepared.activity_z for prepared in prepared_chunks], axis=0)
+        )
+    start = perf_counter()
+    segments = pelt_mean_shift_batch(
+        activity_z,
+        penalty=first.pelt_penalty,
+        min_size=first.pelt_min_size_records,
+        jump=first.pelt_jump_records,
+        threads=first.pelt_threads,
+    )
+    return segments, perf_counter() - start
+
+
+def finalize_prepared_cuda_period_chunk(
+    prepared: PreparedCudaPeriodChunk,
+    segments_batch,
+    *,
+    timing: dict[str, float] | None = None,
+) -> tuple[list[dict], list[dict]]:
+    cp = _cupy()
+    cp.cuda.Device(prepared.cuda_device).use()
+    structured = prepared.structured
+    candidates: list[dict] = []
+    windows: list[dict] = []
+    try:
+        for local_channel_idx, segments in enumerate(segments_batch):
+            channel_idx = prepared.channel_start + local_channel_idx
+
+            def profile_getter(start: int, stop: int, local_index=local_channel_idx) -> np.ndarray:
+                return _gpu_windowed_period_profile(cp, structured[:, :, local_index], start, stop)
+
+            channel_candidates, channel_windows, _diagnostics = _detect_preprocessed_channel_periods(
+                valid_periods=prepared.valid_periods,
+                structured=None,
+                activity=prepared.activity[local_channel_idx],
+                activity_z=prepared.activity_z[local_channel_idx],
+                noise_floor=float(prepared.noise_floor[local_channel_idx]),
+                freq_mhz=float(prepared.freqs_mhz[local_channel_idx]),
+                channel_idx=channel_idx,
+                record_start=prepared.record_start,
+                pelt_penalty=prepared.pelt_penalty,
+                pelt_min_size_records=prepared.pelt_min_size_records,
+                pelt_jump_records=prepared.pelt_jump_records,
+                window_min_duration_records=prepared.window_min_duration_records,
+                window_min_activity_mean=prepared.window_min_activity_mean,
+                window_min_activity_raw_mean=prepared.window_min_activity_raw_mean,
+                window_merge_gap_records=prepared.window_merge_gap_records,
+                profile_min_prominence=prepared.profile_min_prominence,
+                profile_max_peaks_per_window=prepared.profile_max_peaks_per_window,
+                max_candidates_per_channel=prepared.channel_cap,
+                segments=segments,
+                timing=timing,
+                profile_getter=profile_getter,
+            )
+            _timing_increment(timing, "channels", 1)
+            candidates.extend(channel_candidates)
+            windows.extend(channel_windows)
+    finally:
+        prepared.structured = None
+
+    candidates.sort(key=lambda row: (row["integrated_score"], row["period_peak_prominence"]), reverse=True)
+    return candidates, windows
+
+
+def finalize_prepared_cuda_period_chunks(
+    prepared_chunks: list[PreparedCudaPeriodChunk],
+    segments_batch,
+    *,
+    timing: dict[str, float] | None = None,
+) -> tuple[list[dict], list[dict]]:
+    candidates: list[dict] = []
+    windows: list[dict] = []
+    offset = 0
+    try:
+        for prepared in prepared_chunks:
+            channel_count = int(prepared.activity_z.shape[0])
+            chunk_candidates, chunk_windows = finalize_prepared_cuda_period_chunk(
+                prepared,
+                segments_batch[offset:offset + channel_count],
+                timing=timing,
+            )
+            candidates.extend(chunk_candidates)
+            windows.extend(chunk_windows)
+            offset += channel_count
+    finally:
+        for prepared in prepared_chunks:
+            prepared.structured = None
+    if offset != len(segments_batch):
+        raise ValueError("PELT segment batch does not match prepared CUDA channel count")
+    candidates.sort(key=lambda row: (row["integrated_score"], row["period_peak_prominence"]), reverse=True)
+    return candidates, windows
+
+
 def detect_block_periods_cuda_power(
     power_cube,
     periods: np.ndarray,
@@ -399,99 +659,45 @@ def detect_block_periods_cuda_power(
     candidates: list[dict] = []
     windows: list[dict] = []
     if cuda_structure_batch:
-        for chunk_start in range(0, int(power.shape[2]), batch_channels):
-            chunk_stop = min(chunk_start + batch_channels, int(power.shape[2]))
-            stage_start = perf_counter() if timing is not None else 0.0
-            valid_power = power[mask_gpu, :, chunk_start:chunk_stop]
-            noise_floor_gpu = _gpu_low_fraction_noise_floor_batch(cp, valid_power, fraction=noise_floor_fraction)
-            excess = _gpu_relative_excess_batch(cp, valid_power, noise_floor_gpu, eps_fraction=excess_eps_fraction)
-            if timing is not None:
-                cp.cuda.Stream.null.synchronize()
-                _timing_add(timing, "floor_excess_seconds", perf_counter() - stage_start)
-
-            stage_start = perf_counter() if timing is not None else 0.0
-            structured = _gpu_coherent_structure_map_batch(
-                cp,
-                uniform_filter1d,
-                excess,
-                baseline_quantile=structure_baseline_quantile,
-                scale_quantile=structure_scale_quantile,
-                z_threshold=structure_z_threshold,
-                time_support_records=structure_time_support_records,
-                period_support_bins=structure_period_support_bins,
-                min_support_fraction=structure_min_support_fraction,
+        prepared_chunks = list(
+            prepare_block_period_chunks_cuda_power(
+                power,
+                period_values,
+                freqs,
+                record_start,
+                candidate_period_min_records=candidate_period_min_records,
+                candidate_period_max_records=candidate_period_max_records,
+                noise_floor_fraction=noise_floor_fraction,
+                excess_eps_fraction=excess_eps_fraction,
+                structure_baseline_quantile=structure_baseline_quantile,
+                structure_scale_quantile=structure_scale_quantile,
+                structure_z_threshold=structure_z_threshold,
+                structure_time_support_records=structure_time_support_records,
+                structure_period_support_bins=structure_period_support_bins,
+                structure_min_support_fraction=structure_min_support_fraction,
+                activity_trim_low=activity_trim_low,
+                activity_trim_high=activity_trim_high,
+                activity_smooth_records=activity_smooth_records,
+                pelt_penalty=pelt_penalty,
+                pelt_min_size_records=pelt_min_size_records,
+                pelt_jump_records=pelt_jump_records,
+                pelt_threads=pelt_threads,
+                cuda_structure_batch_channels=batch_channels,
+                cuda_device=cuda_device,
+                window_min_duration_records=window_min_duration_records,
+                window_min_activity_mean=window_min_activity_mean,
+                window_min_activity_raw_mean=window_min_activity_raw_mean,
+                window_merge_gap_records=window_merge_gap_records,
+                profile_min_prominence=profile_min_prominence,
+                profile_max_peaks_per_window=profile_max_peaks_per_window,
+                max_candidates_per_channel=max_candidates_per_channel,
+                max_candidates_per_record=max_candidates_per_record,
+                timing=timing,
             )
-            if timing is not None:
-                cp.cuda.Stream.null.synchronize()
-                _timing_add(timing, "structure_seconds", perf_counter() - stage_start)
-
-            stage_start = perf_counter() if timing is not None else 0.0
-            activity_raw = _gpu_signed_trimmed_period_activity_batch(
-                cp,
-                structured,
-                trim_low=activity_trim_low,
-                trim_high=activity_trim_high,
-            )
-            activity = _gpu_smooth_activity_batch(
-                cp,
-                uniform_filter1d,
-                activity_raw,
-                smooth_records=activity_smooth_records,
-            )
-            activity_z = _gpu_robust_standardize_batch(cp, activity)
-            activity_cpu_batch = np.ascontiguousarray(cp.asnumpy(activity).T)
-            activity_z_cpu_batch = np.ascontiguousarray(cp.asnumpy(activity_z).T)
-            noise_floor_cpu = cp.asnumpy(noise_floor_gpu)
-            if timing is not None:
-                _timing_add(timing, "activity_seconds", perf_counter() - stage_start)
-
-            stage_start = perf_counter() if timing is not None else 0.0
-            segments_batch = pelt_mean_shift_batch(
-                activity_z_cpu_batch,
-                penalty=pelt_penalty,
-                min_size=pelt_min_size_records,
-                jump=pelt_jump_records,
-                threads=pelt_threads,
-            )
-            if timing is not None:
-                _timing_add(timing, "pelt_seconds", perf_counter() - stage_start)
-
-            for local_channel_idx, segments in enumerate(segments_batch):
-                channel_idx = chunk_start + local_channel_idx
-
-                def profile_getter(start: int, stop: int, local_index=local_channel_idx) -> np.ndarray:
-                    return _gpu_windowed_period_profile(cp, structured[:, :, local_index], start, stop)
-
-                channel_candidates, channel_windows, _diagnostics = _detect_preprocessed_channel_periods(
-                    valid_periods=valid_periods,
-                    structured=None,
-                    activity=activity_cpu_batch[local_channel_idx],
-                    activity_z=activity_z_cpu_batch[local_channel_idx],
-                    noise_floor=float(noise_floor_cpu[local_channel_idx]),
-                    freq_mhz=float(freqs[channel_idx]),
-                    channel_idx=channel_idx,
-                    record_start=record_start,
-                    pelt_penalty=pelt_penalty,
-                    pelt_min_size_records=pelt_min_size_records,
-                    pelt_jump_records=pelt_jump_records,
-                    window_min_duration_records=window_min_duration_records,
-                    window_min_activity_mean=window_min_activity_mean,
-                    window_min_activity_raw_mean=window_min_activity_raw_mean,
-                    window_merge_gap_records=window_merge_gap_records,
-                    profile_min_prominence=profile_min_prominence,
-                    profile_max_peaks_per_window=profile_max_peaks_per_window,
-                    max_candidates_per_channel=int(channel_cap or 0),
-                    segments=segments,
-                    timing=timing,
-                    profile_getter=profile_getter,
-                )
-                _timing_increment(timing, "channels", 1)
-                candidates.extend(channel_candidates)
-                windows.extend(channel_windows)
-            del valid_power, noise_floor_gpu, excess, structured, activity_raw, activity, activity_z
-
-        candidates.sort(key=lambda row: (row["integrated_score"], row["period_peak_prominence"]), reverse=True)
-        return candidates, windows
+        )
+        segments_batch, pelt_seconds = run_prepared_cuda_pelt(prepared_chunks)
+        _timing_add(timing, "pelt_seconds", pelt_seconds)
+        return finalize_prepared_cuda_period_chunks(prepared_chunks, segments_batch, timing=timing)
 
     preprocessed_channels: list[tuple[int, Any, np.ndarray, np.ndarray, float]] = []
     for channel_idx in range(power.shape[2]):

@@ -44,6 +44,21 @@ not meaningful for this single-channel candidate engine.
 
 Generated products go under `runs/` and are ignored by git.
 
+## Installation
+
+PELT is implemented only by the required native C++ extension. There is no
+Python fallback because its runtime is not acceptable for production scans.
+Install the project in the active environment before running scripts:
+
+```bash
+python -m pip install -e .
+```
+
+Building requires a C++17 compiler and CMake. The build dependencies declared
+in `pyproject.toml` install `scikit-build-core` and `pybind11`; Ninja is
+recommended but optional. A missing `cwipss._pelt_ext` fails immediately before
+input data or CWT processing begins.
+
 ## Quick Start
 
 Activate a Python environment with the project dependencies installed, then run:
@@ -87,6 +102,9 @@ Default candidate generation is intentionally conservative:
   batching on GPU servers to process the full channel block at once; set
   `cuda_structure_batch_channels` to an integer only when you need to lower
   `cupy.quantile` peak memory.
+- `cuda_max_pending_blocks=1`: finish PELT and window profiles before starting
+  the next CUDA block. Set it to `2` to retain one prepared `structured` block
+  while native CPU PELT runs, allowing the GPU to prepare the next block.
 - `window_min_activity_raw_mean=25.0`: after PELT proposes a window on the
   standardized activity curve, require enough raw structured CWT activity
   before the window can emit period candidates. This prevents per-channel
@@ -170,9 +188,9 @@ python scripts/run_batch.py \
 
 Each source file gets an isolated run under `runs/<batch_id>/files/`. Batch
 runs also print a colored start/done/error line per input file, show a file-level
-progress bar plus the per-file CWT channel progress, and copy per-file CSVs into
-`runs/<batch_id>/per_file_results/` as each file completes. The batch directory
-also receives merged candidate, validation, and statistics tables.
+progress bar plus the per-file CWT channel progress. Each isolated run contains
+that file's CSV results, while the batch directory contains merged candidate,
+validation, and statistics tables.
 
 ## Visualization
 
@@ -196,6 +214,23 @@ This writes `visualization/index.md` plus PNG diagnostics for:
 - windowed period profiles with candidate period spans;
 - aggregated `period x channel` overview maps for review only;
 - veto review and optional validation/injection summaries.
+
+Runtime visualization intentionally renders representative blocks and
+channels. To render one raw image and one CWT scalogram for each globally
+ranked candidate in an existing run or batch:
+
+```bash
+python scripts/run_candidate_gallery.py \
+  --run-dir runs/<run_id-or-batch_id> \
+  --top 100
+```
+
+The default ordering uses validation `evidence_rank` when available and falls
+back to `integrated_score`. Results are written under
+`candidate_gallery/candidates/<rank>_<run>_candidate_<id>/`, with
+`stage_01_input_matrix.png` and `stage_02_cwt_scalogram.png` for every rendered
+candidate. Use `--source-root` when result CSVs contain source paths from
+another machine.
 
 ## Injection Benchmark
 
@@ -225,7 +260,9 @@ python scripts/run_report.py \
 ```
 
 This writes `report.md` with candidate counts, veto distribution, top CWT
-candidates, validation evidence, and links to stage visualizations when present.
+candidates, validation evidence, and links to runtime stage visualizations when
+present. Candidate-gallery results remain available through their own
+`candidate_gallery/index.md`.
 
 ## License
 

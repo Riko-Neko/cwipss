@@ -15,16 +15,10 @@ Each file gets an isolated run under:
 runs/<batch_id>/files/<run_id>/
 ```
 
-As each file completes, the batch runner also copies flat per-file CSVs to:
-
-```text
-runs/<batch_id>/per_file_results/<run_id>.candidates_reviewed.csv
-runs/<batch_id>/per_file_results/<run_id>.validation_reviewed.csv
-```
-
-Additional per-file CSVs include raw candidates, time windows, and validation
-summary when those files exist. This directory is written incrementally, so a
-server run can be inspected before the full batch finishes.
+Each isolated run is the single source of truth for that file and contains its
+raw/reviewed candidates, time windows, validation tables, configuration, and
+summary. These files are written when that source file completes, so a server
+run can be inspected before the full batch finishes.
 
 The console prints a colored start/done/error line for every input file. Batch
 runs also show a file-level progress bar; each file still shows its CWT
@@ -39,3 +33,31 @@ tables:
 - `time_windows.all.csv`
 - `validation_summary.all.csv`
 - `validation_reviewed.all.csv`
+
+## Candidate Visualization
+
+Batch runtime visualization, when enabled, is stored inside each completed
+`files/<run_id>/visualization/` directory and uses representative blocks and
+channels.
+
+To generate globally ranked per-candidate raw and CWT images from the merged
+batch tables:
+
+```bash
+python scripts/run_candidate_gallery.py \
+  --run-dir runs/<batch_id> \
+  --top 100
+```
+
+If `source_file` values point to a different machine, provide a local directory
+containing files with the same basenames:
+
+```bash
+python scripts/run_candidate_gallery.py \
+  --run-dir runs/<batch_id> \
+  --source-root /local/path/to/CE4_LFRS_2C \
+  --top 100
+```
+
+The gallery reads merged candidate and validation tables, so it does not rerun
+detection or validation.

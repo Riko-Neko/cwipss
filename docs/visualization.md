@@ -3,6 +3,17 @@
 Stage visualization is optional and writes PNG diagnostics plus
 `visualization/index.md`.
 
+Runtime stages and post-validation candidate galleries share the same small
+function-based plotting core:
+
+- `heatmap()` renders matrix data and optional boxes, lines, or shaded ranges;
+- `raw_view()` applies the standard raw time-frequency format;
+- `cwt_view()` applies the standard period-time CWT format;
+- `save_figure()` handles non-matrix summary plots.
+
+The runtime and gallery code only select data and pass plotting parameters.
+They do not maintain separate raw/CWT plotting implementations.
+
 ## Enable
 
 ```bash
@@ -17,8 +28,9 @@ python scripts/run_cwt_candidates.py \
 
 ## Stages
 
-- Stage 01: raw `time x channel` matrix.
-- Stage 02: representative-channel full `period x time` CWT scalograms.
+- Stage 01, `stage_01_input_matrix.png`: raw `time x channel` matrix.
+- Stage 02, `stage_02_<block>_channel_<channel>_scalogram.png`:
+  representative-channel full `period x time` CWT scalograms.
 - Stage 03: representative-channel trusted-period structure-gated CWT map
   after single-channel low-20% floor normalization, per-period low-quantile
   standardization, and local 2D time-period support gating.
@@ -69,3 +81,53 @@ python scripts/run_cwt_candidates.py \
 Use small time/channel windows first. Full-file visualization can be expensive.
 Avoid low-score debug settings unless the goal is high-recall visual exploration
 rather than candidate review.
+
+## Per-Candidate Gallery
+
+Runtime staged visualization selects representative blocks and channels; it
+does not guarantee one raw/CWT pair for every Top-N candidate. Generate that
+view after detection or validation from an existing single run or batch:
+
+```bash
+python scripts/run_candidate_gallery.py \
+  --run-dir runs/<run_or_batch_id> \
+  --top 100
+```
+
+The default `auto` ordering uses `evidence_rank` when reviewed validation
+statistics exist, otherwise it uses `integrated_score`. Override this with
+`--sort-by integrated_score` or `--sort-by global_q_value`. Use `--top 0` to
+render every candidate and `--include-vetoed` to include rejected rows.
+
+Each selected candidate gets a directory named approximately
+`<rank>_<run_id>_candidate_<candidate_id>/`. It contains the same single-panel
+formats used by runtime visualization:
+
+- `stage_01_input_matrix.png`: raw time-frequency window around the candidate;
+- `stage_02_cwt_scalogram.png`: single-channel period-time CWT scalogram;
+
+Candidate boxes are drawn on both views. The validation-refined period is drawn
+on the CWT view when available.
+
+If the result CSV contains server paths that are unavailable on the current
+machine, point to a directory containing the same source basenames:
+
+```bash
+python scripts/run_candidate_gallery.py \
+  --run-dir runs/<batch_id> \
+  --source-root /path/to/CE4_LFRS_2C \
+  --top 100
+```
+
+Outputs are written to `candidate_gallery/index.md`,
+`candidate_gallery/gallery.csv`, and one directory per candidate under
+`candidate_gallery/candidates/`.
+
+Useful gallery controls:
+
+- `--context-periods`: target time context measured in candidate periods;
+- `--min-window-records`, `--max-window-records`: time-window bounds;
+- `--freq-context-channels`: raw channels shown on each side of the candidate;
+- `--period-radius`: CWT period-axis factor around the candidate seed;
+- `--cwt-backend`, `--cuda-device`: override the saved compute backend;
+- `--output-dir`: write the gallery outside the source run directory.

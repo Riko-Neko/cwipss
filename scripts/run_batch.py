@@ -68,6 +68,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--pelt-threads", type=int, default=None, help="CPU worker threads for native PELT across channels; 1 keeps sequential behavior.")
     parser.add_argument("--cuda-structure-batch", action=argparse.BooleanOptionalAction, default=None, help="Batch CUDA structure/activity preprocessing across channel chunks.")
     parser.add_argument("--cuda-structure-batch-channels", type=int, default=None, help="Channels per CUDA structure/activity batch chunk; omit to process the full block at once.")
+    parser.add_argument("--cuda-max-pending-blocks", type=int, default=None, help="Prepared CUDA blocks retained while CPU PELT runs; 1 is sequential, 2 overlaps one following block.")
     parser.add_argument("--window-min-duration-records", type=int, default=None, help="Minimum retained PELT window duration.")
     parser.add_argument("--window-min-activity-mean", type=float, default=None, help="Minimum retained standardized activity mean.")
     parser.add_argument("--window-min-activity-raw-mean", type=float, default=None, help="Minimum retained raw structured activity mean before robust standardization.")
@@ -153,6 +154,7 @@ def _scan_overrides(args: argparse.Namespace) -> dict:
         "pelt_threads",
         "cuda_structure_batch",
         "cuda_structure_batch_channels",
+        "cuda_max_pending_blocks",
         "window_min_duration_records",
         "window_min_activity_mean",
         "window_min_activity_raw_mean",
