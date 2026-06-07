@@ -7,6 +7,7 @@ __pycache__/
 .DS_Store
 .mplconfig/
 .pytest_cache/
+_*.md
 
 # Generated products. Keep the project code and configs tracked, not bulk SWT/CWT arrays.
 runs/
@@ -21,3 +22,5 @@ artifacts/
 # Local CE4 raw samples.
 data/CE4/*.2C
 data/CE4/*.2c
+data/CE4/*.2CL
+data/CE4/*.2cl
