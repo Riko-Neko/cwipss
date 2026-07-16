@@ -6,6 +6,13 @@ from cwipss.signal import cpro_cuda, detection_cuda
 from cwipss.workflows import search
 
 
+def test_async_timing_accumulator_accepts_disabled_timing() -> None:
+    search._timing_add(None, "pelt_seconds", 1.0)
+    totals: dict[str, float] = {}
+    search._timing_add(totals, "pelt_seconds", 1.0)
+    assert totals == {"pelt_seconds": 1.0}
+
+
 def test_cpro_core_has_no_host_array_transfer() -> None:
     source = inspect.getsource(cpro_cuda)
     assert "asnumpy" not in source

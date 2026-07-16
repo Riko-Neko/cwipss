@@ -154,8 +154,9 @@ def _emit(message: str, progress=None) -> None:
         print(message, flush=True)
 
 
-def _timing_add(totals: dict[str, float], key: str, seconds: float) -> None:
-    totals[key] = float(totals.get(key, 0.0)) + float(seconds)
+def _timing_add(totals: dict[str, float] | None, key: str, seconds: float) -> None:
+    if totals is not None:
+        totals[key] = float(totals.get(key, 0.0)) + float(seconds)
 
 
 def _timing_value(values: dict[str, float], key: str) -> float:
