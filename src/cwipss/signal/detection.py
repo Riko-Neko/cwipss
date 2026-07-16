@@ -42,6 +42,38 @@ def resolve_channel_candidate_cap(
     return max(0, int(max_candidates_per_channel))
 
 
+def invalid_noise_channel_record(
+    values: np.ndarray,
+    *,
+    channel: int,
+    freq_mhz: float,
+) -> dict[str, float | int | str]:
+    """Describe a channel that cannot support absolute noise calibration."""
+    series = np.asarray(values, dtype=np.float64)
+    finite_values = series[np.isfinite(series)]
+    finite_count = int(finite_values.size)
+    if finite_count < 3:
+        reason = "insufficient_finite"
+        data_min = data_max = float("nan")
+    else:
+        data_min = float(np.min(finite_values))
+        data_max = float(np.max(finite_values))
+        if data_min == 0.0 and data_max == 0.0:
+            reason = "all_zero"
+        elif data_min == data_max:
+            reason = "constant"
+        else:
+            reason = "invalid_sigma"
+    return {
+        "channel": int(channel),
+        "freq_mhz": float(freq_mhz),
+        "finite_records": finite_count,
+        "data_min": data_min,
+        "data_max": data_max,
+        "reason": reason,
+    }
+
+
 def _peak_record(activity: np.ndarray, start: int, stop: int, record_start: int) -> int:
     values = np.asarray(activity, dtype=np.float32)
     start = max(0, min(int(start), values.size))
@@ -287,6 +319,8 @@ def detect_block_periods(
     max_candidates_per_record: float = 3.0 / 4096.0,
     cuda_device: int | None = None,
     timing: dict[str, float] | None = None,
+    invalid_channel_mask: np.ndarray | None = None,
+    invalid_channels: list[dict] | None = None,
 ) -> tuple[list[dict], list[dict]]:
     del pelt_threads  # CPU channels call the native single-series kernel directly.
     del cuda_device
@@ -301,6 +335,11 @@ def detect_block_periods(
     start, stop = int(target_channel_start), int(target_channel_stop)
     if not 0 <= start < stop <= power.shape[2]:
         raise ValueError("invalid target channel offsets")
+    excluded = np.zeros(power.shape[2], dtype=bool)
+    if invalid_channel_mask is not None:
+        excluded = np.asarray(invalid_channel_mask, dtype=bool)
+        if excluded.shape != (power.shape[2],):
+            raise ValueError("invalid_channel_mask must match the block channel axis")
     mask = cpro_period_mask(
         period_values,
         candidate_period_min_records,
@@ -331,8 +370,21 @@ def detect_block_periods(
     candidates: list[dict] = []
     windows: list[dict] = []
     for output_channel, target in enumerate(range(start, stop)):
+        if excluded[target]:
+            continue
         stage_start = perf_counter() if timing is not None else 0.0
-        noise_std = difference_noise_std(raw[:, target])
+        try:
+            noise_std = difference_noise_std(raw[:, target])
+        except ValueError:
+            if invalid_channels is not None:
+                invalid_channels.append(
+                    invalid_noise_channel_record(
+                        raw[:, target],
+                        channel=output_channel,
+                        freq_mhz=float(freqs[target]),
+                    )
+                )
+            continue
         result = cpro_activity(
             valid_power[:, :, target],
             noise_std=noise_std,

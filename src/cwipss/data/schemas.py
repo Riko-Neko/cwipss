@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -125,6 +126,12 @@ MANIFEST_FIELDNAMES = [
     "f_start_mhz",
     "f_stop_mhz",
     "candidate_count",
+    "selected_channel_count",
+    "valid_channel_count",
+    "invalid_channel_count",
+    "quality_status",
+    "invalid_reason_counts_json",
+    "invalid_ranges_json",
     "status",
     "error",
 ]
@@ -182,6 +189,12 @@ BATCH_MANIFEST_FIELDNAMES = [
     "duration_seconds",
     "candidate_count",
     "vetoed_candidate_count",
+    "selected_channel_count",
+    "valid_channel_count",
+    "invalid_channel_count",
+    "quality_status",
+    "invalid_reason_counts_json",
+    "invalid_ranges_json",
     "validation_count",
     "stats_count",
 ]
@@ -280,10 +293,12 @@ def make_manifest_row(
     f_start_mhz: float | None,
     f_stop_mhz: float | None,
     candidate_count: int,
+    channel_quality: Mapping[str, Any] | None = None,
     status: str = "complete",
     error: str = "",
 ) -> dict[str, Any]:
     records = int(source_info["records"])
+    quality = channel_quality or {}
     return {
         "run_id": run_id,
         "source_file": source_info["filename"],
@@ -298,6 +313,16 @@ def make_manifest_row(
         "f_start_mhz": "" if f_start_mhz is None else float(f_start_mhz),
         "f_stop_mhz": "" if f_stop_mhz is None else float(f_stop_mhz),
         "candidate_count": int(candidate_count),
+        "selected_channel_count": int(quality.get("selected_channel_count", 0)),
+        "valid_channel_count": int(quality.get("valid_channel_count", 0)),
+        "invalid_channel_count": int(quality.get("invalid_channel_count", 0)),
+        "quality_status": str(quality.get("quality_status", "")),
+        "invalid_reason_counts_json": json.dumps(
+            quality.get("invalid_reason_counts", {}), separators=(",", ":")
+        ),
+        "invalid_ranges_json": json.dumps(
+            quality.get("invalid_ranges", []), separators=(",", ":")
+        ),
         "status": status,
         "error": error,
     }

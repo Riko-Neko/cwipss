@@ -171,14 +171,38 @@ def _merge_csvs(run_dirs: list[Path], filename: str) -> list[dict[str, str]]:
     return rows
 
 
-def _summary_counts(run_dir: Path) -> dict[str, int]:
+def _empty_summary_counts() -> dict[str, Any]:
+    return {
+        "candidate_count": 0,
+        "vetoed_candidate_count": 0,
+        "selected_channel_count": 0,
+        "valid_channel_count": 0,
+        "invalid_channel_count": 0,
+        "quality_status": "",
+        "invalid_reason_counts_json": "{}",
+        "invalid_ranges_json": "[]",
+    }
+
+
+def _summary_counts(run_dir: Path) -> dict[str, Any]:
     summary_path = run_dir / "summary.json"
     if not summary_path.exists():
-        return {"candidate_count": 0, "vetoed_candidate_count": 0}
+        return _empty_summary_counts()
     payload = json.loads(summary_path.read_text())
+    quality = payload.get("channel_quality", {})
     return {
         "candidate_count": int(payload.get("candidate_count", 0)),
         "vetoed_candidate_count": int(payload.get("vetoed_candidate_count", 0)),
+        "selected_channel_count": int(quality.get("selected_channel_count", 0)),
+        "valid_channel_count": int(quality.get("valid_channel_count", 0)),
+        "invalid_channel_count": int(quality.get("invalid_channel_count", 0)),
+        "quality_status": str(quality.get("quality_status", "")),
+        "invalid_reason_counts_json": json.dumps(
+            quality.get("invalid_reason_counts", {}), separators=(",", ":")
+        ),
+        "invalid_ranges_json": json.dumps(
+            quality.get("invalid_ranges", []), separators=(",", ":")
+        ),
     }
 
 
@@ -268,7 +292,7 @@ def run_batch(
             except Exception as exc:
                 status = "error"
                 error = str(exc)
-                counts = {"candidate_count": 0, "vetoed_candidate_count": 0}
+                counts = _empty_summary_counts()
             duration = time.perf_counter() - start_time
             manifest_rows.append(
                 {
@@ -281,6 +305,12 @@ def run_batch(
                     "duration_seconds": f"{duration:.3f}",
                     "candidate_count": counts["candidate_count"],
                     "vetoed_candidate_count": counts["vetoed_candidate_count"],
+                    "selected_channel_count": counts["selected_channel_count"],
+                    "valid_channel_count": counts["valid_channel_count"],
+                    "invalid_channel_count": counts["invalid_channel_count"],
+                    "quality_status": counts["quality_status"],
+                    "invalid_reason_counts_json": counts["invalid_reason_counts_json"],
+                    "invalid_ranges_json": counts["invalid_ranges_json"],
                     "validation_count": validation_count,
                     "stats_count": stats_count,
                 }
@@ -326,7 +356,6 @@ def run_batch(
         _merge_csvs(successful_run_dirs, "time_windows.csv"),
         TIME_WINDOW_FIELDNAMES,
     )
-
     validation_rows = _merge_csvs(successful_run_dirs, "validation_summary.csv")
     _write_rows_csv(batch_dir / "validation_summary.all.csv", validation_rows, VALIDATION_FIELDNAMES)
     if batch_config.stats:

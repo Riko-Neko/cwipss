@@ -61,6 +61,31 @@ def _cupy():
     return cp
 
 
+def _invalid_noise_channel_record_cuda(values, *, channel: int, freq_mhz: float, cp) -> dict:
+    finite_values = values[cp.isfinite(values)]
+    finite_count = int(finite_values.size)
+    if finite_count < 3:
+        reason = "insufficient_finite"
+        data_min = data_max = float("nan")
+    else:
+        data_min = float(cp.min(finite_values).item())
+        data_max = float(cp.max(finite_values).item())
+        if data_min == 0.0 and data_max == 0.0:
+            reason = "all_zero"
+        elif data_min == data_max:
+            reason = "constant"
+        else:
+            reason = "invalid_sigma"
+    return {
+        "channel": int(channel),
+        "freq_mhz": float(freq_mhz),
+        "finite_records": finite_count,
+        "data_min": data_min,
+        "data_max": data_max,
+        "reason": reason,
+    }
+
+
 def prepare_block_period_chunks_cuda_power(
     power_cube,
     raw_data,
@@ -96,6 +121,8 @@ def prepare_block_period_chunks_cuda_power(
     max_candidates_per_record: float = 3.0 / 4096.0,
     cuda_device: int | None = None,
     timing: dict[str, float] | None = None,
+    invalid_channel_mask: np.ndarray | None = None,
+    invalid_channels: list[dict] | None = None,
 ) -> list[PreparedCudaPeriodChannel]:
     """Run all 2D CPRO work on CUDA and return only 1D PELT inputs to host."""
     cp = _cupy()
@@ -112,6 +139,11 @@ def prepare_block_period_chunks_cuda_power(
         start, stop = int(target_channel_start), int(target_channel_stop)
         if not 0 <= start < stop <= power.shape[2]:
             raise ValueError("invalid target channel offsets")
+        excluded = np.zeros(int(power.shape[2]), dtype=bool)
+        if invalid_channel_mask is not None:
+            excluded = np.asarray(invalid_channel_mask, dtype=bool)
+            if excluded.shape != (int(power.shape[2]),):
+                raise ValueError("invalid_channel_mask must match the block channel axis")
         mask = cpro_period_mask(
             period_values,
             candidate_period_min_records,
@@ -144,8 +176,22 @@ def prepare_block_period_chunks_cuda_power(
         )
         prepared: list[PreparedCudaPeriodChannel] = []
         for output_channel, target in enumerate(range(start, stop)):
+            if excluded[target]:
+                continue
             stage_start = perf_counter() if timing is not None else 0.0
-            noise_std_gpu = difference_noise_std_cuda(raw[:, target])
+            try:
+                noise_std_gpu = difference_noise_std_cuda(raw[:, target])
+            except ValueError:
+                if invalid_channels is not None:
+                    invalid_channels.append(
+                        _invalid_noise_channel_record_cuda(
+                            raw[:, target],
+                            channel=output_channel,
+                            freq_mhz=float(freqs[target]),
+                            cp=cp,
+                        )
+                    )
+                continue
             result = cpro_activity_cuda(
                 valid_power[:, :, target],
                 noise_std=noise_std_gpu,

@@ -13,6 +13,23 @@ def test_async_timing_accumulator_accepts_disabled_timing() -> None:
     assert totals == {"pelt_seconds": 1.0}
 
 
+def test_invalid_channel_quality_is_compacted_per_file() -> None:
+    summary = search._channel_quality_summary(
+        selected_channel_count=8,
+        invalid_channels=[
+            {"channel": 5, "reason": "all_zero"},
+            {"channel": 6, "reason": "all_zero"},
+            {"channel": 7, "reason": "all_zero"},
+        ],
+    )
+
+    assert summary["valid_channel_count"] == 5
+    assert summary["quality_status"] == "invalid_channels_excluded"
+    assert summary["invalid_ranges"] == [
+        {"channel_start": 5, "channel_stop": 8, "count": 3, "reason": "all_zero"}
+    ]
+
+
 def test_cpro_core_has_no_host_array_transfer() -> None:
     source = inspect.getsource(cpro_cuda)
     assert "asnumpy" not in source

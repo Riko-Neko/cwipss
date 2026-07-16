@@ -78,7 +78,28 @@ def test_run_batch_merges_outputs_and_recomputes_global_stats(tmp_path: Path, mo
             ],
         )
         (run_dir / "summary.json").write_text(
-            json.dumps({"candidate_count": 1, "vetoed_candidate_count": 0}, ensure_ascii=True)
+            json.dumps(
+                {
+                    "candidate_count": 1,
+                    "vetoed_candidate_count": 0,
+                    "channel_quality": {
+                        "selected_channel_count": 8,
+                        "valid_channel_count": 7,
+                        "invalid_channel_count": 1,
+                        "quality_status": "invalid_channels_excluded",
+                        "invalid_reason_counts": {"all_zero": 1},
+                        "invalid_ranges": [
+                            {
+                                "channel_start": 7,
+                                "channel_stop": 8,
+                                "count": 1,
+                                "reason": "all_zero",
+                            }
+                        ],
+                    },
+                },
+                ensure_ascii=True,
+            )
         )
         return run_dir
 
@@ -114,6 +135,8 @@ def test_run_batch_merges_outputs_and_recomputes_global_stats(tmp_path: Path, mo
     reviewed_rows = list(csv.DictReader((batch_dir / "validation_reviewed.all.csv").open()))
 
     assert [row["status"] for row in manifest_rows] == ["complete", "complete"]
+    assert manifest_rows[0]["quality_status"] == "invalid_channels_excluded"
+    assert manifest_rows[0]["invalid_channel_count"] == "1"
     assert len(list(csv.DictReader((batch_dir / "candidates_reviewed.all.csv").open()))) == 2
     assert len(reviewed_rows) == 2
     assert reviewed_rows[0]["global_q_value"] == "0.02"

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import csv
 import json
-from collections import deque
+from collections import Counter, deque
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -104,6 +104,7 @@ def write_summary_json(
     run_id: str,
     candidates: list[dict],
     reviewed_candidates: list[dict],
+    channel_quality: dict[str, Any],
 ) -> None:
     vetoed_count = sum(1 for row in reviewed_candidates if row.get("candidate_status") == "vetoed")
     payload = {
@@ -115,6 +116,7 @@ def write_summary_json(
         "candidate_count": len(candidates),
         "reviewed_candidate_count": len(reviewed_candidates),
         "vetoed_candidate_count": vetoed_count,
+        "channel_quality": channel_quality,
         "visualization": {
             "enabled": bool(config.visualization_enabled),
             "dir": "visualization" if config.visualization_enabled else "",
@@ -131,6 +133,52 @@ def write_summary_json(
         ],
     }
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=True))
+
+
+def _compact_invalid_channel_ranges(rows: list[dict]) -> list[dict[str, Any]]:
+    ordered = sorted(rows, key=lambda row: int(row["channel"]))
+    ranges: list[dict[str, Any]] = []
+    for row in ordered:
+        channel = int(row["channel"])
+        reason = str(row["reason"])
+        if ranges and ranges[-1]["reason"] == reason and ranges[-1]["channel_stop"] == channel:
+            ranges[-1]["channel_stop"] = channel + 1
+            ranges[-1]["count"] += 1
+        else:
+            ranges.append(
+                {
+                    "channel_start": channel,
+                    "channel_stop": channel + 1,
+                    "count": 1,
+                    "reason": reason,
+                }
+            )
+    return ranges
+
+
+def _channel_quality_summary(
+    *,
+    selected_channel_count: int,
+    invalid_channels: list[dict],
+) -> dict[str, Any]:
+    invalid_count = len(invalid_channels)
+    valid_count = max(0, int(selected_channel_count) - invalid_count)
+    if invalid_count == 0:
+        status = "valid"
+    elif valid_count == 0:
+        status = "no_valid_channels"
+    else:
+        status = "invalid_channels_excluded"
+    reason_counts = dict(sorted(Counter(str(row["reason"]) for row in invalid_channels).items()))
+    ranges = _compact_invalid_channel_ranges(invalid_channels)
+    return {
+        "selected_channel_count": int(selected_channel_count),
+        "valid_channel_count": valid_count,
+        "invalid_channel_count": invalid_count,
+        "quality_status": status,
+        "invalid_reason_counts": reason_counts,
+        "invalid_ranges": ranges,
+    }
 
 
 def _channel_progress(total: int, run_id: str, enabled: bool, leave: bool):
@@ -259,6 +307,7 @@ def run_cwt_search(config: CWTSearchConfig) -> Path:
     )
     all_candidates: list[dict] = []
     all_windows: list[dict] = []
+    all_invalid_channels: list[dict] = []
     timing_enabled = bool(config.timing_enabled)
     timing_totals: dict[str, float] = {}
     block_count = 0
@@ -374,6 +423,25 @@ def run_cwt_search(config: CWTSearchConfig) -> Path:
             _timing_add(timing_totals, "read_seconds", read_seconds)
             block_count += 1
             block_id = f"block_{block_index:04d}"
+            all_zero_mask = np.all(
+                np.isfinite(block.data) & (block.data == 0.0),
+                axis=0,
+            )
+            for local_channel in np.flatnonzero(all_zero_mask):
+                all_invalid_channels.append(
+                    {
+                        "channel": block_start + int(local_channel),
+                        "freq_mhz": float(block.freqs_mhz[local_channel]),
+                        "finite_records": int(block.data.shape[0]),
+                        "data_min": 0.0,
+                        "data_max": 0.0,
+                        "reason": "all_zero",
+                    }
+                )
+            if bool(np.all(all_zero_mask)):
+                if progress is not None:
+                    progress.update(block_stop - block_start)
+                continue
             cwt_start = perf_counter()
             if use_cuda_block_backend:
                 cp = _cupy()
@@ -403,6 +471,7 @@ def run_cwt_search(config: CWTSearchConfig) -> Path:
             cwt_seconds = perf_counter() - cwt_start
             _timing_add(timing_totals, "cwt_seconds", cwt_seconds)
             detection_timing: dict[str, float] | None = {} if timing_enabled else None
+            block_invalid_channels: list[dict] = []
             detector_kwargs = dict(
                 periods=periods,
                 freqs_mhz=block.freqs_mhz,
@@ -434,6 +503,8 @@ def run_cwt_search(config: CWTSearchConfig) -> Path:
                 cprf_params=cprf_params,
                 max_candidates_per_channel=config.max_candidates_per_channel,
                 max_candidates_per_record=config.max_candidates_per_record,
+                invalid_channel_mask=all_zero_mask,
+                invalid_channels=block_invalid_channels,
             )
             if use_cuda_block_backend:
                 prepare_start = perf_counter()
@@ -444,6 +515,9 @@ def run_cwt_search(config: CWTSearchConfig) -> Path:
                     **detector_kwargs,
                 )
                 prepare_seconds = perf_counter() - prepare_start
+                for row in block_invalid_channels:
+                    row["channel"] = block_start + int(row["channel"])
+                    all_invalid_channels.append(row)
                 del power, raw_device
                 pending_blocks.append(
                     _PendingCudaBlock(
@@ -469,6 +543,9 @@ def run_cwt_search(config: CWTSearchConfig) -> Path:
                 timing=detection_timing,
                 **detector_kwargs,
             )
+            for row in block_invalid_channels:
+                row["channel"] = block_start + int(row["channel"])
+                all_invalid_channels.append(row)
             detect_seconds = perf_counter() - detect_start
             del power, raw_device
             _timing_add(timing_totals, "detect_seconds", detect_seconds)
@@ -493,6 +570,10 @@ def run_cwt_search(config: CWTSearchConfig) -> Path:
 
     write_start = perf_counter()
     final_candidates = add_candidate_ids(all_candidates)
+    quality_summary = _channel_quality_summary(
+        selected_channel_count=int(selected_channels.stop - selected_channels.start),
+        invalid_channels=all_invalid_channels,
+    )
     write_time_windows_csv(run_dir / "time_windows.csv", all_windows)
     write_candidates_csv(run_dir / "candidates_raw.csv", final_candidates)
     if config.save_legacy_candidates_csv:
@@ -523,6 +604,7 @@ def run_cwt_search(config: CWTSearchConfig) -> Path:
         f_start_mhz=config.f_start,
         f_stop_mhz=config.f_stop,
         candidate_count=len(final_candidates),
+        channel_quality=quality_summary,
     )
     write_manifest_csv(run_dir / "manifest.csv", [manifest_row])
     write_summary_json(
@@ -532,7 +614,15 @@ def run_cwt_search(config: CWTSearchConfig) -> Path:
         run_id,
         final_candidates,
         reviewed_candidates,
+        quality_summary,
     )
+    for invalid_range in quality_summary["invalid_ranges"]:
+        _emit(
+            f"[CWT WARNING] run_id={run_id} invalid channels="
+            f"{invalid_range['channel_start']}:{invalid_range['channel_stop']} "
+            f"reason={invalid_range['reason']} action=excluded",
+            progress=None,
+        )
     _timing_add(timing_totals, "write_seconds", perf_counter() - write_start)
     if config.visualization_enabled:
         visualization_start = perf_counter()
