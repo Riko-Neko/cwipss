@@ -7,7 +7,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "cwipss"
-version = "0.3.0"
+version = "0.3.1"
 description = "CWIPSS: reproducible CWT period-candidate search for time-channel spectral data"
 requires-python = ">=3.10"
 license = { text = "MIT" }
