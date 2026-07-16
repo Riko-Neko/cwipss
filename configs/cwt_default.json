@@ -16,7 +16,7 @@
     "period_max_records": 512.0,
     "period_count": 96,
     "period_spacing": "log",
-    "block_channels": 32,
+    "block_channels": 128,
     "time_aggregation": "p95",
     "aggregation_percentile": 95.0
   },
