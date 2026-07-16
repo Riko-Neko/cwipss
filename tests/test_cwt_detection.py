@@ -3,460 +3,78 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-import cwipss.signal.windows as windows_module
-from cwipss.signal.activity import (
-    coherent_structure_map,
-    low_fraction_noise_floor,
-    relative_excess,
-    signed_trimmed_period_activity,
-)
-from cwipss.signal.cwt import aggregate_cwt_time, cwt_power_cube, period_grid_records
-from cwipss.signal.detection import detect_block_periods, resolve_channel_candidate_cap
-from cwipss.signal.windows import native_pelt_available, pelt_mean_shift, pelt_mean_shift_batch
+from cwipss.signal.cpro import CPROParameters, cpro_activity, difference_noise_std
+from cwipss.signal.detection import resolve_channel_candidate_cap
 
 
-def test_cwt_power_cube_shape() -> None:
-    rng = np.random.default_rng(123)
-    data = rng.normal(size=(64, 3)).astype(np.float32)
-    periods = period_grid_records(2, 16, 8)
-
-    power = cwt_power_cube(data, periods, wavelet="cmor1.5-1.0")
-
-    assert power.shape == (8, 64, 3)
-    assert np.all(np.isfinite(power))
-
-
-def test_cwt_power_cube_cpu_backend_matches_default() -> None:
-    rng = np.random.default_rng(124)
-    data = rng.normal(size=(96, 4)).astype(np.float32)
-    periods = period_grid_records(2, 32, 12)
-
-    default = cwt_power_cube(data, periods, wavelet="cmor1.5-1.0")
-    explicit_cpu = cwt_power_cube(data, periods, wavelet="cmor1.5-1.0", backend="cpu")
-
-    np.testing.assert_array_equal(default, explicit_cpu)
-
-
-def test_cwt_power_cube_auto_falls_back_to_cpu_when_cuda_unavailable() -> None:
-    from cwipss.signal.cwt_cuda import cuda_available
-
-    if cuda_available():
-        pytest.skip("auto uses CUDA when a CUDA device is available")
-    rng = np.random.default_rng(125)
-    data = rng.normal(size=(64, 3)).astype(np.float32)
-    periods = period_grid_records(2, 16, 8)
-
-    cpu = cwt_power_cube(data, periods, wavelet="cmor1.5-1.0", backend="cpu")
-    auto = cwt_power_cube(data, periods, wavelet="cmor1.5-1.0", backend="auto")
-
-    np.testing.assert_array_equal(cpu, auto)
-
-
-def test_cwt_power_cube_cuda_rejects_conv_method() -> None:
-    data = np.ones((16, 2), dtype=np.float32)
-    periods = period_grid_records(2, 8, 4)
-
-    with pytest.raises(ValueError, match="supports method='fft'"):
-        cwt_power_cube(data, periods, method="conv", backend="cuda")
-
-
-def test_cwt_power_cube_auto_uses_cpu_for_conv_method() -> None:
-    rng = np.random.default_rng(127)
-    data = rng.normal(size=(32, 2)).astype(np.float32)
-    periods = period_grid_records(2, 8, 4)
-
-    cpu = cwt_power_cube(data, periods, method="conv", backend="cpu")
-    auto = cwt_power_cube(data, periods, method="conv", backend="auto")
-
-    np.testing.assert_array_equal(cpu, auto)
-
-
-def test_cwt_power_cube_cuda_matches_cpu_for_small_fft_case() -> None:
-    pytest.importorskip("cupy")
-    from cwipss.signal.cwt_cuda import cuda_available
-
-    if not cuda_available():
-        pytest.skip("CUDA device is not available")
-
-    rng = np.random.default_rng(126)
-    data = rng.normal(size=(96, 4)).astype(np.float32)
-    periods = period_grid_records(2, 32, 12)
-
-    cpu = cwt_power_cube(data, periods, wavelet="cmor1.5-1.0", backend="cpu")
-    cuda = cwt_power_cube(data, periods, wavelet="cmor1.5-1.0", backend="cuda")
-
-    assert cuda.shape == cpu.shape
-    assert cuda.dtype == np.float32
-    np.testing.assert_allclose(cuda, cpu, rtol=5e-3, atol=5e-4)
-
-
-def test_cwt_time_aggregation_returns_period_channel_map() -> None:
-    power = np.ones((5, 10, 2), dtype=np.float32)
-    power[2, 5, 1] = 10.0
-
-    response = aggregate_cwt_time(power, method="max")
-
-    assert response.shape == (5, 2)
-    assert response[2, 1] == 10.0
-
-
-def test_low_fraction_noise_floor_ignores_high_power_tail() -> None:
-    values = np.ones((10, 100), dtype=np.float32)
-    values[:, 80:] = 100.0
-
-    floor = low_fraction_noise_floor(values, fraction=0.2)
-
-    assert 0.9 <= floor <= 1.1
-
-
-def test_signed_activity_keeps_negative_excess() -> None:
-    excess = np.array([[-1.0, 2.0], [1.0, 4.0], [3.0, 6.0]], dtype=np.float32)
-
-    activity = signed_trimmed_period_activity(excess, trim_low=0.0, trim_high=1.0)
-
-    assert activity.tolist() == [1.0, 4.0]
-
-
-def test_coherent_structure_map_suppresses_sparse_texture() -> None:
-    texture = np.zeros((16, 128), dtype=np.float32)
-    texture[3, 20] = 20.0
-    texture[9, 90] = 20.0
-    band = np.zeros((16, 128), dtype=np.float32)
-    band[7:10, 40:100] = 5.0
-
-    texture_structured = coherent_structure_map(
-        texture,
-        baseline_quantile=0.1,
-        scale_quantile=0.2,
-        z_threshold=1.0,
-        time_support_records=16,
-        period_support_bins=3,
-        min_support_fraction=0.15,
-    )
-    band_structured = coherent_structure_map(
-        band,
-        baseline_quantile=0.1,
-        scale_quantile=0.2,
-        z_threshold=1.0,
-        time_support_records=16,
-        period_support_bins=3,
-        min_support_fraction=0.15,
+def _small_params() -> CPROParameters:
+    return CPROParameters(
+        threshold_snr=2.0,
+        texture_quantile=0.0,
+        period_center_bins=1,
+        period_context_bins=1,
+        min_period_contrast=0.0,
+        support_records=5,
+        min_occupancy=0.6,
+        period_support_bins=1,
+        window_support_records=5,
+        min_window_occupancy=0.4,
     )
 
-    assert float(np.nanmax(texture_structured)) < 1e-3
-    assert float(np.nanmean(band_structured[:, 50:90])) > 0.1
 
-
-def test_pelt_mean_shift_finds_active_segment() -> None:
-    activity = np.zeros(120, dtype=np.float32)
-    activity[40:90] = 4.0
-
-    segments = pelt_mean_shift(activity, penalty=5.0, min_size=10)
-    bounds = [(segment.start, segment.stop) for segment in segments]
-
-    assert any(start <= 40 and stop >= 90 for start, stop in bounds)
-
-
-def test_pelt_jump_one_preserves_exact_segments() -> None:
-    activity = np.zeros(160, dtype=np.float32)
-    activity[30:70] = 2.0
-    activity[95:130] = 3.0
-
-    exact = pelt_mean_shift(activity, penalty=4.0, min_size=8)
-    explicit_jump_one = pelt_mean_shift(activity, penalty=4.0, min_size=8, jump=1)
-
-    assert [(segment.start, segment.stop) for segment in explicit_jump_one] == [
-        (segment.start, segment.stop) for segment in exact
-    ]
-
-
-def test_native_pelt_regression_boundaries() -> None:
-    assert native_pelt_available()
-    rng = np.random.default_rng(321)
-    activity = rng.normal(0.0, 0.3, 240).astype(np.float64)
-    activity[45:100] += 2.0
-    activity[150:205] -= 1.5
-    activity[3] = np.nan
-    activity[19] = np.inf
-
-    expected_bounds = {
-        1: [(0, 45), (45, 100), (100, 150), (150, 205), (205, 240)],
-        4: [(0, 44), (44, 100), (100, 152), (152, 204), (204, 240)],
-        8: [(0, 48), (48, 104), (104, 152), (152, 208), (208, 240)],
-    }
-    for jump, expected in expected_bounds.items():
-        actual = pelt_mean_shift(activity, penalty=4.0, min_size=12, jump=jump)
-        assert [(segment.start, segment.stop) for segment in actual] == expected
-
-
-def test_pelt_batch_matches_single_channel_native() -> None:
-    rng = np.random.default_rng(322)
-    activity = rng.normal(0.0, 0.3, (4, 180)).astype(np.float64)
-    activity[0, 30:90] += 1.5
-    activity[1, 80:140] -= 1.0
-    activity[2, 10] = np.nan
-
-    actual = pelt_mean_shift_batch(activity, penalty=4.0, min_size=10, jump=4, threads=2)
-    expected = [
-        pelt_mean_shift(row, penalty=4.0, min_size=10, jump=4)
-        for row in activity
-    ]
-
-    for actual_segments, expected_segments in zip(actual, expected, strict=True):
-        assert [(segment.start, segment.stop) for segment in actual_segments] == [
-            (segment.start, segment.stop) for segment in expected_segments
-        ]
-        np.testing.assert_allclose(
-            [(segment.cost, segment.mean) for segment in actual_segments],
-            [(segment.cost, segment.mean) for segment in expected_segments],
-            rtol=1e-10,
-            atol=1e-10,
-        )
-
-
-def test_pelt_fails_fast_when_native_extension_is_missing(monkeypatch) -> None:
-    monkeypatch.setattr(windows_module, "_pelt_ext", None)
-    monkeypatch.setattr(windows_module, "_pelt_import_error", ImportError("missing test extension"))
-
-    with pytest.raises(RuntimeError, match="Python PELT fallback is intentionally unsupported"):
-        pelt_mean_shift(np.zeros(32, dtype=np.float64), min_size=8)
-
-    with pytest.raises(RuntimeError, match="python -m pip install -e"):
-        pelt_mean_shift_batch(np.zeros((2, 32), dtype=np.float64), min_size=8)
-
-
-def test_candidate_cap_resolves_auto_or_hard_channel_limit() -> None:
-    rate = 3.0 / 4096.0
-
-    assert resolve_channel_candidate_cap("auto", rate, records=4096) == 3
-    assert resolve_channel_candidate_cap("auto", rate, records=744) == 1
-    assert resolve_channel_candidate_cap("auto", rate, records=91104) == 67
-    assert resolve_channel_candidate_cap(2, rate, records=91104) == 2
-    assert resolve_channel_candidate_cap("7", rate, records=91104) == 7
-
-
-def test_cuda_quantile_helper_accepts_cupy_without_nanquantile() -> None:
-    from cwipss.signal.detection_cuda import _gpu_nanquantile
-
-    class CompatArrayModule:
-        quantile = staticmethod(np.quantile)
-
-    values = np.array([[1.0, 3.0, 2.0], [4.0, 6.0, 5.0]], dtype=np.float32)
-    result = _gpu_nanquantile(CompatArrayModule, values, 0.5, axis=1, keepdims=True)
-
-    np.testing.assert_allclose(result, np.array([[2.0], [5.0]], dtype=np.float32))
-
-
-def test_lowfloor_pelt_detector_finds_windowed_period_peak() -> None:
-    periods = period_grid_records(2, 128, 48)
-    target_period_idx = int(np.argmin(np.abs(periods - 64.0)))
-    target_channel = 3
-    power = np.ones((periods.size, 128, 5), dtype=np.float32)
-    power[target_period_idx - 2:target_period_idx + 3, 36:96, target_channel] = 50.0
-    timing: dict[str, float] = {}
-
-    rows, windows = detect_block_periods(
-        power_cube=power,
-        periods=periods,
-        freqs_mhz=np.arange(5, dtype=np.float64),
-        record_start=10,
-        candidate_period_min_records=10.0,
-        candidate_period_max_records=200.0,
-        noise_floor_fraction=0.2,
-        excess_eps_fraction=1e-6,
-        structure_baseline_quantile=0.1,
-        structure_scale_quantile=0.2,
-        structure_z_threshold=0.0,
-        structure_time_support_records=3,
-        structure_period_support_bins=1,
-        structure_min_support_fraction=0.0,
-        activity_trim_low=0.0,
-        activity_trim_high=1.0,
-        activity_smooth_records=3,
-        pelt_penalty=5.0,
-        pelt_min_size_records=8,
-        window_min_duration_records=16,
-        window_min_activity_mean=0.5,
-        window_min_activity_raw_mean=0.0,
-        window_merge_gap_records=4,
-        profile_min_prominence=0.1,
-        profile_max_peaks_per_window=2,
-        max_candidates_per_channel=2,
-        timing=timing,
+def test_cpro_retains_persistent_absolute_ridge() -> None:
+    power = np.ones((3, 128), dtype=np.float32)
+    power[1, 24:104] = 12.0
+    result = cpro_activity(
+        power,
+        noise_std=1.0,
+        noise_gain=np.ones(3),
+        params=_small_params(),
     )
-
-    assert len(windows) >= 1
-    assert len(rows) >= 1
-    assert rows[0]["detection_method"] == "single_channel_lowfloor_pelt_profile"
-    assert rows[0]["channel_index"] == target_channel
-    assert rows[0]["peak_freq_mhz"] == float(target_channel)
-    assert abs(rows[0]["peak_period_records"] - float(periods[target_period_idx])) < 12.0
-    assert rows[0]["record_start"] <= 50
-    assert rows[0]["record_stop"] >= 90
-    assert rows[0]["integrated_score"] > 0
-    assert timing["channels"] == 5.0
-    assert timing["structure_seconds"] >= 0.0
-    assert timing["pelt_seconds"] >= 0.0
+    assert np.max(result.activity[40:90]) > 0.0
+    assert np.any(result.active_mask[40:90])
 
 
-def test_cuda_power_detector_matches_cpu_detector_for_synthetic_peak() -> None:
-    cp = pytest.importorskip("cupy")
-    from cwipss.signal.cwt_cuda import cuda_available
-    from cwipss.signal.detection_cuda import detect_block_periods_cuda_power
-
-    if not cuda_available():
-        pytest.skip("CUDA device is not available")
-
-    periods = period_grid_records(2, 128, 48)
-    target_period_idx = int(np.argmin(np.abs(periods - 64.0)))
-    target_channel = 2
-    power = np.ones((periods.size, 128, 4), dtype=np.float32)
-    power[target_period_idx - 2:target_period_idx + 3, 36:96, target_channel] = 50.0
-    kwargs = dict(
-        periods=periods,
-        freqs_mhz=np.arange(4, dtype=np.float64),
-        record_start=10,
-        candidate_period_min_records=10.0,
-        candidate_period_max_records=200.0,
-        noise_floor_fraction=0.2,
-        excess_eps_fraction=1e-6,
-        structure_baseline_quantile=0.1,
-        structure_scale_quantile=0.2,
-        structure_z_threshold=0.0,
-        structure_time_support_records=3,
-        structure_period_support_bins=1,
-        structure_min_support_fraction=0.0,
-        activity_trim_low=0.0,
-        activity_trim_high=1.0,
-        activity_smooth_records=3,
-        pelt_penalty=5.0,
-        pelt_min_size_records=8,
-        window_min_duration_records=16,
-        window_min_activity_mean=0.5,
-        window_min_activity_raw_mean=0.0,
-        window_merge_gap_records=4,
-        profile_min_prominence=0.1,
-        profile_max_peaks_per_window=2,
-        max_candidates_per_channel=2,
+def test_cpro_rejects_short_bright_transient() -> None:
+    power = np.ones((3, 128), dtype=np.float32)
+    power[1, 60:62] = 100.0
+    result = cpro_activity(
+        power,
+        noise_std=1.0,
+        noise_gain=np.ones(3),
+        params=_small_params(),
     )
-
-    cpu_rows, cpu_windows = detect_block_periods(power_cube=power, **kwargs)
-    cuda_rows, cuda_windows = detect_block_periods_cuda_power(power_cube=cp.asarray(power), **kwargs)
-
-    assert len(cuda_windows) == len(cpu_windows)
-    assert len(cuda_rows) == len(cpu_rows)
-    assert cuda_rows[0]["channel_index"] == cpu_rows[0]["channel_index"] == target_channel
-    assert abs(cuda_rows[0]["peak_period_records"] - cpu_rows[0]["peak_period_records"]) < 1e-6
-    assert abs(cuda_rows[0]["peak_score"] - cpu_rows[0]["peak_score"]) < 1e-3
+    assert not np.any(result.active_mask)
 
 
-def test_cuda_batch_structure_matches_sequential_structure_for_synthetic_peak() -> None:
-    cp = pytest.importorskip("cupy")
-    from cwipss.signal.cwt_cuda import cuda_available
-    from cwipss.signal.detection_cuda import detect_block_periods_cuda_power
+def test_cpro_activity_has_no_legacy_window_parameters() -> None:
+    power = np.ones((3, 128), dtype=np.float32)
+    power[1, 24:104] = 12.0
+    params = _small_params()
 
-    if not cuda_available():
-        pytest.skip("CUDA device is not available")
+    result = cpro_activity(power, noise_std=1.0, noise_gain=np.ones(3), params=params)
 
-    periods = period_grid_records(2, 128, 48)
-    target_period_idx = int(np.argmin(np.abs(periods - 64.0)))
-    target_channel = 2
-    power = np.ones((periods.size, 128, 4), dtype=np.float32)
-    power[target_period_idx - 2:target_period_idx + 3, 36:96, target_channel] = 50.0
-    kwargs = dict(
-        power_cube=cp.asarray(power),
-        periods=periods,
-        freqs_mhz=np.arange(4, dtype=np.float64),
-        record_start=10,
-        candidate_period_min_records=10.0,
-        candidate_period_max_records=200.0,
-        noise_floor_fraction=0.2,
-        excess_eps_fraction=1e-6,
-        structure_baseline_quantile=0.1,
-        structure_scale_quantile=0.2,
-        structure_z_threshold=0.0,
-        structure_time_support_records=3,
-        structure_period_support_bins=1,
-        structure_min_support_fraction=0.0,
-        activity_trim_low=0.0,
-        activity_trim_high=1.0,
-        activity_smooth_records=3,
-        pelt_penalty=5.0,
-        pelt_min_size_records=8,
-        window_min_duration_records=16,
-        window_min_activity_mean=0.5,
-        window_min_activity_raw_mean=0.0,
-        window_merge_gap_records=4,
-        profile_min_prominence=0.1,
-        profile_max_peaks_per_window=2,
-        max_candidates_per_channel=2,
-    )
-
-    sequential_rows, sequential_windows = detect_block_periods_cuda_power(
-        **kwargs,
-        cuda_structure_batch=False,
-    )
-    batch_rows, batch_windows = detect_block_periods_cuda_power(
-        **kwargs,
-        cuda_structure_batch=True,
-        cuda_structure_batch_channels=2,
-        pelt_threads=2,
-    )
-
-    assert len(batch_windows) == len(sequential_windows)
-    assert len(batch_rows) == len(sequential_rows)
-    assert batch_rows[0]["channel_index"] == sequential_rows[0]["channel_index"] == target_channel
-    assert abs(batch_rows[0]["peak_period_records"] - sequential_rows[0]["peak_period_records"]) < 1e-6
-    assert abs(batch_rows[0]["peak_score"] - sequential_rows[0]["peak_score"]) < 1e-3
+    assert "max_gap_records" not in params.__dict__
+    assert "min_duration_records" not in params.__dict__
+    assert np.max(result.activity) > 0.0
 
 
-def test_default_profile_keeps_one_period_family_per_window() -> None:
-    periods = period_grid_records(2, 128, 48)
-    first_idx = int(np.argmin(np.abs(periods - 32.0)))
-    second_idx = int(np.argmin(np.abs(periods - 64.0)))
-    power = np.ones((periods.size, 128, 1), dtype=np.float32)
-    power[first_idx - 1:first_idx + 2, 32:96, 0] = 30.0
-    power[second_idx - 1:second_idx + 2, 32:96, 0] = 60.0
+def test_cpro_activity_is_in_noise_calibrated_power_units() -> None:
+    power = np.ones((3, 128), dtype=np.float32)
+    power[1, 24:104] = 12.0
 
-    rows, windows = detect_block_periods(
-        power_cube=power,
-        periods=periods,
-        freqs_mhz=np.array([1.0], dtype=np.float64),
-        record_start=0,
-        candidate_period_min_records=10.0,
-        candidate_period_max_records=200.0,
-        noise_floor_fraction=0.2,
-        excess_eps_fraction=1e-6,
-        structure_baseline_quantile=0.1,
-        structure_scale_quantile=0.2,
-        structure_z_threshold=0.0,
-        structure_time_support_records=3,
-        structure_period_support_bins=1,
-        structure_min_support_fraction=0.0,
-        activity_trim_low=0.0,
-        activity_trim_high=1.0,
-        activity_smooth_records=3,
-        pelt_penalty=5.0,
-        pelt_min_size_records=8,
-        window_min_duration_records=16,
-        window_min_activity_mean=0.5,
-        window_min_activity_raw_mean=0.0,
-        window_merge_gap_records=4,
-        profile_min_prominence=0.1,
-        profile_max_peaks_per_window=1,
-        max_candidates_per_channel=3,
-    )
+    base = cpro_activity(power, noise_std=1.0, noise_gain=np.ones(3), params=_small_params())
+    scaled = cpro_activity(4.0 * power, noise_std=2.0, noise_gain=np.ones(3), params=_small_params())
 
-    assert len(windows) >= 1
-    assert len(rows) == len({row["window_id"] for row in rows})
-    assert len(rows) == 1
-    assert min(
-        abs(rows[0]["peak_period_records"] - float(periods[first_idx])),
-        abs(rows[0]["peak_period_records"] - float(periods[second_idx])),
-    ) < 12.0
+    np.testing.assert_allclose(base.activity, scaled.activity)
+    np.testing.assert_allclose(base.score_map, scaled.score_map)
 
 
-def test_relative_excess_is_zero_near_noise_floor() -> None:
-    power = np.ones((4, 5), dtype=np.float32)
-    z = relative_excess(power, 1.0)
-    assert np.max(np.abs(z)) < 1e-5
+def test_noise_calibration_has_no_degenerate_fallback() -> None:
+    with pytest.raises(ValueError, match="positive"):
+        difference_noise_std(np.ones(32, dtype=np.float32))
+
+
+def test_candidate_cap_auto_scales_with_record_count() -> None:
+    assert resolve_channel_candidate_cap("auto", 3.0 / 4096.0, 4096) == 3
+    assert resolve_channel_candidate_cap("auto", 3.0 / 4096.0, 8192) == 6

@@ -11,14 +11,18 @@ from typing import Any
 
 import numpy as np
 
+from ..signal.cpro import CPRO_DETECTOR, CPROParameters, cpro_period_mask, impulse_cwt_noise_gain
+from ..signal.cprf import CPRFParameters
 from ..signal.cwt import cwt_power_cube, period_grid_records
 from ..signal.detection import add_candidate_ids, detect_block_periods
+from ..signal.windows import require_native_pelt
 from .injection import BackgroundData, ce4_background, inject_many, synthetic_background
 from ..data.schemas import (
     INJECTION_PERFORMANCE_FIELDNAMES,
     INJECTION_RESULT_FIELDNAMES,
     INJECTION_TRUTH_FIELDNAMES,
     RAW_CANDIDATE_FIELDNAMES,
+    RAW_CANDIDATE_SCHEMA_VERSION,
     REVIEWED_CANDIDATE_FIELDNAMES,
     TIME_WINDOW_FIELDNAMES,
     VALIDATION_FIELDNAMES,
@@ -40,7 +44,6 @@ from .validation import (
     validation_period_bounds,
 )
 from .veto import VetoConfig, VetoContext, review_candidates
-from ..signal.windows import require_native_pelt
 
 
 @dataclass(frozen=True)
@@ -56,32 +59,41 @@ class CWTBenchmarkConfig:
     block_channels: int = 128
     time_aggregation: str = "p95"
     aggregation_percentile: float = 95.0
-    detector: str = "single_channel_lowfloor_pelt"
+    detector: str = CPRO_DETECTOR
     candidate_period_min_records: float = 10.0
     candidate_period_max_records: float = 200.0
-    noise_floor_fraction: float = 0.20
-    excess_eps_fraction: float = 1e-6
-    structure_baseline_quantile: float = 0.10
-    structure_scale_quantile: float = 0.20
-    structure_z_threshold: float = 1.0
-    structure_time_support_records: int = 64
-    structure_period_support_bins: int = 3
-    structure_min_support_fraction: float = 0.10
-    activity_trim_low: float = 0.05
-    activity_trim_high: float = 0.95
-    activity_smooth_records: int = 16
+    cpro_threshold_snr: float = 32.0
+    cpro_texture_quantile: float = 0.9375
+    cpro_period_center_bins: int = 3
+    cpro_period_context_bins: int = 15
+    cpro_min_period_contrast: float = 1.5
+    cpro_support_records: int = 65
+    cpro_min_occupancy: float = 0.65
+    cpro_period_support_bins: int = 3
+    cpro_window_support_records: int = 769
+    cpro_min_window_occupancy: float = 0.40
     pelt_penalty: float = 16.0
     pelt_min_size_records: int = 384
     pelt_jump_records: int = 1
     pelt_threads: int = 1
-    cuda_structure_batch: bool = False
-    cuda_structure_batch_channels: int | None = None
     window_min_duration_records: int = 384
     window_min_activity_mean: float = 0.05
     window_min_activity_raw_mean: float = 25.0
     window_merge_gap_records: int = 256
-    profile_min_prominence: float = 0.5
-    profile_max_peaks_per_window: int = 1
+    cprf_threshold_snr: float = 32.0
+    cprf_texture_quantile: float = 0.9375
+    cprf_smooth_bins: int = 3
+    cprf_peak_band_fraction: float = 0.50
+    cprf_min_width_bins: int = 3
+    cprf_min_peak_strength: float = 1.25
+    cprf_min_integrated_strength: float = 0.0
+    cprf_min_band_persistence: float = 0.35
+    cprf_min_band_concentration: float = 0.55
+    cprf_min_local_contrast: float = 3.60
+    cprf_harmonic_weight: float = 0.20
+    cprf_harmonic_min_relative: float = 0.12
+    cprf_harmonic_window_scale: float = 1.25
+    cprf_max_peak_hypotheses: int = 8
     max_candidates_per_channel: int | str = "auto"
     max_candidates_per_record: float = 3.0 / 4096.0
     progress_enabled: bool = True
@@ -168,12 +180,54 @@ def run_cwt_candidate_search(
     veto_config: VetoConfig,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     require_native_pelt()
+    if search_config.detector != CPRO_DETECTOR:
+        raise ValueError(f"Unsupported detector {search_config.detector!r}; required detector is {CPRO_DETECTOR!r}")
+    CPROParameters(
+        threshold_snr=search_config.cpro_threshold_snr,
+        texture_quantile=search_config.cpro_texture_quantile,
+        period_center_bins=search_config.cpro_period_center_bins,
+        period_context_bins=search_config.cpro_period_context_bins,
+        min_period_contrast=search_config.cpro_min_period_contrast,
+        support_records=search_config.cpro_support_records,
+        min_occupancy=search_config.cpro_min_occupancy,
+        period_support_bins=search_config.cpro_period_support_bins,
+        window_support_records=search_config.cpro_window_support_records,
+        min_window_occupancy=search_config.cpro_min_window_occupancy,
+    ).validate()
+    cprf_params = CPRFParameters(
+        threshold_snr=search_config.cprf_threshold_snr,
+        texture_quantile=search_config.cprf_texture_quantile,
+        smooth_bins=search_config.cprf_smooth_bins,
+        peak_band_fraction=search_config.cprf_peak_band_fraction,
+        min_width_bins=search_config.cprf_min_width_bins,
+        min_peak_strength=search_config.cprf_min_peak_strength,
+        min_integrated_strength=search_config.cprf_min_integrated_strength,
+        min_band_persistence=search_config.cprf_min_band_persistence,
+        min_band_concentration=search_config.cprf_min_band_concentration,
+        min_local_contrast=search_config.cprf_min_local_contrast,
+        harmonic_weight=search_config.cprf_harmonic_weight,
+        harmonic_min_relative=search_config.cprf_harmonic_min_relative,
+        harmonic_window_scale=search_config.cprf_harmonic_window_scale,
+        max_peak_hypotheses=search_config.cprf_max_peak_hypotheses,
+    )
+    cprf_params.validate()
+    detector = detect_block_periods
     matrix = np.asarray(data, dtype=np.float32)
     periods = period_grid_records(
         search_config.period_min_records,
         search_config.period_max_records,
         search_config.period_count,
         search_config.period_spacing,
+    )
+    candidate_period_mask = cpro_period_mask(
+        periods,
+        search_config.candidate_period_min_records,
+        search_config.candidate_period_max_records,
+    )
+    noise_gain = impulse_cwt_noise_gain(
+        periods[candidate_period_mask],
+        wavelet=search_config.wavelet,
+        method=search_config.cwt_method,
     )
     all_candidates: list[dict[str, Any]] = []
     all_windows: list[dict[str, Any]] = []
@@ -189,23 +243,29 @@ def run_cwt_candidate_search(
         search_config.cuda_device,
     )
     if use_cuda_block_backend:
-        from ..signal.cwt_cuda import cwt_power_cube_cuda_gpu
+        from ..signal.cwt_cuda import _cupy, cwt_power_cube_cuda_gpu
         from ..signal.detection_cuda import detect_block_periods_cuda_power
     try:
         for block_index, block_start in enumerate(range(0, matrix.shape[1], search_config.block_channels), start=1):
             block_stop = min(block_start + int(search_config.block_channels), matrix.shape[1])
-            block_data = matrix[:, block_start:block_stop]
-            block_freqs = freqs_mhz[block_start:block_stop]
+            halo = slice(block_start, block_stop)
+            block_data = matrix[:, halo]
+            block_freqs = freqs_mhz[halo]
             if use_cuda_block_backend:
+                cp = _cupy()
+                cp.cuda.Device(int(search_config.cuda_device)).use()
+                raw_device = cp.asarray(block_data, dtype=cp.float32)
                 power = cwt_power_cube_cuda_gpu(
-                    block_data,
+                    raw_device,
                     wavelet=search_config.wavelet,
                     periods=periods,
                     method=search_config.cwt_method,
                     device=search_config.cuda_device,
-                    normalize_channels=True,
+                    normalize_channels=False,
                 )
+                detector = detect_block_periods_cuda_power
             else:
+                raw_device = block_data
                 power = cwt_power_cube(
                     block_data,
                     wavelet=search_config.wavelet,
@@ -213,57 +273,59 @@ def run_cwt_candidate_search(
                     method=search_config.cwt_method,
                     backend=search_config.cwt_backend,
                     cuda_device=search_config.cuda_device,
-                    normalize_channels=True,
+                    normalize_channels=False,
                 )
-            detector = detect_block_periods_cuda_power if use_cuda_block_backend else detect_block_periods
+                detector = detect_block_periods
             candidates, windows = detector(
                 power_cube=power,
+                raw_data=raw_device,
                 periods=periods,
                 freqs_mhz=block_freqs,
+                noise_gain=noise_gain,
                 record_start=0,
+                target_channel_start=block_start - halo.start,
+                target_channel_stop=block_stop - halo.start,
                 candidate_period_min_records=search_config.candidate_period_min_records,
                 candidate_period_max_records=search_config.candidate_period_max_records,
-                noise_floor_fraction=search_config.noise_floor_fraction,
-                excess_eps_fraction=search_config.excess_eps_fraction,
-                structure_baseline_quantile=search_config.structure_baseline_quantile,
-                structure_scale_quantile=search_config.structure_scale_quantile,
-                structure_z_threshold=search_config.structure_z_threshold,
-                structure_time_support_records=search_config.structure_time_support_records,
-                structure_period_support_bins=search_config.structure_period_support_bins,
-                structure_min_support_fraction=search_config.structure_min_support_fraction,
-                activity_trim_low=search_config.activity_trim_low,
-                activity_trim_high=search_config.activity_trim_high,
-                activity_smooth_records=search_config.activity_smooth_records,
+                cpro_threshold_snr=search_config.cpro_threshold_snr,
+                cpro_texture_quantile=search_config.cpro_texture_quantile,
+                cpro_period_center_bins=search_config.cpro_period_center_bins,
+                cpro_period_context_bins=search_config.cpro_period_context_bins,
+                cpro_min_period_contrast=search_config.cpro_min_period_contrast,
+                cpro_support_records=search_config.cpro_support_records,
+                cpro_min_occupancy=search_config.cpro_min_occupancy,
+                cpro_period_support_bins=search_config.cpro_period_support_bins,
+                cpro_window_support_records=search_config.cpro_window_support_records,
+                cpro_min_window_occupancy=search_config.cpro_min_window_occupancy,
                 pelt_penalty=search_config.pelt_penalty,
                 pelt_min_size_records=search_config.pelt_min_size_records,
                 pelt_jump_records=search_config.pelt_jump_records,
                 pelt_threads=search_config.pelt_threads,
-                cuda_structure_batch=search_config.cuda_structure_batch,
-                cuda_structure_batch_channels=search_config.cuda_structure_batch_channels,
-                cuda_device=search_config.cuda_device,
                 window_min_duration_records=search_config.window_min_duration_records,
                 window_min_activity_mean=search_config.window_min_activity_mean,
                 window_min_activity_raw_mean=search_config.window_min_activity_raw_mean,
                 window_merge_gap_records=search_config.window_merge_gap_records,
-                profile_min_prominence=search_config.profile_min_prominence,
-                profile_max_peaks_per_window=search_config.profile_max_peaks_per_window,
+                cuda_device=search_config.cuda_device,
+                cprf_params=cprf_params,
                 max_candidates_per_channel=search_config.max_candidates_per_channel,
                 max_candidates_per_record=search_config.max_candidates_per_record,
             )
-            del power
+            del power, raw_device
             for row in windows:
-                row["schema_version"] = 1
+                row["channel"] = block_start + int(row["channel"])
+                row["schema_version"] = RAW_CANDIDATE_SCHEMA_VERSION
                 row["run_id"] = run_id
                 row["source_file"] = source_name
                 row["block_id"] = f"block_{block_index:04d}"
-                row["block_channel_start"] = block_start
-                row["block_channel_stop"] = block_stop
+                row["block_ch0"] = block_start
+                row["block_ch1"] = block_stop
                 all_windows.append(row)
             for row in candidates:
-                row["cwt_wavelet"] = search_config.wavelet
-                row["time_aggregation"] = search_config.time_aggregation
-                row["block_channel_start"] = block_start
-                row["block_channel_stop"] = block_stop
+                row["channel"] = block_start + int(row["channel"])
+                row["wavelet"] = search_config.wavelet
+                row["time_agg"] = search_config.time_aggregation
+                row["block_ch0"] = block_start
+                row["block_ch1"] = block_stop
                 all_candidates.append(
                     normalize_candidate_row(
                         row,
@@ -289,23 +351,16 @@ def run_cwt_candidate_search(
 
 
 def _freq_slice_for_row(freqs_mhz: np.ndarray, row: dict[str, Any]) -> slice:
-    lo = _float(row, "freq_start_mhz", _float(row, "peak_freq_mhz", 0.0))
-    hi = _float(row, "freq_stop_mhz", lo)
-    lo, hi = sorted([lo, hi])
-    if hi == lo:
-        idx = int(np.nanargmin(np.abs(freqs_mhz - lo)))
-        return slice(idx, idx + 1)
-    mask = (freqs_mhz >= lo) & (freqs_mhz <= hi)
-    if not np.any(mask):
-        idx = int(np.nanargmin(np.abs(freqs_mhz - _float(row, "peak_freq_mhz", 0.5 * (lo + hi)))))
-        return slice(idx, idx + 1)
-    indices = np.where(mask)[0]
-    return slice(int(indices[0]), int(indices[-1]) + 1)
+    freq = _float(row, "freq_mhz", np.nan)
+    if not np.isfinite(freq):
+        raise ValueError("candidate freq_mhz must be finite")
+    idx = int(np.nanargmin(np.abs(freqs_mhz - freq)))
+    return slice(idx, idx + 1)
 
 
 def _record_window_for_row(row: dict[str, Any], records: int, config: ValidationConfig) -> slice:
-    peak = int(_float(row, "peak_record", _float(row, "record_start", 0)))
-    approx = max(float(config.min_period_records), _float(row, "peak_period_records", 2.0))
+    peak = int(_float(row, "t_peak_rec", _float(row, "t0_rec", 0)))
+    approx = max(float(config.min_period_records), _float(row, "period_rec", 2.0))
     target = int(np.ceil(approx * max(1, config.window_periods)))
     target = max(int(config.min_window_records), min(int(config.max_window_records), target, int(records)))
     start = max(0, peak - target // 2)
@@ -332,7 +387,7 @@ def validate_cwt_candidates(
         record_slice = _record_window_for_row(row, data.shape[0], validation_config)
         freq_slice = _freq_slice_for_row(freqs_mhz, row)
         series = aggregate_frequency_series(data[record_slice, freq_slice])
-        approx_period = max(float(validation_config.min_period_records), _float(row, "peak_period_records", 2.0))
+        approx_period = max(float(validation_config.min_period_records), _float(row, "period_rec", 2.0))
         min_period, max_period = validation_period_bounds(approx_period, series.size, validation_config)
         periods = period_grid(min_period, max_period)
         if series.size < max(8, 3 * min_period) or periods.size == 0:
@@ -393,14 +448,15 @@ def validate_cwt_candidates(
 
 def _candidate_overlap(candidate: dict[str, Any], truth: dict[str, Any]) -> tuple[float, float]:
     time_overlap = _span_overlap(
-        _float(candidate, "record_start"),
-        _float(candidate, "record_stop"),
+        _float(candidate, "t0_rec"),
+        _float(candidate, "t1_rec"),
         _float(truth, "record_start"),
         _float(truth, "record_stop"),
     )
+    candidate_freq = _float(candidate, "freq_mhz")
     freq_overlap = _span_overlap(
-        _float(candidate, "freq_start_mhz"),
-        _float(candidate, "freq_stop_mhz"),
+        candidate_freq,
+        candidate_freq,
         _float(truth, "freq_start_mhz"),
         _float(truth, "freq_stop_mhz"),
     )
@@ -412,7 +468,7 @@ def best_truth_match(candidates: list[dict[str, Any]], truth: dict[str, Any], ma
     for candidate in candidates:
         time_overlap, freq_overlap = _candidate_overlap(candidate, truth)
         if time_overlap >= match_config.min_time_overlap and freq_overlap >= match_config.min_freq_overlap:
-            candidate_score = _float(candidate, "integrated_score", _float(candidate, "peak_score", 0.0))
+            candidate_score = _float(candidate, "score", 0.0)
             score = time_overlap + freq_overlap + candidate_score * 0.01
             matches.append((score, candidate, time_overlap, freq_overlap))
     if not matches:
@@ -478,7 +534,7 @@ def evaluate_injections(
                 "time_overlap_fraction": match.get("_time_overlap_fraction", ""),
                 "freq_overlap_fraction": match.get("_freq_overlap_fraction", ""),
                 "period_error_fraction": period_error if math.isfinite(period_error) else "",
-                "peak_score": match.get("peak_score", ""),
+                "score": match.get("score", ""),
                 "candidate_status": match.get("candidate_status", ""),
                 "veto_flags": match.get("veto_flags", ""),
                 "p_value": (validation_row or {}).get("p_value", ""),
@@ -588,6 +644,7 @@ def run_injection_benchmark(
         stage = str(row.get("failure_stage", ""))
         failure_stage_counts[stage] = failure_stage_counts.get(stage, 0) + 1
     summary = {
+        "schema_version": RAW_CANDIDATE_SCHEMA_VERSION,
         "run_id": run_id,
         "source": injected_background.source_name,
         "injection_count": len(truths),
@@ -645,17 +702,30 @@ def run_injection_benchmark(
                 candidate_period_max_records=search_config.candidate_period_max_records,
                 time_aggregation=search_config.time_aggregation,
                 aggregation_percentile=search_config.aggregation_percentile,
-                noise_floor_fraction=search_config.noise_floor_fraction,
-                excess_eps_fraction=search_config.excess_eps_fraction,
-                structure_baseline_quantile=search_config.structure_baseline_quantile,
-                structure_scale_quantile=search_config.structure_scale_quantile,
-                structure_z_threshold=search_config.structure_z_threshold,
-                structure_time_support_records=search_config.structure_time_support_records,
-                structure_period_support_bins=search_config.structure_period_support_bins,
-                structure_min_support_fraction=search_config.structure_min_support_fraction,
-                activity_trim_low=search_config.activity_trim_low,
-                activity_trim_high=search_config.activity_trim_high,
-                activity_smooth_records=search_config.activity_smooth_records,
+                cpro_threshold_snr=search_config.cpro_threshold_snr,
+                cpro_texture_quantile=search_config.cpro_texture_quantile,
+                cpro_period_center_bins=search_config.cpro_period_center_bins,
+                cpro_period_context_bins=search_config.cpro_period_context_bins,
+                cpro_min_period_contrast=search_config.cpro_min_period_contrast,
+                cpro_support_records=search_config.cpro_support_records,
+                cpro_min_occupancy=search_config.cpro_min_occupancy,
+                cpro_period_support_bins=search_config.cpro_period_support_bins,
+                cpro_window_support_records=search_config.cpro_window_support_records,
+                cpro_min_window_occupancy=search_config.cpro_min_window_occupancy,
+                cprf_threshold_snr=search_config.cprf_threshold_snr,
+                cprf_texture_quantile=search_config.cprf_texture_quantile,
+                cprf_smooth_bins=search_config.cprf_smooth_bins,
+                cprf_peak_band_fraction=search_config.cprf_peak_band_fraction,
+                cprf_min_width_bins=search_config.cprf_min_width_bins,
+                cprf_min_peak_strength=search_config.cprf_min_peak_strength,
+                cprf_min_integrated_strength=search_config.cprf_min_integrated_strength,
+                cprf_min_band_persistence=search_config.cprf_min_band_persistence,
+                cprf_min_band_concentration=search_config.cprf_min_band_concentration,
+                cprf_min_local_contrast=search_config.cprf_min_local_contrast,
+                cprf_harmonic_weight=search_config.cprf_harmonic_weight,
+                cprf_harmonic_min_relative=search_config.cprf_harmonic_min_relative,
+                cprf_harmonic_window_scale=search_config.cprf_harmonic_window_scale,
+                cprf_max_peak_hypotheses=search_config.cprf_max_peak_hypotheses,
             ),
             raw_candidates=raw,
             reviewed_candidates=reviewed,

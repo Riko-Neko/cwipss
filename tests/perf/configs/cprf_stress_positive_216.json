@@ -1,0 +1,140 @@
+{
+  "schema_version": 1,
+  "seed": 2026071601,
+  "description": "CPRF stress positives: 216 independent weak single-channel injections per CE4 observation. Three equal waveform strata cover sinusoidal, medium-duty pulsed, and narrow-duty harmonic-rich signals over the full frequency band. Every case is processed independently through current CPRO-w769 and native C++ PELT before period-profile evaluation.",
+  "sets": [
+    {
+      "name": "stress_fundamental_only",
+      "count": 72,
+      "signal_model": "sinusoidal_narrowband",
+      "period_records": {
+        "min": 12.0,
+        "max": 900.0,
+        "distribution": "log_uniform"
+      },
+      "amplitude": {
+        "min": 5e-8,
+        "max": 2e-7,
+        "distribution": "log_uniform"
+      },
+      "frequency_mhz": {
+        "min": 0.15,
+        "max": 39.5,
+        "distribution": "uniform"
+      },
+      "time": {
+        "duration_fraction": {
+          "min": 0.21,
+          "max": 0.45,
+          "distribution": "uniform"
+        }
+      },
+      "modulation": {
+        "phase": {
+          "min": 0.0,
+          "max": 1.0,
+          "distribution": "uniform"
+        },
+        "duty_cycle": {
+          "value": 0.5
+        }
+      },
+      "bandwidth_channels": 1.0,
+      "drift_channels": 0.0,
+      "replication": {
+        "probability": 0.0,
+        "max_copies": 1
+      }
+    },
+    {
+      "name": "stress_medium_duty",
+      "count": 72,
+      "signal_model": "pulsed_periodic",
+      "period_records": {
+        "min": 12.0,
+        "max": 900.0,
+        "distribution": "log_uniform"
+      },
+      "amplitude": {
+        "min": 5e-8,
+        "max": 2e-7,
+        "distribution": "log_uniform"
+      },
+      "frequency_mhz": {
+        "min": 0.15,
+        "max": 39.5,
+        "distribution": "uniform"
+      },
+      "time": {
+        "duration_fraction": {
+          "min": 0.21,
+          "max": 0.45,
+          "distribution": "uniform"
+        }
+      },
+      "modulation": {
+        "phase": {
+          "min": 0.0,
+          "max": 1.0,
+          "distribution": "uniform"
+        },
+        "duty_cycle": {
+          "min": 0.2,
+          "max": 0.6,
+          "distribution": "uniform"
+        }
+      },
+      "bandwidth_channels": 1.0,
+      "drift_channels": 0.0,
+      "replication": {
+        "probability": 0.0,
+        "max_copies": 1
+      }
+    },
+    {
+      "name": "stress_narrow_duty_harmonic",
+      "count": 72,
+      "signal_model": "single_channel_periodic",
+      "period_records": {
+        "min": 12.0,
+        "max": 900.0,
+        "distribution": "log_uniform"
+      },
+      "amplitude": {
+        "min": 5e-8,
+        "max": 2e-7,
+        "distribution": "log_uniform"
+      },
+      "frequency_mhz": {
+        "min": 0.15,
+        "max": 39.5,
+        "distribution": "uniform"
+      },
+      "time": {
+        "duration_fraction": {
+          "min": 0.21,
+          "max": 0.45,
+          "distribution": "uniform"
+        }
+      },
+      "modulation": {
+        "phase": {
+          "min": 0.0,
+          "max": 1.0,
+          "distribution": "uniform"
+        },
+        "duty_cycle": {
+          "min": 0.03,
+          "max": 0.15,
+          "distribution": "uniform"
+        }
+      },
+      "bandwidth_channels": 1.0,
+      "drift_channels": 0.0,
+      "replication": {
+        "probability": 0.0,
+        "max_copies": 1
+      }
+    }
+  ]
+}

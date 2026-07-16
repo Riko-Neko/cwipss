@@ -172,11 +172,7 @@ def _fold_profile_snr_from_series(series: np.ndarray, period_records: float, fol
     profile = profile[valid]
     median = float(np.nanmedian(profile))
     mad = float(np.nanmedian(np.abs(profile - median)))
-    scale = 1.4826 * mad
-    if not np.isfinite(scale) or scale <= 1e-12:
-        scale = float(np.nanstd(profile))
-    if not np.isfinite(scale) or scale <= 1e-12:
-        return {"fold_profile_snr": 0.0, "fold_bin_count": float(n_bins)}
+    scale = max(float(1.4826 * mad), 1e-12)
     return {
         "fold_profile_snr": float((np.nanmax(profile) - median) / scale),
         "fold_bin_count": float(n_bins),
@@ -275,7 +271,7 @@ def validation_period_bounds(
 
 
 def candidate_period_seed(row: Mapping[str, Any], config: ValidationConfig) -> float:
-    for key in ("peak_period_records", "period_start_records", "approx_period_records"):
+    for key in ("period_rec", "p0_rec", "approx_period_records"):
         value = row.get(key)
         if value not in ("", None):
             return max(float(config.min_period_records), float(value))
@@ -324,7 +320,7 @@ def candidate_record_window(
     reader: SpectrumReader,
     config: ValidationConfig,
 ) -> slice:
-    peak = int(_float(row, "peak_record", _float(row, "record_start", 0)))
+    peak = int(_float(row, "t_peak_rec", _float(row, "t0_rec", 0)))
     approx_period = candidate_period_seed(row, config)
     target = int(np.ceil(approx_period * max(1, config.window_periods)))
     target = max(int(config.min_window_records), min(int(config.max_window_records), target))
@@ -344,19 +340,11 @@ def candidate_record_window(
 
 def candidate_freq_slice(row: Mapping[str, Any], reader: SpectrumReader) -> slice:
     freqs = reader.freqs_mhz
-    lo = _float(row, "freq_start_mhz", _float(row, "peak_freq_mhz", 0.0))
-    hi = _float(row, "freq_stop_mhz", lo)
-    lo, hi = sorted([lo, hi])
-    if hi == lo:
-        idx = int(np.nanargmin(np.abs(freqs - lo)))
-        return slice(idx, idx + 1)
-    mask = (freqs >= lo) & (freqs <= hi)
-    if not np.any(mask):
-        peak = _float(row, "peak_freq_mhz", 0.5 * (lo + hi))
-        idx = int(np.nanargmin(np.abs(freqs - peak)))
-        return slice(idx, idx + 1)
-    indices = np.where(mask)[0]
-    return slice(int(indices[0]), int(indices[-1]) + 1)
+    freq = _float(row, "freq_mhz", np.nan)
+    if not np.isfinite(freq):
+        raise ValueError("candidate freq_mhz must be finite")
+    idx = int(np.nanargmin(np.abs(freqs - freq)))
+    return slice(idx, idx + 1)
 
 
 def aggregate_frequency_series(data: np.ndarray) -> np.ndarray:

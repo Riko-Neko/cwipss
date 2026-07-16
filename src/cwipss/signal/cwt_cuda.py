@@ -9,7 +9,7 @@ import numpy as np
 from pywt._cwt import integrate_wavelet, next_fast_len
 from pywt._extensions._pywt import ContinuousWavelet, DiscreteContinuousWavelet, Wavelet, _check_dtype
 
-from .cwt import periods_to_scales, robust_zscore_channels
+from .cwt import MIN_ROBUST_SCALE, periods_to_scales
 
 
 def _cupy() -> Any:
@@ -69,10 +69,11 @@ def cwt_power_cube_cuda(
 ) -> np.ndarray:
     """Return CWT power via a CuPy FFT backend.
 
-    This mirrors the PyWavelets FFT CWT construction used by the CPU fallback:
+    This mirrors the PyWavelets FFT CWT construction used by the CPU backend:
     integrated wavelet sampling, FFT convolution, finite differencing, and
-    center cropping. The returned array is a NumPy `float32` power cube so the
-    existing CPU detector can run unchanged.
+    center cropping. This compatibility API explicitly returns a NumPy
+    `float32` power cube. Device-resident consumers can use `cwt_power_cube_cuda_gpu`
+    instead, so its period-time cube remains on CUDA.
     """
     if method != "fft":
         raise ValueError("CUDA CWT backend currently supports method='fft' only.")
@@ -89,7 +90,7 @@ def cwt_power_cube_cuda(
 
 
 def cwt_power_cube_cuda_gpu(
-    data: np.ndarray,
+    data,
     periods: np.ndarray,
     wavelet: str = "cmor1.5-1.0",
     normalize_channels: bool = True,
@@ -100,26 +101,43 @@ def cwt_power_cube_cuda_gpu(
     if method != "fft":
         raise ValueError("CUDA CWT backend currently supports method='fft' only.")
     cp = _cupy()
-    matrix = np.asarray(data, dtype=np.float32)
-    if matrix.ndim != 2:
-        raise ValueError("data must have shape (records, channels)")
+    cp.cuda.Device(int(device)).use()
+    input_is_cuda = isinstance(data, cp.ndarray)
+    if input_is_cuda:
+        matrix_gpu = cp.asarray(data, dtype=cp.float32)
+        if matrix_gpu.ndim != 2:
+            raise ValueError("data must have shape (records, channels)")
+        data_dtype = np.dtype(np.float32)
+        records, channels = map(int, matrix_gpu.shape)
+    else:
+        matrix = np.asarray(data, dtype=np.float32)
+        if matrix.ndim != 2:
+            raise ValueError("data must have shape (records, channels)")
+        data_dtype = np.dtype(_check_dtype(matrix))
+        matrix = np.asarray(matrix, dtype=data_dtype)
+        records, channels = matrix.shape
     period_values = np.asarray(periods, dtype=np.float64)
     if period_values.ndim != 1 or period_values.size == 0:
         raise ValueError("periods must be a non-empty 1D array")
-    if normalize_channels:
-        matrix = robust_zscore_channels(matrix)
-
-    data_dtype = np.dtype(_check_dtype(matrix))
-    matrix = np.asarray(matrix, dtype=data_dtype)
     scales = periods_to_scales(period_values, wavelet)
     wavelet_obj, int_psi, x = _integrated_wavelet(wavelet, data_dtype)
-    records, channels = matrix.shape
 
-    cp.cuda.Device(int(device)).use()
     out = cp.empty((period_values.size, records, channels), dtype=cp.float32)
     # PyWavelets transforms axis 0 by swapping it to the last axis and
     # batching all channels as independent 1D signals.
-    data_gpu = cp.asarray(np.ascontiguousarray(matrix.T))
+    if input_is_cuda:
+        data_gpu = cp.ascontiguousarray(matrix_gpu.T)
+    else:
+        data_gpu = cp.asarray(np.ascontiguousarray(matrix.T))
+    if normalize_channels:
+        median = cp.nanmedian(data_gpu, axis=1, keepdims=True)
+        centered = data_gpu - median
+        mad = cp.nanmedian(cp.abs(centered), axis=1, keepdims=True)
+        scale = 1.4826 * mad
+        valid_scale = cp.isfinite(scale)
+        scale = cp.where(valid_scale, cp.maximum(scale, MIN_ROBUST_SCALE), cp.nan)
+        data_gpu = cp.where(valid_scale & cp.isfinite(data_gpu), centered / scale, 0.0)
+        data_gpu = cp.clip(data_gpu, -8.0, 8.0).astype(cp.float32, copy=False)
     fft_data = None
     size_scale0 = -1
     for scale_index, scale in enumerate(scales):

@@ -60,13 +60,13 @@ def select_candidate_rows(rows, *, top_n=100, sort_by="auto", include_vetoed=Fal
     rows = [row for row in rows if include_vetoed or row.get("candidate_status") != "vetoed"]
     mode = sort_by
     if mode == "auto":
-        mode = "evidence_rank" if any(math.isfinite(number(row, "evidence_rank")) for row in rows) else "integrated_score"
-    if mode == "integrated_score":
-        key, reverse = lambda row: (number(row, mode, -math.inf), number(row, "peak_score", -math.inf)), True
+        mode = "evidence_rank" if any(math.isfinite(number(row, "evidence_rank")) for row in rows) else "score"
+    if mode == "score":
+        key, reverse = lambda row: number(row, "score", -math.inf), True
     elif mode in {"evidence_rank", "global_q_value"}:
         key, reverse = lambda row: (
             number(row, mode, math.inf), number(row, "q_value", math.inf),
-            number(row, "p_value", math.inf), -number(row, "integrated_score", -math.inf),
+            number(row, "p_value", math.inf), -number(row, "score", -math.inf),
         ), False
     else:
         raise ValueError(f"Unsupported candidate gallery sort mode: {sort_by}")
@@ -101,18 +101,18 @@ def _scan(path: Path, run_id: str) -> CWTSearchConfig:
 
 
 def _slices(row, reader: SpectrumReader, cfg: CandidateGalleryConfig):
-    period = max(1, number(row, "peak_period_records", 1))
-    duration = max(1, int(number(row, "duration_records", 1)))
+    period = max(1, number(row, "period_rec", 1))
+    duration = max(1, int(number(row, "dur_rec", 1)))
     size = min(
         max(cfg.min_window_records, math.ceil(period * cfg.context_periods), min(duration, cfg.max_window_records)),
         cfg.max_window_records, reader.n_records,
     )
-    center = int(number(row, "peak_record", number(row, "record_start", 0)))
+    center = int(number(row, "t_peak_rec", number(row, "t0_rec", 0)))
     start = min(max(0, center - size // 2), reader.n_records - size)
-    freq = number(row, "peak_freq_mhz")
+    freq = number(row, "freq_mhz")
     channel = (
         int(np.nanargmin(abs(reader.freqs_mhz - freq))) if math.isfinite(freq)
-        else int(number(row, "block_channel_start")) + int(number(row, "channel_index"))
+        else int(number(row, "channel"))
     )
     channel = min(max(channel, 0), reader.n_channels - 1)
     radius = max(0, cfg.freq_context_channels)
@@ -138,7 +138,7 @@ def _render(row, reader, scan, cfg, output, rank):
         output / "raw" / filename, block.data, block.freqs_mhz,
         offset=records.start, title=f"Stage 01 input matrix: {title}", candidates=[row], dpi=cfg.dpi,
     )
-    seed, radius = number(row, "peak_period_records"), max(1, cfg.period_radius)
+    seed, radius = number(row, "period_rec"), max(1, cfg.period_radius)
     cwt = cwt_view(
         output / "cwt" / filename, power, periods,
         offset=records.start, title=f"Stage 02 CWT scalogram: {title}, channel {channel}",

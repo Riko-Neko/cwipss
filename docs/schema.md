@@ -1,62 +1,73 @@
 # Cwipss Output Schema
 
-Schema version 1 covers the current single-channel low-floor,
-structure-gated PELT/profile candidate generator.
+Schema version 4 defines CPRO -> PELT -> CPRF candidate and time-window fields.
 
 Canonical field lists and row normalization are defined in
 `cwipss.data.schemas`.
 
 ## Candidate Tables
 
-`candidates_raw.csv` and `candidates_reviewed.csv` contain one row per period
-peak detected from a single channel's PELT-windowed CWT period profile.
-By default this is one period-family row per PELT window. Extra profile peaks
-inside the same window are considered response substructure unless
-`profile_max_peaks_per_window` is explicitly increased for high-recall
-exploration.
+`candidates_raw.csv` and `candidates_reviewed.csv` contain one row per
+CPRF-accepted period family from a single channel's PELT window. CPRF is the
+only production period-family method and emits at most one row per window.
 
 Important fields:
 
-- `candidate_id`: run-local candidate id sorted by descending `integrated_score`.
-- `block_id`: frequency-block id.
-- `cwt_wavelet`: PyWavelets CWT wavelet.
-- `time_aggregation`: method used only for overview maps.
-- `detection_method`: current detector, usually `single_channel_lowfloor_pelt_profile`.
-- `window_id`: source PELT time-window id.
-- `channel_index`: frequency-channel index within the current block.
-- `record_start`, `record_stop`, `duration_records`: detected PELT window span.
-- `period_start_records`, `period_stop_records`: local period-profile peak
-  support, not the full Sa-like response envelope.
-- `peak_period_records`: strongest period-profile peak.
-- `peak_period_seconds`: `peak_period_records * tsamp_seconds`.
-- `freq_start_mhz`, `freq_stop_mhz`: candidate channel/frequency coordinate.
-- `peak_freq_mhz`: strongest channel/frequency coordinate.
-- `peak_record`: strongest activity location inside the detected window.
-- `peak_score`: windowed period-profile score.
-- `mean_score`: mean standardized activity in the source window.
-- `integrated_score`: same ranking score as `peak_score`.
-- `activity_raw_mean`, `activity_raw_max`: source-window structured activity
-  before robust standardization.
-- `noise_floor`: single-channel low-20% CWT power floor used before
-  structure gating.
-- `period_peak_prominence`: period-profile peak prominence.
+- `candidate_id`: run-local id sorted by descending `score`.
+- `method`, `wavelet`, `time_agg`: method and transform provenance.
+- `window_id`, `block_id`, `channel`, `freq_mhz`: source PELT window, absolute source-channel index, and frequency.
+- `t0_rec`, `t1_rec`, `dur_rec`: half-open PELT time span `[t0_rec, t1_rec)`.
+- `t_peak_rec`: maximum CPRO activity location within that span.
+- `period_rec`, `p0_rec`, `p1_rec`, `p_span_rec`, `p_bins`: selected period,
+  ridge-band bounds, period-coordinate span, and grid-bin width.
+- `period_s`, `dur_s`, `t_peak_s`: physical-time conversions using `tsamp_seconds`.
+- `noise_sigma`: robust raw-series noise estimate from first differences.
+- `cpro_thr`: absolute CWT-power threshold used by CPRO.
+- `cpro_mean`, `cpro_max`: absolute CPRO ridge activity inside the PELT window.
+- `cpro_occ`, `cpro_occ_max`: mean and maximum long-window ridge occupancy.
+- `pelt_z_mean`, `pelt_z_max`: robust-standardized CPRO activity inside the segment.
+- `pelt_pen`: configured native PELT penalty.
+- `cprf_thr`: independent absolute-power normalization threshold used by CPRF.
+- `ridge_peak`: CPRF profile peak excess above its local period background.
+- `ridge_int`: width-normalized integrated profile excess.
+- `band_conc`: fraction of total CPRF profile mass in the selected ridge band.
+- `band_persist`: strength-weighted time occupancy of that ridge band.
+- `local_contrast`: ridge-band excess relative to its local period background.
+- `h2`, `h3`, `harm_n`: diagnostic second/third harmonic response and supported-harmonic count.
+- `core_score`: multiplicative ridge score before harmonic weighting.
+- `score`: final CPRF ordering statistic. It is not a probability, p-value, or S/N.
+- `block_ch0`, `block_ch1`: half-open source block channel range.
 - `candidate_status`, `veto_flags`, `veto_reason`: present in reviewed tables.
+
+The CPRF diagnostics preserve their mathematical meaning:
+
+```text
+ridge_int = sum(max(profile_band - local_background, 0)) / sqrt(p_bins)
+band_conc = sum(profile_band) / sum(profile)
+band_persist = sum(time_occupancy * profile_band) / sum(profile_band)
+local_contrast = (mean(profile_band) - local_background) / max(abs(local_background), 1)
+core_score = ridge_peak^0.40 * ridge_int^0.30 * band_conc^0.15 * band_persist^0.15
+score = core_score * (1 + 0.5 * harmonic_weight * (h2 + h3))
+```
+
+`ridge_peak`, `ridge_int`, and the profile are dimensionless CPRF-threshold
+units. `band_conc`, `band_persist`, `h2`, and `h3` are bounded ratios. Neither
+`core_score` nor `score` is calibrated as a probability or significance.
 
 ## Time Windows
 
-`time_windows.csv` records the PELT windows that feed period-profile candidate
-generation. Important fields:
+`time_windows.csv` records PELT windows and their CPRF decision. CPRF-rejected
+windows remain present with `accepted=0`; only accepted windows feed
+candidate generation. Important fields:
 
 - `window_id`: channel-local window id.
-- `detection_method`: usually `single_channel_lowfloor_pelt`.
-- `channel_index`, `freq_mhz`: source channel.
-- `record_start`, `record_stop`, `duration_records`: window span.
-- `activity_mean`, `activity_max`: standardized activity statistics after
-  period-axis compression of the structure-gated CWT map.
-- `activity_raw_mean`, `activity_raw_max`: same window measured before robust
-  standardization; the default raw mean floor is `25.0`.
-- `noise_floor`: low-fraction CWT power floor used for this channel.
-- `pelt_penalty`, `pelt_cost`: segmentation diagnostics.
+- `method`, `channel`, `freq_mhz`: source method and channel.
+- `t0_rec`, `t1_rec`, `dur_rec`: PELT window span.
+- `cpro_*`, `pelt_*`: the same stage-specific evidence as candidate rows.
+- `accepted`: CPRF gate decision.
+- `period_rec`, `p0_rec`, `p1_rec`, `p_bins`: best CPRF hypothesis even when rejected.
+- `ridge_*`, `band_*`, `local_contrast`, `h2`, `h3`, `harm_n`, `core_score`,
+  `score`: complete CPRF diagnostics for threshold analysis.
 
 ## Validation Tables
 

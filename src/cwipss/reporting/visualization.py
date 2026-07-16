@@ -10,22 +10,22 @@ from typing import Any, Iterable, Mapping
 import numpy as np
 from matplotlib import pyplot as plt
 
-from ..signal.activity import (
-    coherent_structure_map,
-    crop_valid_periods,
-    low_fraction_noise_floor,
-    relative_excess,
-    robust_standardize,
-    signed_trimmed_period_activity,
-    smooth_activity,
+from ..signal.cpro import (
+    CPROParameters,
+    cpro_activity,
+    cpro_period_mask,
+    difference_noise_std,
+    impulse_cwt_noise_gain,
 )
+from ..signal.cprf import CPRFParameters, evaluate_cprf, normalize_cwt_power
 from ..signal.cwt import aggregate_cwt_time, cwt_power_cube
-from ..signal.profile import windowed_period_profile
 from .plotting import (
     CANDIDATE_COLOR,
+    CWT_POWER_CMAP,
     TRUTH_COLOR,
     VETO_COLOR,
     ImageIndex,
+    cwt_power_display_values,
     cwt_view,
     edges,
     heatmap,
@@ -57,23 +57,55 @@ class SearchVisualizationConfig:
     candidate_period_max_records: float | None = 200.0
     time_aggregation: str = "p95"
     aggregation_percentile: float = 95.0
-    noise_floor_fraction: float = 0.20
-    excess_eps_fraction: float = 1e-6
-    structure_baseline_quantile: float = 0.10
-    structure_scale_quantile: float = 0.20
-    structure_z_threshold: float = 1.0
-    structure_time_support_records: int = 64
-    structure_period_support_bins: int = 3
-    structure_min_support_fraction: float = 0.10
-    activity_trim_low: float = 0.05
-    activity_trim_high: float = 0.95
-    activity_smooth_records: int = 16
+    cpro_threshold_snr: float = 32.0
+    cpro_texture_quantile: float = 0.9375
+    cpro_period_center_bins: int = 3
+    cpro_period_context_bins: int = 15
+    cpro_min_period_contrast: float = 1.5
+    cpro_support_records: int = 65
+    cpro_min_occupancy: float = 0.65
+    cpro_period_support_bins: int = 3
+    cpro_window_support_records: int = 769
+    cpro_min_window_occupancy: float = 0.40
+    cprf_threshold_snr: float = 32.0
+    cprf_texture_quantile: float = 0.9375
+    cprf_smooth_bins: int = 3
+    cprf_peak_band_fraction: float = 0.50
+    cprf_min_width_bins: int = 3
+    cprf_min_peak_strength: float = 1.25
+    cprf_min_integrated_strength: float = 0.0
+    cprf_min_band_persistence: float = 0.35
+    cprf_min_band_concentration: float = 0.55
+    cprf_min_local_contrast: float = 3.60
+    cprf_harmonic_weight: float = 0.20
+    cprf_harmonic_min_relative: float = 0.12
+    cprf_harmonic_window_scale: float = 1.25
+    cprf_max_peak_hypotheses: int = 8
+
+
+def _cprf_parameters(cfg: SearchVisualizationConfig) -> CPRFParameters:
+    return CPRFParameters(
+        threshold_snr=cfg.cprf_threshold_snr,
+        texture_quantile=cfg.cprf_texture_quantile,
+        smooth_bins=cfg.cprf_smooth_bins,
+        peak_band_fraction=cfg.cprf_peak_band_fraction,
+        min_width_bins=cfg.cprf_min_width_bins,
+        min_peak_strength=cfg.cprf_min_peak_strength,
+        min_integrated_strength=cfg.cprf_min_integrated_strength,
+        min_band_persistence=cfg.cprf_min_band_persistence,
+        min_band_concentration=cfg.cprf_min_band_concentration,
+        min_local_contrast=cfg.cprf_min_local_contrast,
+        harmonic_weight=cfg.cprf_harmonic_weight,
+        harmonic_min_relative=cfg.cprf_harmonic_min_relative,
+        harmonic_window_scale=cfg.cprf_harmonic_window_scale,
+        max_peak_hypotheses=cfg.cprf_max_peak_hypotheses,
+    )
 
 
 def _top(rows: Iterable[Mapping[str, Any]], count: int) -> list[Mapping[str, Any]]:
     return sorted(
         rows,
-        key=lambda row: (number(row, "integrated_score", -math.inf), number(row, "peak_score", -math.inf)),
+        key=lambda row: number(row, "score", -math.inf),
         reverse=True,
     )[:count]
 
@@ -84,31 +116,53 @@ def _channels(start: int, stop: int, freqs: np.ndarray, rows: list[Mapping[str, 
     selected = [
         start + int(np.nanargmin(abs(freqs - peak)))
         for row in _top(rows, count * 4)
-        if math.isfinite(peak := number(row, "peak_freq_mhz"))
+        if math.isfinite(peak := number(row, "freq_mhz"))
     ]
     if not selected:
         selected = [start + (index + 1) * (stop - start) // (count + 1) for index in range(count)]
     return list(dict.fromkeys(min(max(channel, start), stop - 1) for channel in selected))[:count]
 
 
-def _structure(power: np.ndarray, periods: np.ndarray, cfg: SearchVisualizationConfig):
-    power, valid, _ = crop_valid_periods(
-        power, periods, cfg.candidate_period_min_records, cfg.candidate_period_max_records
+def _cpro_products(
+    power: np.ndarray,
+    raw_series: np.ndarray,
+    periods: np.ndarray,
+    target: int,
+    noise_gain: np.ndarray,
+    cfg: SearchVisualizationConfig,
+):
+    valid = cpro_period_mask(
+        periods,
+        cfg.candidate_period_min_records,
+        cfg.candidate_period_max_records,
     )
-    floor = low_fraction_noise_floor(power, fraction=cfg.noise_floor_fraction)
-    structured = coherent_structure_map(
-        relative_excess(power, floor, eps_fraction=cfg.excess_eps_fraction),
-        baseline_quantile=cfg.structure_baseline_quantile,
-        scale_quantile=cfg.structure_scale_quantile,
-        z_threshold=cfg.structure_z_threshold,
-        time_support_records=cfg.structure_time_support_records,
-        period_support_bins=cfg.structure_period_support_bins,
-        min_support_fraction=cfg.structure_min_support_fraction,
+    params = CPROParameters(
+        threshold_snr=cfg.cpro_threshold_snr,
+        texture_quantile=cfg.cpro_texture_quantile,
+        period_center_bins=cfg.cpro_period_center_bins,
+        period_context_bins=cfg.cpro_period_context_bins,
+        min_period_contrast=cfg.cpro_min_period_contrast,
+        support_records=cfg.cpro_support_records,
+        min_occupancy=cfg.cpro_min_occupancy,
+        period_support_bins=cfg.cpro_period_support_bins,
+        window_support_records=cfg.cpro_window_support_records,
+        min_window_occupancy=cfg.cpro_min_window_occupancy,
     )
-    activity = signed_trimmed_period_activity(
-        structured, trim_low=cfg.activity_trim_low, trim_high=cfg.activity_trim_high
+    noise_std = difference_noise_std(raw_series)
+    result = cpro_activity(
+        power[valid, :, target],
+        noise_std=noise_std,
+        noise_gain=noise_gain,
+        params=params,
     )
-    return valid, structured, robust_standardize(smooth_activity(activity, cfg.activity_smooth_records)), floor
+    cprf_params = _cprf_parameters(cfg)
+    normalized_cwt, threshold = normalize_cwt_power(
+        power[valid, :, target],
+        noise_std=noise_std,
+        noise_gain=noise_gain,
+        params=cprf_params,
+    )
+    return periods[valid], result, normalized_cwt, threshold, cprf_params
 
 
 def _simple_plot(path: Path, dpi: int, draw) -> None:
@@ -126,44 +180,50 @@ def _activity_plot(path, activity, offset, windows, truths, title, dpi):
     def draw(ax):
         ax.plot(np.arange(offset, offset + len(activity)), activity, color="#0f172a", label="activity")
         ax.axhline(0, color="#6b7280", linestyle="--", linewidth=0.8)
-        for rows, color, label, alpha in (
-            (windows, CANDIDATE_COLOR, "PELT window", 0.18),
-            (truths, TRUTH_COLOR, "truth span", 0.12),
+        for rows, color, label, alpha, keys in (
+            (windows, CANDIDATE_COLOR, "PELT window", 0.18, ("t0_rec", "t1_rec")),
+            (truths, TRUTH_COLOR, "truth span", 0.12, ("record_start", "record_stop")),
         ):
-            spans = [(number(row, "record_start"), number(row, "record_stop")) for row in rows]
+            spans = [(number(row, keys[0]), number(row, keys[1])) for row in rows]
             for start, stop in spans:
                 if math.isfinite(start) and math.isfinite(stop) and stop > start:
                     ax.axvspan(start, stop, color=color, alpha=alpha)
             if spans:
                 ax.plot([], [], color=color, linewidth=4, alpha=0.6, label=label)
-        ax.set(title=title, xlabel="Record", ylabel="Activity / robust z")
+        ax.set(title=title, xlabel="Record", ylabel="Absolute CWT ridge activity")
 
     _simple_plot(path, dpi, draw)
 
 
-def _profile_plot(path, structured, periods, rows, truths, offset, title, limit, dpi):
+def _profile_plot(path, normalized_cwt, periods, threshold, params, rows, truths, offset, title, limit, dpi):
     def draw(ax):
         for row in _top(rows, min(5, limit)):
-            start = max(0, int(number(row, "record_start", offset) - offset))
-            stop = min(structured.shape[1], int(number(row, "record_stop", offset) - offset))
+            start = max(0, int(number(row, "t0_rec", offset) - offset))
+            stop = min(normalized_cwt.shape[1], int(number(row, "t1_rec", offset) - offset))
             if stop > start:
-                ax.plot(periods, windowed_period_profile(structured, start, stop), label=f"cand {row.get('candidate_id')}")
+                result = evaluate_cprf(
+                    normalized_cwt[:, start:stop],
+                    periods,
+                    normalization_threshold=threshold,
+                    params=params,
+                )
+                ax.plot(periods, result.profile, label=f"cand {row.get('candidate_id')}")
         for row in truths:
             if math.isfinite(period := number(row, "period_records")):
                 ax.axvline(period, color=TRUTH_COLOR, linestyle="--")
-        ax.set(title=title, xlabel="Period / records", ylabel="Windowed structure profile", xscale="log")
+        ax.set(title=title, xlabel="Period / records", ylabel="CPRF period profile", xscale="log")
 
     _simple_plot(path, dpi, draw)
 
 
 def _review_plot(path, rows, dpi):
     def draw(ax):
-        scores = np.array([max(0, number(row, "integrated_score", number(row, "peak_score", 0))) for row in rows])
+        scores = np.array([max(0, number(row, "score", 0)) for row in rows])
         sizes = 20 + 180 * np.sqrt(scores / scores.max()) if scores.size and scores.max() else np.full(len(rows), 20)
         colors = [VETO_COLOR if row.get("candidate_status") == "vetoed" else CANDIDATE_COLOR for row in rows]
         ax.scatter(
-            [number(row, "peak_freq_mhz") for row in rows],
-            [number(row, "peak_period_records") for row in rows],
+            [number(row, "freq_mhz") for row in rows],
+            [number(row, "period_rec") for row in rows],
             s=sizes, c=colors, edgecolors="black", linewidths=0.3,
         )
         ax.plot([], [], "o", color=CANDIDATE_COLOR, label="needs_validation")
@@ -244,6 +304,16 @@ def visualize_cwt_stages(
     for path in output.glob("stage_*.png"):
         path.unlink()
     truths, windows = truths or [], time_windows or []
+    valid_period_mask = cpro_period_mask(
+        periods,
+        search_config.candidate_period_min_records,
+        search_config.candidate_period_max_records,
+    )
+    noise_gain = impulse_cwt_noise_gain(
+        periods[valid_period_mask],
+        wavelet=search_config.wavelet,
+        method=search_config.cwt_method,
+    )
     index = ImageIndex(output, f"Stage Visualization: {run_id or source_name or output.parent.name}")
 
     path = output / "stage_01_input_matrix.png"
@@ -255,20 +325,26 @@ def visualize_cwt_stages(
         if block_no > block_limit:
             break
         stop, block_id = min(start + search_config.block_channels, matrix.shape[1]), f"block_{block_no:04d}"
-        block, block_freqs = matrix[:, start:stop], freqs[start:stop]
+        halo = slice(start, stop)
+        block, block_freqs = matrix[:, halo], freqs[halo]
+        target_freqs = freqs[start:stop]
         power = cwt_power_cube(
             block, periods, wavelet=search_config.wavelet, method=search_config.cwt_method,
-            backend=search_config.cwt_backend, cuda_device=search_config.cuda_device, normalize_channels=True,
+            backend=search_config.cwt_backend, cuda_device=search_config.cuda_device, normalize_channels=False,
         )
-        response = aggregate_cwt_time(power, search_config.time_aggregation, search_config.aggregation_percentile)
+        target_start, target_stop = start - halo.start, stop - halo.start
+        response = aggregate_cwt_time(
+            power[:, :, target_start:target_stop], search_config.time_aggregation, search_config.aggregation_percentile
+        )
         block_rows = [row for row in raw_candidates if row.get("block_id") == block_id]
 
-        for channel in _channels(start, stop, block_freqs, block_rows, cfg.max_channels):
+        for channel in _channels(start, stop, target_freqs, block_rows, cfg.max_channels):
             local = channel - start
-            rows = [row for row in block_rows if int(number(row, "channel_index", -1)) == local]
+            power_channel = target_start + local
+            rows = [row for row in block_rows if int(number(row, "channel", -1)) == channel]
             channel_windows = [
                 row for row in windows
-                if row.get("block_id") == block_id and int(number(row, "channel_index", -1)) == local
+                if row.get("block_id") == block_id and int(number(row, "channel", -1)) == channel
             ]
             channel_truths = [
                 row for row in truths
@@ -276,50 +352,98 @@ def visualize_cwt_stages(
             ]
             prefix = f"{block_id}_channel_{channel:04d}"
             path = output / f"stage_02_{prefix}_scalogram.png"
-            cwt_view(path, power[:, :, local], periods, offset=record_offset, title=f"Stage 02 CWT scalogram: {block_id}, channel {channel}", candidates=rows, truths=channel_truths, dpi=cfg.dpi)
+            cwt_view(path, power[:, :, power_channel], periods, offset=record_offset, title=f"Stage 02 CWT scalogram: {block_id}, channel {channel}", candidates=rows, truths=channel_truths, dpi=cfg.dpi)
             _add(index, f"Stage 02 CWT Scalogram {block_id} Ch {channel}", path, "Full period-time CWT power.")
 
-            valid, structured, activity, floor = _structure(power[:, :, local], periods, search_config)
-            path = output / f"stage_03_{prefix}_structure_map.png"
-            cwt_view(
-                path, structured, valid, offset=record_offset,
-                title=f"Stage 03 structure-gated CWT map: {block_id}, channel {channel}",
-                candidates=rows, truths=channel_truths, cmap="viridis",
-                colorbar=f"positive period-z x support (floor={floor:.4g})", log_power=False, dpi=cfg.dpi,
+            valid_periods, result, normalized_cwt, cprf_threshold, cprf_params = _cpro_products(
+                power,
+                block[:, power_channel],
+                periods,
+                power_channel,
+                noise_gain,
+                search_config,
             )
-            _add(index, f"Stage 03 Structure-Gated CWT Map {block_id} Ch {channel}", path, "Structure-gated CWT.")
+            path = output / f"stage_03_{prefix}_cpro_score_map.png"
+            cwt_view(
+                path,
+                result.score_map,
+                valid_periods,
+                offset=record_offset,
+                title=f"Stage 03 CPRO score map: {block_id}, channel {channel}",
+                candidates=rows,
+                truths=channel_truths,
+                cmap="viridis",
+                colorbar="Absolute persistent-ridge power",
+                log_power=True,
+                dpi=cfg.dpi,
+            )
+            _add(index, f"Stage 03 CPRO Score Map {block_id} Ch {channel}", path, "Calibrated persistent-ridge score.")
             path = output / f"stage_04_{prefix}_activity_windows.png"
-            _activity_plot(path, activity, record_offset, channel_windows, channel_truths, f"Stage 04 activity windows: {block_id}, channel {channel}", cfg.dpi)
-            _add(index, f"Stage 04 Activity Windows {block_id} Ch {channel}", path, "PELT activity curve.")
+            _activity_plot(
+                path,
+                result.activity,
+                record_offset,
+                channel_windows,
+                channel_truths,
+                f"Stage 04 CPRO activity + PELT windows: {block_id}, channel {channel}",
+                cfg.dpi,
+            )
+            _add(index, f"Stage 04 Activity Windows {block_id} Ch {channel}", path, "CPRO activity and accepted PELT windows.")
             if rows:
                 path = output / f"stage_05_{prefix}_period_profiles.png"
-                _profile_plot(path, structured, valid, rows, channel_truths, record_offset, f"Stage 05 period profiles: {block_id}, channel {channel}", cfg.top_candidates, cfg.dpi)
-                _add(index, f"Stage 05 Windowed Period Profiles {block_id} Ch {channel}", path, "Windowed period profiles.")
+                _profile_plot(
+                    path,
+                    normalized_cwt,
+                    valid_periods,
+                    cprf_threshold,
+                    cprf_params,
+                    rows,
+                    channel_truths,
+                    record_offset,
+                    f"Stage 05 CPRF period profiles: {block_id}, channel {channel}",
+                    cfg.top_candidates,
+                    cfg.dpi,
+                )
+                _add(index, f"Stage 05 CPRF Period Profiles {block_id} Ch {channel}", path, "PELT-windowed CPRF period profiles.")
 
         shaded = []
         if search_config.candidate_period_min_records is not None:
             shaded.append((periods.min(), search_config.candidate_period_min_records))
         if search_config.candidate_period_max_records is not None:
             shaded.append((search_config.candidate_period_max_records, periods.max()))
-        axes = ("freq_start_mhz", "freq_stop_mhz", "peak_freq_mhz"), ("period_start_records", "period_stop_records", "period_records", "peak_period_records")
-        truth_boxes = row_boxes(truths, *axes, color=TRUTH_COLOR, label="truth", fallback=(1e-6, 1e-6))
+        truth_boxes = row_boxes(
+            truths,
+            ("freq_start_mhz", "freq_stop_mhz"),
+            ("period_records",),
+            color=TRUTH_COLOR,
+            label="truth",
+            min_span=(1e-6, 1e-6),
+        )
+        response_values = cwt_power_display_values(response)
         for stage, values, cmap, boxes, note in (
-            (6, np.log10(response + 1e-12), "magma", truth_boxes, "Time-aggregated CWT overview."),
+            (6, response_values, CWT_POWER_CMAP, truth_boxes, "Time-aggregated CWT overview."),
             (
                 7,
                 np.where(
                     ((periods >= (search_config.candidate_period_min_records or -math.inf)) &
                      (periods <= (search_config.candidate_period_max_records or math.inf)))[:, None],
-                    np.log10(response + 1e-12), np.nan,
+                    response_values, np.nan,
                 ),
-                "viridis",
-                row_boxes(_top(block_rows, cfg.top_candidates), *axes, color=CANDIDATE_COLOR, label="candidate", fallback=(1e-6, 1e-6)) + truth_boxes,
+                CWT_POWER_CMAP,
+                row_boxes(
+                    _top(block_rows, cfg.top_candidates),
+                    ("freq_mhz",),
+                    ("p0_rec", "p1_rec"),
+                    color=CANDIDATE_COLOR,
+                    label="candidate",
+                    min_span=(1e-6, 1e-6),
+                ) + truth_boxes,
                 "Candidate-period CWT overview.",
             ),
         ):
             path = output / f"stage_{stage:02d}_{block_id}_period_channel_{'response' if stage == 6 else 'candidates'}.png"
             heatmap(
-                path, values, edges(block_freqs), edges(periods, True),
+                path, values, edges(target_freqs), edges(periods, True),
                 title=f"Stage {stage:02d} period-channel overview: {block_id}",
                 xlabel="Frequency / MHz", ylabel="Period / records",
                 colorbar=f"log10({search_config.time_aggregation} CWT power)",

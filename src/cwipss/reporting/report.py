@@ -74,7 +74,7 @@ def veto_distribution(rows: list[dict[str, str]]) -> Counter[str]:
 def top_candidates(rows: list[dict[str, str]], limit: int = 10) -> list[dict[str, str]]:
     return sorted(
         rows,
-        key=lambda row: _float(row.get("integrated_score"), _float(row.get("peak_score"), -math.inf)),
+        key=lambda row: _float(row.get("score"), -math.inf),
         reverse=True,
     )[:limit]
 
@@ -97,20 +97,24 @@ def _candidate_table(rows: list[dict[str, str]], limit: int) -> str:
         table_rows.append(
             [
                 row.get("candidate_id", "-"),
-                _short_path(row.get("source_file")),
+                _fmt(row.get("score")),
+                _fmt(row.get("period_rec")),
+                _fmt(row.get("freq_mhz")),
+                _fmt(row.get("dur_rec")),
+                _fmt(row.get("ridge_peak")),
+                _fmt(row.get("ridge_int")),
+                _fmt(row.get("band_conc")),
+                _fmt(row.get("band_persist")),
+                _fmt(row.get("local_contrast")),
+                _fmt(row.get("cpro_mean")),
+                _fmt(row.get("pelt_z_mean")),
                 row.get("candidate_status", "-"),
-                _fmt(row.get("integrated_score")),
-                _fmt(row.get("peak_score")),
-                _fmt(row.get("activity_raw_mean")),
-                _fmt(row.get("peak_period_records")),
-                _fmt(row.get("duration_records")),
-                _fmt(row.get("peak_record")),
-                _fmt(row.get("peak_freq_mhz")),
                 row.get("veto_flags", "") or "-",
+                _short_path(row.get("source_file")),
             ]
         )
     return _markdown_table(
-        ["candidate_id", "source", "status", "integrated", "peak_score", "raw_activity", "period_rec", "duration", "peak_record", "peak_mhz", "veto_flags"],
+        ["id", "score", "period_rec", "freq_mhz", "dur_rec", "ridge_peak", "ridge_int", "band_conc", "band_persist", "local_contrast", "cpro_mean", "pelt_z_mean", "status", "veto", "source"],
         table_rows,
     )
 
@@ -170,11 +174,11 @@ def _injection_results_table(rows: list[dict[str, str]], limit: int) -> str:
                 row.get("failure_stage", "-"),
                 row.get("matched_candidate_id", "-"),
                 _fmt(row.get("period_error_fraction")),
-                _fmt(row.get("peak_score")),
+                _fmt(row.get("score")),
             ]
         )
     return _markdown_table(
-        ["injection_id", "model", "period_rec", "amplitude", "stage", "candidate_id", "period_error", "peak_score"],
+        ["injection_id", "model", "period_rec", "amplitude", "stage", "candidate_id", "period_error", "score"],
         table_rows,
     )
 

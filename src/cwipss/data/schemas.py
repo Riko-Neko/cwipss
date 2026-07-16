@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 
-RAW_CANDIDATE_SCHEMA_VERSION = 1
+RAW_CANDIDATE_SCHEMA_VERSION = 4
 
 
 RAW_CANDIDATE_FIELDNAMES = [
@@ -16,39 +16,46 @@ RAW_CANDIDATE_FIELDNAMES = [
     "source_file",
     "candidate_id",
     "block_id",
-    "cwt_wavelet",
-    "time_aggregation",
-    "detection_method",
     "window_id",
-    "channel_index",
-    "region_pixels",
-    "record_start",
-    "record_stop",
-    "duration_records",
-    "duration_seconds",
-    "period_start_records",
-    "period_stop_records",
-    "period_width_records",
-    "period_width_bins",
-    "peak_period_records",
-    "peak_period_seconds",
-    "freq_start_mhz",
-    "freq_stop_mhz",
-    "bandwidth_mhz",
-    "peak_record",
-    "peak_time_seconds",
-    "peak_freq_mhz",
-    "peak_score",
-    "mean_score",
-    "integrated_score",
-    "activity_mean",
-    "activity_max",
-    "activity_raw_mean",
-    "activity_raw_max",
-    "noise_floor",
-    "period_peak_prominence",
-    "block_channel_start",
-    "block_channel_stop",
+    "method",
+    "wavelet",
+    "time_agg",
+    "channel",
+    "freq_mhz",
+    "t0_rec",
+    "t1_rec",
+    "dur_rec",
+    "dur_s",
+    "t_peak_rec",
+    "t_peak_s",
+    "period_rec",
+    "period_s",
+    "p0_rec",
+    "p1_rec",
+    "p_span_rec",
+    "p_bins",
+    "noise_sigma",
+    "cpro_thr",
+    "cpro_mean",
+    "cpro_max",
+    "cpro_occ",
+    "cpro_occ_max",
+    "pelt_z_mean",
+    "pelt_z_max",
+    "pelt_pen",
+    "cprf_thr",
+    "ridge_peak",
+    "ridge_int",
+    "band_conc",
+    "band_persist",
+    "local_contrast",
+    "h2",
+    "h3",
+    "harm_n",
+    "core_score",
+    "score",
+    "block_ch0",
+    "block_ch1",
 ]
 
 
@@ -129,21 +136,39 @@ TIME_WINDOW_FIELDNAMES = [
     "source_file",
     "block_id",
     "window_id",
-    "detection_method",
-    "channel_index",
+    "method",
+    "channel",
     "freq_mhz",
-    "record_start",
-    "record_stop",
-    "duration_records",
-    "activity_mean",
-    "activity_max",
-    "activity_raw_mean",
-    "activity_raw_max",
-    "noise_floor",
-    "pelt_penalty",
-    "pelt_cost",
-    "block_channel_start",
-    "block_channel_stop",
+    "t0_rec",
+    "t1_rec",
+    "dur_rec",
+    "noise_sigma",
+    "cpro_thr",
+    "cpro_mean",
+    "cpro_max",
+    "cpro_occ",
+    "cpro_occ_max",
+    "pelt_z_mean",
+    "pelt_z_max",
+    "pelt_pen",
+    "accepted",
+    "cprf_thr",
+    "period_rec",
+    "p0_rec",
+    "p1_rec",
+    "p_bins",
+    "ridge_peak",
+    "ridge_int",
+    "band_conc",
+    "band_persist",
+    "local_contrast",
+    "h2",
+    "h3",
+    "harm_n",
+    "core_score",
+    "score",
+    "block_ch0",
+    "block_ch1",
 ]
 
 
@@ -196,7 +221,7 @@ INJECTION_RESULT_FIELDNAMES = [
     "time_overlap_fraction",
     "freq_overlap_fraction",
     "period_error_fraction",
-    "peak_score",
+    "score",
     "candidate_status",
     "veto_flags",
     "p_value",
@@ -232,17 +257,17 @@ def normalize_candidate_row(
 ) -> dict[str, Any]:
     """Attach stable metadata and derived physical units to one raw candidate."""
     candidate = dict(row)
-    peak_period_records = float(candidate.get("peak_period_records") or 0.0)
-    duration_records = int(candidate.get("duration_records") or 0)
-    peak_record = int(candidate.get("peak_record") or 0)
+    period_rec = float(candidate.get("period_rec") or 0.0)
+    dur_rec = int(candidate.get("dur_rec") or 0)
+    t_peak_rec = int(candidate.get("t_peak_rec") or 0)
 
     candidate["schema_version"] = RAW_CANDIDATE_SCHEMA_VERSION
     candidate["run_id"] = run_id
     candidate["source_file"] = str(source_file)
     candidate["block_id"] = block_id
-    candidate["peak_period_seconds"] = float(peak_period_records * tsamp_seconds)
-    candidate["duration_seconds"] = float(duration_records * tsamp_seconds)
-    candidate["peak_time_seconds"] = float(peak_record * tsamp_seconds)
+    candidate["period_s"] = float(period_rec * tsamp_seconds)
+    candidate["dur_s"] = float(dur_rec * tsamp_seconds)
+    candidate["t_peak_s"] = float(t_peak_rec * tsamp_seconds)
     return candidate
 
 

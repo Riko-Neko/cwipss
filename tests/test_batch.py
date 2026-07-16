@@ -61,18 +61,18 @@ def test_run_batch_merges_outputs_and_recomputes_global_stats(tmp_path: Path, mo
         _write_csv(
             run_dir / "candidates_raw.csv",
             RAW_CANDIDATE_FIELDNAMES,
-            [{"schema_version": 1, "run_id": config.run_id, "source_file": config.input, "candidate_id": 1, "peak_score": 5.0}],
+            [{"schema_version": 4, "run_id": config.run_id, "source_file": config.input, "candidate_id": 1, "score": 5.0}],
         )
         _write_csv(
             run_dir / "candidates_reviewed.csv",
             REVIEWED_CANDIDATE_FIELDNAMES,
             [
                 {
-                    "schema_version": 1,
+                    "schema_version": 4,
                     "run_id": config.run_id,
                     "source_file": config.input,
                     "candidate_id": 1,
-                    "peak_score": 5.0,
+                    "score": 5.0,
                     "candidate_status": "needs_validation",
                 }
             ],

@@ -23,7 +23,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--top", type=int, default=100, help="Number of candidates; 0 means all.")
     parser.add_argument(
         "--sort-by",
-        choices=["auto", "evidence_rank", "global_q_value", "integrated_score"],
+        choices=["auto", "evidence_rank", "global_q_value", "score"],
         default="auto",
         help="Candidate ordering. Auto prefers evidence_rank when validation statistics exist.",
     )

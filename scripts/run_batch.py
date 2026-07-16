@@ -51,28 +51,25 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--time-aggregation", type=str, default=None, help="Time aggregation for period-channel response.")
     parser.add_argument("--aggregation-percentile", type=float, default=None, help="Percentile for percentile aggregation.")
     parser.add_argument("--block-channels", type=int, default=None, help="Frequency channels per block.")
-    parser.add_argument("--noise-floor-fraction", type=float, default=None, help="Lowest fraction of valid CWT power used as channel noise floor.")
-    parser.add_argument("--excess-eps-fraction", type=float, default=None, help="Fractional epsilon added to the noise floor.")
-    parser.add_argument("--structure-baseline-quantile", type=float, default=None, help="Low time-quantile background for per-period structure z-score.")
-    parser.add_argument("--structure-scale-quantile", type=float, default=None, help="Low time-quantile subset used to estimate per-period structure scale.")
-    parser.add_argument("--structure-z-threshold", type=float, default=None, help="Per-period robust z threshold for 2D CWT structure support.")
-    parser.add_argument("--structure-time-support-records", type=int, default=None, help="Time-neighborhood width for 2D structure support.")
-    parser.add_argument("--structure-period-support-bins", type=int, default=None, help="Period-neighborhood width for 2D structure support.")
-    parser.add_argument("--structure-min-support-fraction", type=float, default=None, help="Minimum local 2D support fraction before CWT texture is retained.")
-    parser.add_argument("--activity-trim-low", type=float, default=None, help="Lower period-axis trim fraction for signed activity.")
-    parser.add_argument("--activity-trim-high", type=float, default=None, help="Upper period-axis trim fraction for signed activity.")
-    parser.add_argument("--activity-smooth-records", type=int, default=None, help="Moving-average width for activity curves.")
-    parser.add_argument("--pelt-penalty", type=float, default=None, help="PELT mean-shift penalty.")
-    parser.add_argument("--pelt-min-size-records", type=int, default=None, help="PELT minimum segment size.")
-    parser.add_argument("--pelt-jump-records", type=int, default=None, help="PELT endpoint/candidate grid stride in records; 1 keeps exact current behavior.")
-    parser.add_argument("--pelt-threads", type=int, default=None, help="CPU worker threads for native PELT across channels; 1 keeps sequential behavior.")
-    parser.add_argument("--cuda-structure-batch", action=argparse.BooleanOptionalAction, default=None, help="Batch CUDA structure/activity preprocessing across channel chunks.")
-    parser.add_argument("--cuda-structure-batch-channels", type=int, default=None, help="Channels per CUDA structure/activity batch chunk; omit to process the full block at once.")
-    parser.add_argument("--cuda-max-pending-blocks", type=int, default=None, help="Prepared CUDA blocks retained while CPU PELT runs; 1 is sequential, 2 overlaps one following block.")
-    parser.add_argument("--window-min-duration-records", type=int, default=None, help="Minimum retained PELT window duration.")
-    parser.add_argument("--window-min-activity-mean", type=float, default=None, help="Minimum retained standardized activity mean.")
-    parser.add_argument("--window-min-activity-raw-mean", type=float, default=None, help="Minimum retained raw structured activity mean before robust standardization.")
-    parser.add_argument("--window-merge-gap-records", type=int, default=None, help="Merge PELT windows separated by at most this gap.")
+    parser.add_argument("--cpro-threshold-snr", type=float, default=None, help="Absolute calibrated CWT threshold.")
+    parser.add_argument("--cpro-texture-quantile", type=float, default=None, help="Global calibrated-map texture quantile.")
+    parser.add_argument("--cpro-period-center-bins", type=int, default=None, help="Period-ridge center width in bins.")
+    parser.add_argument("--cpro-period-context-bins", type=int, default=None, help="Period-ridge context width in bins.")
+    parser.add_argument("--cpro-min-period-contrast", type=float, default=None, help="Minimum center-to-sideband period contrast.")
+    parser.add_argument("--cpro-support-records", type=int, default=None, help="Short occupancy support in records.")
+    parser.add_argument("--cpro-min-occupancy", type=float, default=None, help="Minimum short-window ridge occupancy.")
+    parser.add_argument("--cpro-period-support-bins", type=int, default=None, help="Required contiguous period-bin support.")
+    parser.add_argument("--cpro-window-support-records", type=int, default=None, help="Long consensus support in records.")
+    parser.add_argument("--cpro-min-window-occupancy", type=float, default=None, help="Minimum long-window ridge occupancy.")
+    parser.add_argument("--pelt-penalty", type=float, default=None, help="Native PELT mean-shift penalty.")
+    parser.add_argument("--pelt-min-size-records", type=int, default=None, help="Native PELT minimum segment size.")
+    parser.add_argument("--pelt-jump-records", type=int, default=None, help="Native PELT endpoint stride.")
+    parser.add_argument("--pelt-threads", type=int, default=None, help="Native PELT worker threads.")
+    parser.add_argument("--cuda-max-pending-blocks", type=int, default=None, help="Maximum CUDA blocks retained while native PELT runs.")
+    parser.add_argument("--window-min-duration-records", type=int, default=None, help="Minimum accepted PELT window duration.")
+    parser.add_argument("--window-min-activity-mean", type=float, default=None, help="Minimum standardized PELT segment mean.")
+    parser.add_argument("--window-min-activity-raw-mean", type=float, default=None, help="Minimum raw CPRO activity mean.")
+    parser.add_argument("--window-merge-gap-records", type=int, default=None, help="Maximum gap merged between PELT windows.")
     parser.add_argument("--profile-min-prominence", type=float, default=None, help="Minimum windowed period-profile peak prominence.")
     parser.add_argument("--profile-max-peaks-per-window", type=int, default=None, help="Maximum period peaks retained per time window.")
     parser.add_argument("--candidate-period-min-records", type=float, default=None, help="Reject candidates below this period in records.")
@@ -137,30 +134,39 @@ def _scan_overrides(args: argparse.Namespace) -> dict:
         "block_channels",
         "time_aggregation",
         "aggregation_percentile",
-        "noise_floor_fraction",
-        "excess_eps_fraction",
-        "structure_baseline_quantile",
-        "structure_scale_quantile",
-        "structure_z_threshold",
-        "structure_time_support_records",
-        "structure_period_support_bins",
-        "structure_min_support_fraction",
-        "activity_trim_low",
-        "activity_trim_high",
-        "activity_smooth_records",
+        "cpro_threshold_snr",
+        "cpro_texture_quantile",
+        "cpro_period_center_bins",
+        "cpro_period_context_bins",
+        "cpro_min_period_contrast",
+        "cpro_support_records",
+        "cpro_min_occupancy",
+        "cpro_period_support_bins",
+        "cpro_window_support_records",
+        "cpro_min_window_occupancy",
         "pelt_penalty",
         "pelt_min_size_records",
         "pelt_jump_records",
         "pelt_threads",
-        "cuda_structure_batch",
-        "cuda_structure_batch_channels",
         "cuda_max_pending_blocks",
         "window_min_duration_records",
         "window_min_activity_mean",
         "window_min_activity_raw_mean",
         "window_merge_gap_records",
-        "profile_min_prominence",
-        "profile_max_peaks_per_window",
+        "cprf_threshold_snr",
+        "cprf_texture_quantile",
+        "cprf_smooth_bins",
+        "cprf_peak_band_fraction",
+        "cprf_min_width_bins",
+        "cprf_min_peak_strength",
+        "cprf_min_integrated_strength",
+        "cprf_min_band_persistence",
+        "cprf_min_band_concentration",
+        "cprf_min_local_contrast",
+        "cprf_harmonic_weight",
+        "cprf_harmonic_min_relative",
+        "cprf_harmonic_window_scale",
+        "cprf_max_peak_hypotheses",
         "candidate_period_min_records",
         "candidate_period_max_records",
         "max_candidates_per_channel",

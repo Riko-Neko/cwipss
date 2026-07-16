@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cwipss-frcr"
+version = "0.1.0"
+description = "Frequency-Referenced Coherent Ridge detector core"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "numpy",
+  "scipy",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]

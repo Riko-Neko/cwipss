@@ -45,8 +45,8 @@ def _write_csv(path: Path, fieldnames: list[str], rows: list[dict]) -> None:
 
 def test_select_candidate_rows_prefers_evidence_rank() -> None:
     rows = [
-        {"candidate_id": "1", "evidence_rank": "2", "integrated_score": "100"},
-        {"candidate_id": "2", "evidence_rank": "1", "integrated_score": "10"},
+        {"candidate_id": "1", "evidence_rank": "2", "score": "100"},
+        {"candidate_id": "2", "evidence_rank": "1", "score": "10"},
         {"candidate_id": "3", "candidate_status": "vetoed", "evidence_rank": "0"},
     ]
 
@@ -81,15 +81,15 @@ def test_visualize_candidate_gallery_writes_raw_and_cwt_figure(tmp_path: Path) -
         "source_file",
         "candidate_id",
         "candidate_status",
-        "record_start",
-        "record_stop",
-        "duration_records",
-        "period_start_records",
-        "period_stop_records",
-        "peak_period_records",
-        "peak_record",
-        "peak_freq_mhz",
-        "integrated_score",
+        "t0_rec",
+        "t1_rec",
+        "dur_rec",
+        "p0_rec",
+        "p1_rec",
+        "period_rec",
+        "t_peak_rec",
+        "freq_mhz",
+        "score",
     ]
     _write_csv(
         run_dir / "candidates_reviewed.csv",
@@ -100,15 +100,15 @@ def test_visualize_candidate_gallery_writes_raw_and_cwt_figure(tmp_path: Path) -
                 "source_file": str(source),
                 "candidate_id": "1",
                 "candidate_status": "needs_validation",
-                "record_start": "64",
-                "record_stop": "192",
-                "duration_records": "128",
-                "period_start_records": "14",
-                "period_stop_records": "18",
-                "peak_period_records": "16",
-                "peak_record": "128",
-                "peak_freq_mhz": str(np.linspace(1.0, 2.0, 16)[7]),
-                "integrated_score": "20",
+                "t0_rec": "64",
+                "t1_rec": "192",
+                "dur_rec": "128",
+                "p0_rec": "14",
+                "p1_rec": "18",
+                "period_rec": "16",
+                "t_peak_rec": "128",
+                "freq_mhz": str(np.linspace(1.0, 2.0, 16)[7]),
+                "score": "20",
             }
         ],
     )

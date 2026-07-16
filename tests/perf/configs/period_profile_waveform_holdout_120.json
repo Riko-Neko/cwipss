@@ -1,0 +1,140 @@
+{
+  "schema_version": 1,
+  "seed": 2026071501,
+  "description": "Frozen second-stage waveform holdout: 40 fundamental-only sinusoids, 40 medium-duty pulse trains, and 40 narrow-duty harmonic-rich pulse trains. Cases are evaluated independently on real CE4 backgrounds and are not used to tune period-profile thresholds.",
+  "sets": [
+    {
+      "name": "holdout_fundamental_only",
+      "count": 40,
+      "signal_model": "sinusoidal_narrowband",
+      "period_records": {
+        "min": 12.0,
+        "max": 180.0,
+        "distribution": "log_uniform"
+      },
+      "amplitude": {
+        "min": 5e-8,
+        "max": 2e-7,
+        "distribution": "log_uniform"
+      },
+      "frequency_mhz": {
+        "min": 0.15,
+        "max": 39.5,
+        "distribution": "uniform"
+      },
+      "time": {
+        "duration_fraction": {
+          "min": 0.06,
+          "max": 0.25,
+          "distribution": "uniform"
+        }
+      },
+      "modulation": {
+        "phase": {
+          "min": 0.0,
+          "max": 1.0,
+          "distribution": "uniform"
+        },
+        "duty_cycle": {
+          "value": 0.5
+        }
+      },
+      "bandwidth_channels": 1.0,
+      "drift_channels": 0.0,
+      "replication": {
+        "probability": 0.0,
+        "max_copies": 1
+      }
+    },
+    {
+      "name": "holdout_medium_duty",
+      "count": 40,
+      "signal_model": "pulsed_periodic",
+      "period_records": {
+        "min": 12.0,
+        "max": 180.0,
+        "distribution": "log_uniform"
+      },
+      "amplitude": {
+        "min": 5e-8,
+        "max": 2e-7,
+        "distribution": "log_uniform"
+      },
+      "frequency_mhz": {
+        "min": 0.15,
+        "max": 39.5,
+        "distribution": "uniform"
+      },
+      "time": {
+        "duration_fraction": {
+          "min": 0.06,
+          "max": 0.25,
+          "distribution": "uniform"
+        }
+      },
+      "modulation": {
+        "phase": {
+          "min": 0.0,
+          "max": 1.0,
+          "distribution": "uniform"
+        },
+        "duty_cycle": {
+          "min": 0.20,
+          "max": 0.60,
+          "distribution": "uniform"
+        }
+      },
+      "bandwidth_channels": 1.0,
+      "drift_channels": 0.0,
+      "replication": {
+        "probability": 0.0,
+        "max_copies": 1
+      }
+    },
+    {
+      "name": "holdout_narrow_duty_harmonic",
+      "count": 40,
+      "signal_model": "single_channel_periodic",
+      "period_records": {
+        "min": 12.0,
+        "max": 180.0,
+        "distribution": "log_uniform"
+      },
+      "amplitude": {
+        "min": 5e-8,
+        "max": 2e-7,
+        "distribution": "log_uniform"
+      },
+      "frequency_mhz": {
+        "min": 0.15,
+        "max": 39.5,
+        "distribution": "uniform"
+      },
+      "time": {
+        "duration_fraction": {
+          "min": 0.06,
+          "max": 0.25,
+          "distribution": "uniform"
+        }
+      },
+      "modulation": {
+        "phase": {
+          "min": 0.0,
+          "max": 1.0,
+          "distribution": "uniform"
+        },
+        "duty_cycle": {
+          "min": 0.03,
+          "max": 0.15,
+          "distribution": "uniform"
+        }
+      },
+      "bandwidth_channels": 1.0,
+      "drift_channels": 0.0,
+      "replication": {
+        "probability": 0.0,
+        "max_copies": 1
+      }
+    }
+  ]
+}

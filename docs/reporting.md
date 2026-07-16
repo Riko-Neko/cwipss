@@ -11,7 +11,7 @@ The report includes:
 
 - run or batch summary;
 - veto distribution;
-- top CWT candidates by `peak_score`;
+- top CWT candidates by CPRF `score`, with CPRO, PELT, and ridge diagnostics;
 - top validation evidence rows;
 - injection benchmark recovery tables when present;
 - a link to `visualization/index.md` when staged figures were generated.

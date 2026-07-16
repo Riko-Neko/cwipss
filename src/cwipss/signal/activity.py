@@ -6,6 +6,10 @@ import numpy as np
 from scipy.ndimage import uniform_filter1d
 
 
+MIN_ROBUST_SCALE = 1.0
+MIN_NOISE_FLOOR = 1e-12
+
+
 def robust_standardize(values: np.ndarray) -> np.ndarray:
     x = np.asarray(values, dtype=np.float32)
     finite = np.isfinite(x)
@@ -14,13 +18,9 @@ def robust_standardize(values: np.ndarray) -> np.ndarray:
     median = float(np.nanmedian(x[finite]))
     centered = x - median
     mad = float(np.nanmedian(np.abs(centered[finite])))
-    scale = 1.4826 * mad
-    if not np.isfinite(scale) or scale <= 1e-6:
-        scale = float(np.nanstd(centered[finite]))
-    if not np.isfinite(scale) or scale <= 1e-6:
-        return np.zeros_like(x, dtype=np.float32)
-    z = centered / scale
-    z[~finite] = 0.0
+    scale = max(float(1.4826 * mad), MIN_ROBUST_SCALE)
+    z = np.zeros_like(x, dtype=np.float32)
+    z[finite] = centered[finite] / scale
     return z.astype(np.float32, copy=False)
 
 
@@ -57,25 +57,25 @@ def low_fraction_noise_floor(power: np.ndarray, fraction: float = 0.20) -> float
     values = np.asarray(power, dtype=np.float32)
     finite = values[np.isfinite(values)]
     if finite.size == 0:
-        return 1.0
+        raise ValueError("Cannot estimate low-fraction noise floor from non-finite CWT power.")
     fraction = min(max(float(fraction), 1.0 / finite.size), 1.0)
     k = max(1, int(np.ceil(fraction * finite.size)))
     low = np.partition(finite, k - 1)[:k]
-    floor = float(np.nanmean(low))
+    floor = float(np.mean(low))
     if not np.isfinite(floor) or floor <= 0.0:
-        positive = finite[finite > 0.0]
-        if positive.size == 0:
-            return 1.0
-        floor = float(np.nanmedian(positive))
-    return max(floor, 1e-12)
+        raise ValueError("Low-fraction CWT noise floor must be finite and positive.")
+    return max(floor, MIN_NOISE_FLOOR)
 
 
 def relative_excess(power: np.ndarray, noise_floor: float, eps_fraction: float = 1e-6) -> np.ndarray:
     values = np.asarray(power, dtype=np.float32)
-    floor = max(float(noise_floor), 1e-12)
-    eps = max(1e-12, abs(floor) * float(eps_fraction))
+    if not np.all(np.isfinite(values)):
+        raise ValueError("CWT power must be finite before relative-excess normalization.")
+    floor = max(float(noise_floor), MIN_NOISE_FLOOR)
+    eps = max(MIN_NOISE_FLOOR, abs(floor) * float(eps_fraction))
     excess = values / (floor + eps) - 1.0
-    excess[~np.isfinite(excess)] = 0.0
+    if not np.all(np.isfinite(excess)):
+        raise ValueError("Relative-excess normalization produced non-finite values.")
     return excess.astype(np.float32, copy=False)
 
 
@@ -104,11 +104,7 @@ def period_robust_zscore(
     low_median = np.nanmedian(low_centered, axis=1, keepdims=True)
     low_mad = np.nanmedian(np.abs(low_centered - low_median), axis=1, keepdims=True)
     scale = 1.4826 * low_mad
-    low_std = np.nanstd(low_centered, axis=1, keepdims=True)
-    scale = np.where(np.isfinite(scale) & (scale > 1e-6), scale, low_std)
-    fallback = np.nanstd(centered, axis=1, keepdims=True)
-    scale = np.where(np.isfinite(scale) & (scale > 1e-6), scale, fallback)
-    scale = np.where(np.isfinite(scale) & (scale > 1e-6), scale, 1.0)
+    scale = np.where(np.isfinite(scale), np.maximum(scale, MIN_ROBUST_SCALE), np.nan)
     z = centered / scale
     z[~np.isfinite(z)] = 0.0
     return z.astype(np.float32, copy=False)

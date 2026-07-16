@@ -22,6 +22,9 @@ from matplotlib.patches import Patch, Rectangle
 CANDIDATE_COLOR = "#39ff14"
 TRUTH_COLOR = "#00d5ff"
 VETO_COLOR = "#b23b2e"
+CWT_POWER_CMAP = "inferno"
+CWT_POWER_COLORBAR = "log10(CWT power)"
+CWT_POWER_EPS = 1e-12
 Box = tuple[float, float, float, float, str, str]
 Line = tuple[str, float, str, str, str]
 
@@ -47,6 +50,27 @@ def edges(values: np.ndarray, logarithmic: bool = False) -> np.ndarray:
     return result
 
 
+def finite_percentile_limits(
+    values: np.ndarray,
+    percentiles: tuple[float, float] = (1.0, 99.0),
+) -> tuple[float | None, float | None]:
+    finite = np.asarray(values)[np.isfinite(values)]
+    if not finite.size:
+        return None, None
+    lo, hi = np.nanpercentile(finite, percentiles)
+    if not np.isfinite(lo) or not np.isfinite(hi):
+        return None, None
+    if hi <= lo:
+        center = float(lo)
+        width = max(abs(center) * 1e-6, 1e-6)
+        return center - width, center + width
+    return float(lo), float(hi)
+
+
+def cwt_power_display_values(power: np.ndarray) -> np.ndarray:
+    return np.log10(np.asarray(power, dtype=np.float32) + CWT_POWER_EPS)
+
+
 def row_boxes(
     rows: Iterable[Mapping[str, Any]],
     xkeys: tuple[str, ...],
@@ -54,7 +78,7 @@ def row_boxes(
     *,
     color: str,
     label: str,
-    fallback: tuple[float, float] = (1.0, 1.0),
+    min_span: tuple[float, float] = (1.0, 1.0),
     limit: int = 100,
 ) -> list[Box]:
     result: list[Box] = []
@@ -69,9 +93,9 @@ def row_boxes(
         x0, x1 = sorted(values[:2])
         y0, y1 = sorted(values[2:])
         if x1 <= x0:
-            x0, x1 = x0 - fallback[0] / 2, x1 + fallback[0] / 2
+            x0, x1 = x0 - min_span[0] / 2, x1 + min_span[0] / 2
         if y1 <= y0:
-            y0, y1 = y0 - fallback[1] / 2, y1 + fallback[1] / 2
+            y0, y1 = y0 - min_span[1] / 2, y1 + min_span[1] / 2
         result.append((x0, x1, y0, y1, color, label))
     return result
 
@@ -105,8 +129,7 @@ def heatmap(
     dpi: int = 140,
 ) -> Path:
     values = np.asarray(values)
-    finite = values[np.isfinite(values)]
-    limits = np.nanpercentile(finite, [1, 99]) if finite.size else (None, None)
+    limits = finite_percentile_limits(values)
     boxes, lines = list(boxes), list(lines)
 
     def draw(ax: plt.Axes) -> None:
@@ -153,9 +176,22 @@ def raw_view(
     dpi: int = 140,
 ) -> Path:
     step = float(np.nanmedian(np.abs(np.diff(freqs)))) if len(freqs) > 1 else 1.0
-    axes = ("freq_start_mhz", "freq_stop_mhz", "peak_freq_mhz"), ("record_start", "record_stop")
-    boxes = row_boxes(candidates, *axes, color=CANDIDATE_COLOR, label="candidate", fallback=(step, 1))
-    boxes += row_boxes(truths, *axes, color=TRUTH_COLOR, label="truth", fallback=(step, 1))
+    boxes = row_boxes(
+        candidates,
+        ("freq_mhz",),
+        ("t0_rec", "t1_rec"),
+        color=CANDIDATE_COLOR,
+        label="candidate",
+        min_span=(step, 1),
+    )
+    boxes += row_boxes(
+        truths,
+        ("freq_start_mhz", "freq_stop_mhz"),
+        ("record_start", "record_stop"),
+        color=TRUTH_COLOR,
+        label="truth",
+        min_span=(step, 1),
+    )
     return heatmap(
         path, data, edges(freqs), np.arange(offset, offset + len(data) + 1),
         title=title, xlabel="Frequency / MHz", ylabel="Record", colorbar="amplitude",
@@ -174,13 +210,18 @@ def cwt_view(
     truths: Iterable[Mapping[str, Any]] = (),
     refined: float = math.nan,
     ylim: tuple[float, float] | None = None,
-    cmap: str = "inferno",
-    colorbar: str = "log10(CWT power)",
+    cmap: str = CWT_POWER_CMAP,
+    colorbar: str = CWT_POWER_COLORBAR,
     log_power: bool = True,
     dpi: int = 140,
 ) -> Path:
-    axes = ("record_start", "record_stop"), ("period_start_records", "period_stop_records", "peak_period_records")
-    boxes = row_boxes(candidates, *axes, color=CANDIDATE_COLOR, label="candidate")
+    boxes = row_boxes(
+        candidates,
+        ("t0_rec", "t1_rec"),
+        ("p0_rec", "p1_rec"),
+        color=CANDIDATE_COLOR,
+        label="candidate",
+    )
     lines: list[Line] = [
         ("y", period, TRUTH_COLOR, "truth period", "--")
         for row in truths
@@ -188,7 +229,7 @@ def cwt_view(
     ]
     if math.isfinite(refined):
         lines.append(("y", refined, TRUTH_COLOR, "refined period", ":"))
-    values = np.log10(power + 1e-12) if log_power else power
+    values = cwt_power_display_values(power) if log_power else np.asarray(power)
     return heatmap(
         path, values, np.arange(offset, offset + values.shape[1] + 1), edges(periods, True),
         title=title, xlabel="Record", ylabel="Period / records", colorbar=colorbar,

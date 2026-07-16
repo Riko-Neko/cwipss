@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from cwipss.analysis.benchmark import (
     MatchConfig,
@@ -14,7 +15,7 @@ from cwipss.analysis.benchmark import (
     run_injection_benchmark,
 )
 from cwipss.analysis.injection import synthetic_background
-from cwipss.analysis.injection_config import make_injections_from_config
+from cwipss.analysis.injection_config import load_injection_config, make_injections_from_config
 from cwipss.analysis.simulation import InjectionSpec, inject_periodic_signal
 from cwipss.analysis.validation import ValidationConfig
 from cwipss.analysis.veto import VetoConfig
@@ -75,11 +76,10 @@ def test_evaluate_injections_reports_validated_match() -> None:
     }
     candidate = {
         "candidate_id": 1,
-        "record_start": 12,
-        "record_stop": 88,
-        "freq_start_mhz": 4.0,
-        "freq_stop_mhz": 4.0,
-        "peak_score": 10,
+        "t0_rec": 12,
+        "t1_rec": 88,
+        "freq_mhz": 4.0,
+        "score": 10,
         "candidate_status": "needs_validation",
     }
     validation = {
@@ -112,20 +112,18 @@ def test_evaluate_injections_matches_after_veto_candidates_only() -> None:
     }
     vetoed = {
         "candidate_id": 1,
-        "record_start": 12,
-        "record_stop": 88,
-        "freq_start_mhz": 4.0,
-        "freq_stop_mhz": 4.0,
-        "peak_score": 99,
+        "t0_rec": 12,
+        "t1_rec": 88,
+        "freq_mhz": 4.0,
+        "score": 99,
         "candidate_status": "vetoed",
     }
     kept = {
         "candidate_id": 2,
-        "record_start": 12,
-        "record_stop": 88,
-        "freq_start_mhz": 4.0,
-        "freq_stop_mhz": 4.0,
-        "peak_score": 1,
+        "t0_rec": 12,
+        "t1_rec": 88,
+        "freq_mhz": 4.0,
+        "score": 1,
         "candidate_status": "needs_validation",
     }
     validation = {
@@ -175,6 +173,52 @@ def test_injection_config_randomizes_long_time_spans_and_replicates() -> None:
     assert len({(spec.period_records, spec.record_start, spec.duration_records) for spec in specs}) == 2
 
 
+def test_random_100_configs_expand_to_at_least_ten_cycles() -> None:
+    records = 43794
+    freqs = np.linspace(0.1, 40.0, 2048, dtype=np.float64)
+
+    for path in (
+        Path("configs/injection_fullband_random_100.json"),
+        Path("configs/injection_lowfreq_random_100.json"),
+    ):
+        payload = load_injection_config(path)
+        specs = make_injections_from_config(payload, records=records, channels=freqs.size, freqs_mhz=freqs)
+
+        assert len(payload["sets"]) == 100
+        assert len(specs) == 133
+        base_periods = [float(item["period_records"]["value"]) for item in payload["sets"]]
+        assert sum(period < 100.0 for period in base_periods) == 75
+        assert sum(100.0 <= period < 1000.0 for period in base_periods) == 25
+        assert all(float(spec.duration_records or 0) / float(spec.period_records) >= 10.0 for spec in specs)
+        assert all(0 <= spec.record_start <= records - int(spec.duration_records or 0) for spec in specs)
+
+
+def test_random_100_frequency_regions_match_config_names() -> None:
+    freqs = np.linspace(0.1, 40.0, 2048, dtype=np.float64)
+
+    fullband = make_injections_from_config(
+        load_injection_config(Path("configs/injection_fullband_random_100.json")),
+        records=43794,
+        channels=freqs.size,
+        freqs_mhz=freqs,
+    )
+    fullband_channels = {int(round(spec.channel_center)) for spec in fullband}
+    assert len(fullband_channels) == len(fullband)
+    assert min(fullband_channels) < 128
+    assert max(fullband_channels) > 1920
+
+    lowfreq = make_injections_from_config(
+        load_injection_config(Path("configs/injection_lowfreq_random_100.json")),
+        records=43794,
+        channels=freqs.size,
+        freqs_mhz=freqs,
+    )
+    lowfreq_values = [float(freqs[int(round(spec.channel_center))]) for spec in lowfreq]
+    step = float(np.nanmedian(np.diff(freqs)))
+    assert min(lowfreq_values) >= 0.15 - step
+    assert max(lowfreq_values) <= 1.9 + step
+
+
 def test_aggregate_injection_performance_groups_recovery_rates() -> None:
     rows = aggregate_injection_performance(
         [
@@ -215,17 +259,24 @@ def test_run_injection_benchmark_writes_expected_outputs(tmp_path: Path) -> None
             block_channels=16,
             candidate_period_min_records=2.0,
             candidate_period_max_records=16.0,
-            noise_floor_fraction=0.2,
-            activity_trim_low=0.0,
-            activity_trim_high=1.0,
-            activity_smooth_records=3,
-            pelt_penalty=2.0,
-            pelt_min_size_records=8,
-            window_min_duration_records=8,
-            window_min_activity_mean=0.1,
-            window_merge_gap_records=4,
-            profile_min_prominence=0.1,
-            profile_max_peaks_per_window=2,
+            cpro_threshold_snr=2.0,
+            cpro_texture_quantile=0.0,
+            cpro_period_center_bins=1,
+            cpro_period_context_bins=1,
+            cpro_min_period_contrast=0.0,
+            cpro_support_records=5,
+            cpro_min_occupancy=0.4,
+            cpro_period_support_bins=1,
+            cpro_window_support_records=9,
+            cpro_min_window_occupancy=0.2,
+            cprf_threshold_snr=1.0,
+            cprf_texture_quantile=0.0,
+            cprf_smooth_bins=1,
+            cprf_min_width_bins=1,
+            cprf_min_peak_strength=0.0,
+            cprf_min_band_persistence=0.0,
+            cprf_min_band_concentration=0.0,
+            cprf_min_local_contrast=0.0,
             max_candidates_per_channel=2,
         ),
         veto_config=VetoConfig(enabled=False),
@@ -247,6 +298,14 @@ def test_run_injection_benchmark_writes_expected_outputs(tmp_path: Path) -> None
     assert (run_dir / "candidates_raw.csv").exists()
     assert (run_dir / "validation_reviewed.csv").exists()
     assert (run_dir / "injection_performance.csv").exists()
+    with (run_dir / "time_windows.csv").open(newline="") as stream:
+        assert "accepted" in (csv.DictReader(stream).fieldnames or [])
+    with (run_dir / "candidates_raw.csv").open(newline="") as stream:
+        candidate_fields = csv.DictReader(stream).fieldnames or []
+    assert "band_conc" in candidate_fields
+    assert "local_contrast" in candidate_fields
+    assert "integrated_score" not in candidate_fields
     assert _read_csv(run_dir / "injection_results.csv")[0]["injection_id"] == "inj_0001"
     summary = json.loads((run_dir / "injection_summary.json").read_text())
+    assert summary["schema_version"] == 4
     assert summary["injection_count"] == 1

@@ -34,11 +34,9 @@ python scripts/run_cwt_candidates.py \
 - Stage 01, `stage_01_input_matrix.png`: raw `time x channel` matrix.
 - Stage 02, `stage_02_<block>_channel_<channel>_scalogram.png`:
   representative-channel full `period x time` CWT scalograms.
-- Stage 03: representative-channel trusted-period structure-gated CWT map
-  after single-channel low-20% floor normalization, per-period low-quantile
-  standardization, and local 2D time-period support gating.
-- Stage 04: signed period-axis activity curve with recorded PELT time windows.
-- Stage 05: windowed period profiles used to choose candidate periods.
+- Stage 03: calibrated CPRO persistent-ridge score map.
+- Stage 04: absolute CPRO activity with accepted PELT time windows.
+- Stage 05: PELT-windowed CPRO period profiles used to choose candidate periods.
 - Stage 06: aggregated `period x channel` overview response map for review
   only; detection does not use this projection.
 - Stage 07: candidate-domain `period x channel` overview with recorded
@@ -54,25 +52,14 @@ python scripts/run_cwt_candidates.py \
   Default `10`.
 - `--candidate-period-max-records`: reject candidates above this period.
   Default `200`.
-- `--noise-floor-fraction`: lowest fraction of trusted CWT power used as
-  channel noise floor. Default `0.20`.
-- `--structure-baseline-quantile`: low time-quantile background used before
-  structure gating. Default `0.10`.
-- `--structure-scale-quantile`: low time-quantile subset used for per-period
-  scale estimation. Default `0.20`.
-- `--structure-z-threshold`: robust z threshold for local 2D support.
-  Default `1.0`.
-- `--structure-time-support-records`: time-neighborhood support width.
-  Default `64`.
-- `--structure-period-support-bins`: period-neighborhood support width.
-  Default `3`.
-- `--structure-min-support-fraction`: minimum local support fraction retained.
-  Default `0.10`.
-- `--pelt-penalty`: PELT mean-shift penalty. Default `16`.
-- `--window-min-duration-records`: minimum PELT window duration. Default `384`.
-- `--window-min-activity-raw-mean`: minimum raw structured activity mean needed
-  for a PELT window to emit period candidates. Default `25.0`.
-- `--window-merge-gap-records`: merge nearby PELT windows. Default `256`.
+- `--cpro-threshold-snr`: fixed absolute calibrated threshold. Default `32`.
+- `--cpro-texture-quantile`: map-texture quantile. Default `0.9375`.
+- `--cpro-min-period-contrast`: period-ridge contrast. Default `1.5`.
+- `--cpro-min-occupancy`: short-window occupancy. Default `0.65`.
+- `--cpro-min-window-occupancy`: long-window occupancy. Default `0.40`.
+- `--pelt-penalty`: native mean-shift segmentation penalty. Default `16`.
+- `--pelt-min-size-records`: minimum native PELT segment size. Default `384`.
+- `--window-min-duration-records`: minimum accepted PELT window. Default `384`.
 - `--profile-min-prominence`: minimum period-profile peak prominence.
   Default `0.5`.
 - `--viz-max-blocks`: maximum blocks to visualize; `0` renders all.
@@ -98,8 +85,8 @@ python scripts/run_candidate_gallery.py \
 ```
 
 The default `auto` ordering uses `evidence_rank` when reviewed validation
-statistics exist, otherwise it uses `integrated_score`. Override this with
-`--sort-by integrated_score` or `--sort-by global_q_value`. Use `--top 0` to
+statistics exist, otherwise it uses CPRF `score`. Override this with
+`--sort-by score` or `--sort-by global_q_value`. Use `--top 0` to
 render every candidate and `--include-vetoed` to include rejected rows.
 
 Images are grouped by type and reuse the former candidate-directory identifier

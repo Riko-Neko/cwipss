@@ -1,29 +1,22 @@
-"""Single-channel period-candidate detection."""
+"""CPRO candidate generation and CPU orchestration."""
 
 from __future__ import annotations
 
+from collections.abc import Callable, Iterable, Sequence
 from math import ceil
 from time import perf_counter
-from collections.abc import Callable, Iterable
 
 import numpy as np
 
-from .activity import (
-    coherent_structure_map,
-    crop_valid_periods,
-    low_fraction_noise_floor,
-    relative_excess,
-    robust_standardize,
-    signed_trimmed_period_activity,
-    smooth_activity,
-)
-from .profile import find_period_profile_peaks, windowed_period_profile
+from .activity import robust_standardize
+from .cpro import CPRO_DETECTOR, CPROParameters, cpro_activity, cpro_period_mask, difference_noise_std
+from .cprf import CPRF_METHOD, CPRFParameters, CPRFResult, evaluate_cprf, normalize_cwt_power
 from .windows import Segment, active_windows_from_segments, merge_close_windows, pelt_mean_shift
 
 
-DETECTION_METHOD = "single_channel_lowfloor_pelt_profile"
-WINDOW_METHOD = "single_channel_lowfloor_pelt"
-ProfileGetter = Callable[[int, int], np.ndarray]
+WINDOW_METHOD = f"{CPRO_DETECTOR}_pelt"
+DETECTION_METHOD = f"{WINDOW_METHOD}_{CPRF_METHOD}"
+CPRFGetter = Callable[[int, int], CPRFResult]
 
 
 def _timing_add(timing: dict[str, float] | None, key: str, seconds: float) -> None:
@@ -41,12 +34,10 @@ def resolve_channel_candidate_cap(
     max_candidates_per_record: float,
     records: int,
 ) -> int:
-    """Resolve per-channel candidate cap from a hard count or per-record rate."""
     if isinstance(max_candidates_per_channel, str):
         value = max_candidates_per_channel.strip().lower()
         if value == "auto":
-            rate = max(0.0, float(max_candidates_per_record))
-            return max(0, int(ceil(rate * max(0, int(records)))))
+            return max(0, int(ceil(max(0.0, float(max_candidates_per_record)) * max(0, int(records)))))
         return max(0, int(value))
     return max(0, int(max_candidates_per_channel))
 
@@ -56,358 +47,353 @@ def _peak_record(activity: np.ndarray, start: int, stop: int, record_start: int)
     start = max(0, min(int(start), values.size))
     stop = max(start + 1, min(int(stop), values.size))
     local = values[start:stop]
-    if local.size == 0:
-        return int(record_start + start)
-    return int(record_start + start + int(np.nanargmax(local)))
+    return int(record_start + start + (int(np.nanargmax(local)) if local.size else 0))
 
 
-def _detect_preprocessed_channel_periods(
-    *,
-    valid_periods: np.ndarray,
-    structured: np.ndarray | None,
+def pelt_windows_from_activity(
     activity: np.ndarray,
+    window_occupancy: np.ndarray,
+    *,
+    penalty: float,
+    min_size: int,
+    jump: int,
+    min_duration: int,
+    min_mean: float,
+    min_raw_mean: float,
+    merge_gap: int,
+) -> tuple[list[dict[str, float | int]], np.ndarray, int]:
+    """Segment one CPRO activity axis with the required native PELT bridge."""
+    raw = np.asarray(activity, dtype=np.float32)
+    occupancy = np.asarray(window_occupancy, dtype=np.float32)
+    if raw.ndim != 1 or occupancy.shape != raw.shape:
+        raise ValueError("CPRO activity and window occupancy must be matching 1D arrays")
+    activity_z = robust_standardize(raw)
+    segments = pelt_mean_shift(
+        activity_z,
+        penalty=penalty,
+        min_size=min_size,
+        jump=jump,
+    )
+    accepted = pelt_windows_from_segments(
+        raw,
+        occupancy,
+        activity_z,
+        segments,
+        penalty=penalty,
+        min_duration=min_duration,
+        min_mean=min_mean,
+        min_raw_mean=min_raw_mean,
+        merge_gap=merge_gap,
+    )
+    return accepted, activity_z, len(segments)
+
+
+def pelt_windows_from_segments(
+    activity: np.ndarray,
+    window_occupancy: np.ndarray,
     activity_z: np.ndarray,
-    noise_floor: float,
+    segments: list[Segment],
+    *,
+    penalty: float,
+    min_duration: int,
+    min_mean: float,
+    min_raw_mean: float,
+    merge_gap: int,
+) -> list[dict[str, float | int]]:
+    """Apply the frozen post-PELT window gates to native segments."""
+    raw = np.asarray(activity, dtype=np.float32)
+    occupancy = np.asarray(window_occupancy, dtype=np.float32)
+    standardized = np.asarray(activity_z, dtype=np.float32)
+    if raw.ndim != 1 or occupancy.shape != raw.shape or standardized.shape != raw.shape:
+        raise ValueError("CPRO activity products must be matching 1D arrays")
+    windows = active_windows_from_segments(
+        segments,
+        standardized,
+        min_duration=min_duration,
+        min_mean=min_mean,
+    )
+    windows = merge_close_windows(windows, max_gap=merge_gap)
+    accepted: list[dict[str, float | int]] = []
+    for window in windows:
+        start = int(window["record_start"])
+        stop = int(window["record_stop"])
+        raw_window = raw[start:stop]
+        if raw_window.size == 0:
+            continue
+        raw_mean = float(np.mean(raw_window))
+        if raw_mean < float(min_raw_mean):
+            continue
+        z_window = standardized[start:stop]
+        occupancy_window = occupancy[start:stop]
+        accepted.append(
+            {
+                **window,
+                "activity_mean": raw_mean,
+                "activity_max": float(np.max(raw_window)),
+                "pelt_activity_mean": float(np.mean(z_window)),
+                "pelt_activity_max": float(np.max(z_window)),
+                "window_occupancy_mean": float(np.mean(occupancy_window)),
+                "window_occupancy_max": float(np.max(occupancy_window)),
+                "pelt_penalty": float(penalty),
+            }
+        )
+    return accepted
+
+
+def build_channel_candidates(
+    *,
+    activity: np.ndarray,
+    windows: Sequence[dict[str, float | int]],
+    noise_std: float,
+    calibrated_threshold: float,
     freq_mhz: float,
     channel_idx: int,
     record_start: int,
-    pelt_penalty: float,
-    pelt_min_size_records: int,
-    pelt_jump_records: int,
-    window_min_duration_records: int,
-    window_min_activity_mean: float,
-    window_min_activity_raw_mean: float,
-    window_merge_gap_records: int,
-    profile_min_prominence: float,
-    profile_max_peaks_per_window: int,
     max_candidates_per_channel: int,
-    segments: list[Segment] | None = None,
     timing: dict[str, float] | None = None,
-    profile_getter: ProfileGetter | None = None,
-) -> tuple[list[dict], list[dict], dict[str, np.ndarray | float]]:
-    stage_start = perf_counter() if timing is not None and segments is None else 0.0
-    if segments is None:
-        segments = pelt_mean_shift(
-            activity_z,
-            penalty=pelt_penalty,
-            min_size=pelt_min_size_records,
-            jump=pelt_jump_records,
-        )
-    windows = active_windows_from_segments(
-        segments,
-        activity_z,
-        min_duration=window_min_duration_records,
-        min_mean=window_min_activity_mean,
-    )
-    windows = merge_close_windows(windows, max_gap=window_merge_gap_records)
-    if timing is not None:
-        if stage_start:
-            _timing_add(timing, "pelt_seconds", perf_counter() - stage_start)
-        _timing_increment(timing, "segments", len(segments))
-        _timing_increment(timing, "windows_before_raw_floor", len(windows))
-
-    if profile_getter is None:
-        if structured is None:
-            raise ValueError("structured or profile_getter is required")
-
-        def profile_getter(start: int, stop: int) -> np.ndarray:
-            return windowed_period_profile(structured, start, stop)
-
-    window_rows: list[dict] = []
+    cprf_getter: CPRFGetter,
+) -> tuple[list[dict], list[dict]]:
+    """Apply CPRF to accepted PELT windows and emit accepted candidates."""
     candidate_rows: list[dict] = []
-    raw_threshold = max(0.0, float(window_min_activity_raw_mean))
+    window_rows: list[dict] = []
     stage_start = perf_counter() if timing is not None else 0.0
     for window_index, window in enumerate(windows, start=1):
         local_start = int(window["record_start"])
         local_stop = int(window["record_stop"])
-        duration = int(local_stop - local_start)
-        peak_record = _peak_record(activity_z, local_start, local_stop, record_start)
+        activity_window = activity[local_start:local_stop]
         window_id = f"ch{int(channel_idx):04d}_w{window_index:04d}"
-        activity_window = activity_z[local_start:local_stop]
-        raw_activity_window = activity[local_start:local_stop]
-        raw_activity_mean = float(np.nanmean(raw_activity_window)) if raw_activity_window.size else 0.0
-        raw_activity_max = float(np.nanmax(raw_activity_window)) if raw_activity_window.size else 0.0
-        if raw_activity_mean < raw_threshold:
-            continue
         window_row = {
-            "detection_method": WINDOW_METHOD,
+            "method": WINDOW_METHOD,
             "window_id": window_id,
-            "channel_index": int(channel_idx),
+            "channel": int(channel_idx),
             "freq_mhz": float(freq_mhz),
-            "record_start": int(record_start + local_start),
-            "record_stop": int(record_start + local_stop),
-            "duration_records": duration,
-            "activity_mean": float(np.nanmean(activity_window)) if activity_window.size else 0.0,
-            "activity_max": float(np.nanmax(activity_window)) if activity_window.size else 0.0,
-            "activity_raw_mean": raw_activity_mean,
-            "activity_raw_max": raw_activity_max,
-            "noise_floor": float(noise_floor),
-            "pelt_penalty": float(pelt_penalty),
-            "pelt_cost": float(window.get("pelt_cost", 0.0)),
+            "t0_rec": int(record_start + local_start),
+            "t1_rec": int(record_start + local_stop),
+            "dur_rec": int(local_stop - local_start),
+            "noise_sigma": float(noise_std),
+            "cpro_thr": float(calibrated_threshold),
+            "cpro_mean": float(np.nanmean(activity_window)) if activity_window.size else 0.0,
+            "cpro_max": float(np.nanmax(activity_window)) if activity_window.size else 0.0,
+            "cpro_occ": float(window.get("window_occupancy_mean", 0.0)),
+            "cpro_occ_max": float(window.get("window_occupancy_max", 0.0)),
+            "pelt_z_mean": float(window.get("pelt_activity_mean", 0.0)),
+            "pelt_z_max": float(window.get("pelt_activity_max", 0.0)),
+            "pelt_pen": float(window.get("pelt_penalty", 0.0)),
         }
-        window_rows.append(window_row)
-
-        profile = profile_getter(local_start, local_stop)
-        peaks = find_period_profile_peaks(
-            profile,
-            valid_periods,
-            min_prominence=profile_min_prominence,
-            max_peaks=profile_max_peaks_per_window,
+        result = cprf_getter(local_start, local_stop)
+        window_row.update(
+            {
+                "accepted": int(result.accepted),
+                "cprf_thr": result.normalization_threshold,
+                "period_rec": result.peak_period_records,
+                "p0_rec": result.period_start_records,
+                "p1_rec": result.period_stop_records,
+                "p_bins": result.width_bins,
+                "ridge_peak": result.peak_strength,
+                "ridge_int": result.integrated_strength,
+                "band_conc": result.band_concentration,
+                "band_persist": result.band_persistence,
+                "local_contrast": result.local_contrast,
+                "h2": result.harmonic_2_score,
+                "h3": result.harmonic_3_score,
+                "harm_n": result.harmonic_support_count,
+                "core_score": result.base_score,
+                "score": result.total_score,
+            }
         )
-        for peak in peaks:
+        window_rows.append(window_row)
+        if result.accepted:
             candidate_rows.append(
                 {
-                    "detection_method": DETECTION_METHOD,
+                    "method": DETECTION_METHOD,
                     "window_id": window_id,
-                    "channel_index": int(channel_idx),
-                    "region_pixels": 0,
-                    "record_start": int(record_start + local_start),
-                    "record_stop": int(record_start + local_stop),
-                    "duration_records": duration,
-                    "period_start_records": peak["period_start_records"],
-                    "period_stop_records": peak["period_stop_records"],
-                    "period_width_records": peak["period_width_records"],
-                    "period_width_bins": peak["period_width_bins"],
-                    "peak_period_records": peak["peak_period_records"],
-                    "freq_start_mhz": float(freq_mhz),
-                    "freq_stop_mhz": float(freq_mhz),
-                    "bandwidth_mhz": 0.0,
-                    "peak_record": peak_record,
-                    "peak_freq_mhz": float(freq_mhz),
-                    "peak_score": float(peak["profile_score"]),
-                    "mean_score": float(window_row["activity_mean"]),
-                    "integrated_score": float(peak["profile_score"]),
-                    "activity_mean": float(window_row["activity_mean"]),
-                    "activity_max": float(window_row["activity_max"]),
-                    "activity_raw_mean": float(window_row["activity_raw_mean"]),
-                    "activity_raw_max": float(window_row["activity_raw_max"]),
-                    "noise_floor": float(noise_floor),
-                    "period_peak_prominence": float(peak["period_peak_prominence"]),
+                    "channel": int(channel_idx),
+                    "freq_mhz": float(freq_mhz),
+                    "t0_rec": window_row["t0_rec"],
+                    "t1_rec": window_row["t1_rec"],
+                    "dur_rec": window_row["dur_rec"],
+                    "t_peak_rec": _peak_record(activity, local_start, local_stop, record_start),
+                    "period_rec": result.peak_period_records,
+                    "p0_rec": result.period_start_records,
+                    "p1_rec": result.period_stop_records,
+                    "p_span_rec": abs(
+                        result.period_stop_records - result.period_start_records
+                    ),
+                    "p_bins": result.width_bins,
+                    "noise_sigma": window_row["noise_sigma"],
+                    "cpro_thr": window_row["cpro_thr"],
+                    "cpro_mean": window_row["cpro_mean"],
+                    "cpro_max": window_row["cpro_max"],
+                    "cpro_occ": window_row["cpro_occ"],
+                    "cpro_occ_max": window_row["cpro_occ_max"],
+                    "pelt_z_mean": window_row["pelt_z_mean"],
+                    "pelt_z_max": window_row["pelt_z_max"],
+                    "pelt_pen": window_row["pelt_pen"],
+                    "cprf_thr": result.normalization_threshold,
+                    "ridge_peak": result.peak_strength,
+                    "ridge_int": result.integrated_strength,
+                    "band_conc": result.band_concentration,
+                    "band_persist": result.band_persistence,
+                    "local_contrast": result.local_contrast,
+                    "h2": result.harmonic_2_score,
+                    "h3": result.harmonic_3_score,
+                    "harm_n": result.harmonic_support_count,
+                    "core_score": result.base_score,
+                    "score": result.total_score,
                 }
             )
     if timing is not None:
-        _timing_add(timing, "profile_seconds", perf_counter() - stage_start)
-        _timing_increment(timing, "windows_after_raw_floor", len(window_rows))
-
-    stage_start = perf_counter() if timing is not None else 0.0
-    candidate_rows.sort(key=lambda row: (row["integrated_score"], row["period_peak_prominence"]), reverse=True)
-    max_rows = max(0, int(max_candidates_per_channel))
-    diagnostics: dict[str, np.ndarray | float] = {
-        "valid_periods": valid_periods,
-        "structured": structured if structured is not None else np.empty((0, 0), dtype=np.float32),
-        "activity": activity_z,
-        "noise_floor": float(noise_floor),
-    }
-    if timing is not None:
-        _timing_add(timing, "candidate_sort_seconds", perf_counter() - stage_start)
-        _timing_increment(timing, "channel_candidate_rows_before_cap", len(candidate_rows))
-    return candidate_rows[:max_rows], window_rows, diagnostics
-
-
-def detect_channel_periods(
-    power_channel: np.ndarray,
-    periods: np.ndarray,
-    *,
-    freq_mhz: float,
-    channel_idx: int,
-    record_start: int,
-    candidate_period_min_records: float | None,
-    candidate_period_max_records: float | None,
-    noise_floor_fraction: float,
-    excess_eps_fraction: float,
-    structure_baseline_quantile: float,
-    structure_scale_quantile: float,
-    structure_z_threshold: float,
-    structure_time_support_records: int,
-    structure_period_support_bins: int,
-    structure_min_support_fraction: float,
-    activity_trim_low: float,
-    activity_trim_high: float,
-    activity_smooth_records: int,
-    pelt_penalty: float,
-    pelt_min_size_records: int,
-    window_min_duration_records: int,
-    window_min_activity_mean: float,
-    window_min_activity_raw_mean: float,
-    window_merge_gap_records: int,
-    profile_min_prominence: float,
-    profile_max_peaks_per_window: int,
-    max_candidates_per_channel: int | str,
-    max_candidates_per_record: float = 3.0 / 4096.0,
-    pelt_jump_records: int = 1,
-    timing: dict[str, float] | None = None,
-) -> tuple[list[dict], list[dict], dict[str, np.ndarray | float]]:
-    """Detect period candidates from one channel's CWT power map.
-
-    The detector uses a single low-fraction noise floor per channel over the
-    trusted CWT period domain, suppresses isolated 2D texture with per-period
-    low-quantile standardization and local time-period support, then detects
-    PELT time windows from the compressed activity curve and searches
-    period-profile peaks inside each window.
-    """
-    channel_start = perf_counter() if timing is not None else 0.0
-    power = np.asarray(power_channel, dtype=np.float32)
-    if power.ndim != 2:
-        raise ValueError("power_channel must have shape (periods, records)")
-    stage_start = perf_counter() if timing is not None else 0.0
-    valid_power, valid_periods, _mask = crop_valid_periods(
-        power,
-        periods,
-        candidate_period_min_records,
-        candidate_period_max_records,
+        _timing_add(timing, "cprf_seconds", perf_counter() - stage_start)
+        _timing_increment(timing, "windows", len(window_rows))
+    candidate_rows.sort(
+        key=lambda row: row["score"],
+        reverse=True,
     )
-    noise_floor = low_fraction_noise_floor(valid_power, fraction=noise_floor_fraction)
-    excess = relative_excess(valid_power, noise_floor, eps_fraction=excess_eps_fraction)
-    if timing is not None:
-        _timing_add(timing, "floor_excess_seconds", perf_counter() - stage_start)
-
-    stage_start = perf_counter() if timing is not None else 0.0
-    structured = coherent_structure_map(
-        excess,
-        baseline_quantile=structure_baseline_quantile,
-        scale_quantile=structure_scale_quantile,
-        z_threshold=structure_z_threshold,
-        time_support_records=structure_time_support_records,
-        period_support_bins=structure_period_support_bins,
-        min_support_fraction=structure_min_support_fraction,
-    )
-    if timing is not None:
-        _timing_add(timing, "structure_seconds", perf_counter() - stage_start)
-
-    stage_start = perf_counter() if timing is not None else 0.0
-    activity_raw = signed_trimmed_period_activity(
-        structured,
-        trim_low=activity_trim_low,
-        trim_high=activity_trim_high,
-    )
-    activity = smooth_activity(activity_raw, smooth_records=activity_smooth_records)
-    activity_z = robust_standardize(activity)
-    if timing is not None:
-        _timing_add(timing, "activity_seconds", perf_counter() - stage_start)
-
-    channel_cap = resolve_channel_candidate_cap(
-        max_candidates_per_channel,
-        max_candidates_per_record,
-        power.shape[1],
-    )
-    candidate_rows, window_rows, diagnostics = _detect_preprocessed_channel_periods(
-        valid_periods=valid_periods,
-        structured=structured,
-        activity=activity,
-        activity_z=activity_z,
-        noise_floor=float(noise_floor),
-        freq_mhz=freq_mhz,
-        channel_idx=channel_idx,
-        record_start=record_start,
-        pelt_penalty=pelt_penalty,
-        pelt_min_size_records=pelt_min_size_records,
-        pelt_jump_records=pelt_jump_records,
-        window_min_duration_records=window_min_duration_records,
-        window_min_activity_mean=window_min_activity_mean,
-        window_min_activity_raw_mean=window_min_activity_raw_mean,
-        window_merge_gap_records=window_merge_gap_records,
-        profile_min_prominence=profile_min_prominence,
-        profile_max_peaks_per_window=profile_max_peaks_per_window,
-        max_candidates_per_channel=channel_cap,
-        timing=timing,
-    )
-    diagnostics["excess"] = excess
-    if timing is not None:
-        _timing_add(timing, "channel_total_seconds", perf_counter() - channel_start)
-    return candidate_rows, window_rows, diagnostics
+    return candidate_rows[: max(0, int(max_candidates_per_channel))], window_rows
 
 
 def detect_block_periods(
     power_cube: np.ndarray,
+    raw_data: np.ndarray,
     periods: np.ndarray,
     freqs_mhz: np.ndarray,
+    noise_gain: np.ndarray,
     record_start: int,
     *,
+    target_channel_start: int,
+    target_channel_stop: int,
     candidate_period_min_records: float | None,
     candidate_period_max_records: float | None,
-    noise_floor_fraction: float,
-    excess_eps_fraction: float,
-    structure_baseline_quantile: float,
-    structure_scale_quantile: float,
-    structure_z_threshold: float,
-    structure_time_support_records: int,
-    structure_period_support_bins: int,
-    structure_min_support_fraction: float,
-    activity_trim_low: float,
-    activity_trim_high: float,
-    activity_smooth_records: int,
+    cpro_threshold_snr: float,
+    cpro_texture_quantile: float,
+    cpro_period_center_bins: int,
+    cpro_period_context_bins: int,
+    cpro_min_period_contrast: float,
+    cpro_support_records: int,
+    cpro_min_occupancy: float,
+    cpro_period_support_bins: int,
+    cpro_window_support_records: int,
+    cpro_min_window_occupancy: float,
     pelt_penalty: float,
     pelt_min_size_records: int,
+    pelt_jump_records: int,
+    pelt_threads: int,
     window_min_duration_records: int,
     window_min_activity_mean: float,
     window_min_activity_raw_mean: float,
     window_merge_gap_records: int,
-    profile_min_prominence: float,
-    profile_max_peaks_per_window: int,
+    cprf_params: CPRFParameters,
     max_candidates_per_channel: int | str,
     max_candidates_per_record: float = 3.0 / 4096.0,
-    pelt_jump_records: int = 1,
-    pelt_threads: int = 1,
-    cuda_structure_batch: bool = False,
-    cuda_structure_batch_channels: int | None = None,
     cuda_device: int | None = None,
     timing: dict[str, float] | None = None,
 ) -> tuple[list[dict], list[dict]]:
+    del pelt_threads  # CPU channels call the native single-series kernel directly.
+    del cuda_device
     power = np.asarray(power_cube, dtype=np.float32)
+    raw = np.asarray(raw_data, dtype=np.float32)
     period_values = np.asarray(periods, dtype=np.float64)
     freqs = np.asarray(freqs_mhz, dtype=np.float64)
-    if power.ndim != 3:
-        raise ValueError("power_cube must have shape (periods, records, channels)")
-    if power.shape[0] != period_values.size or power.shape[2] != freqs.size:
+    if power.ndim != 3 or power.shape[0] != period_values.size or power.shape[2] != freqs.size:
         raise ValueError("power_cube shape must match periods and freqs_mhz")
-
+    if raw.shape != (power.shape[1], power.shape[2]):
+        raise ValueError("raw_data must have shape (records, channels)")
+    start, stop = int(target_channel_start), int(target_channel_stop)
+    if not 0 <= start < stop <= power.shape[2]:
+        raise ValueError("invalid target channel offsets")
+    mask = cpro_period_mask(
+        period_values,
+        candidate_period_min_records,
+        candidate_period_max_records,
+    )
+    valid_power, valid_periods = power[mask], period_values[mask]
+    gain = np.asarray(noise_gain, dtype=np.float32)
+    if gain.shape != (valid_periods.size,):
+        raise ValueError("noise_gain must match the candidate period domain")
+    params = CPROParameters(
+        threshold_snr=cpro_threshold_snr,
+        texture_quantile=cpro_texture_quantile,
+        period_center_bins=cpro_period_center_bins,
+        period_context_bins=cpro_period_context_bins,
+        min_period_contrast=cpro_min_period_contrast,
+        support_records=cpro_support_records,
+        min_occupancy=cpro_min_occupancy,
+        period_support_bins=cpro_period_support_bins,
+        window_support_records=cpro_window_support_records,
+        min_window_occupancy=cpro_min_window_occupancy,
+    )
+    params.validate()
+    cap = resolve_channel_candidate_cap(
+        max_candidates_per_channel,
+        max_candidates_per_record,
+        power.shape[1],
+    )
     candidates: list[dict] = []
     windows: list[dict] = []
-    for channel_idx in range(power.shape[2]):
-        channel_candidates, channel_windows, _diagnostics = detect_channel_periods(
-            power[:, :, channel_idx],
-            period_values,
-            freq_mhz=float(freqs[channel_idx]),
-            channel_idx=channel_idx,
-            record_start=record_start,
-            candidate_period_min_records=candidate_period_min_records,
-            candidate_period_max_records=candidate_period_max_records,
-            noise_floor_fraction=noise_floor_fraction,
-            excess_eps_fraction=excess_eps_fraction,
-            structure_baseline_quantile=structure_baseline_quantile,
-            structure_scale_quantile=structure_scale_quantile,
-            structure_z_threshold=structure_z_threshold,
-            structure_time_support_records=structure_time_support_records,
-            structure_period_support_bins=structure_period_support_bins,
-            structure_min_support_fraction=structure_min_support_fraction,
-            activity_trim_low=activity_trim_low,
-            activity_trim_high=activity_trim_high,
-            activity_smooth_records=activity_smooth_records,
-            pelt_penalty=pelt_penalty,
-            pelt_min_size_records=pelt_min_size_records,
-            pelt_jump_records=pelt_jump_records,
-            window_min_duration_records=window_min_duration_records,
-            window_min_activity_mean=window_min_activity_mean,
-            window_min_activity_raw_mean=window_min_activity_raw_mean,
-            window_merge_gap_records=window_merge_gap_records,
-            profile_min_prominence=profile_min_prominence,
-            profile_max_peaks_per_window=profile_max_peaks_per_window,
-            max_candidates_per_channel=max_candidates_per_channel,
-            max_candidates_per_record=max_candidates_per_record,
-            timing=timing,
+    for output_channel, target in enumerate(range(start, stop)):
+        stage_start = perf_counter() if timing is not None else 0.0
+        noise_std = difference_noise_std(raw[:, target])
+        result = cpro_activity(
+            valid_power[:, :, target],
+            noise_std=noise_std,
+            noise_gain=gain,
+            params=params,
         )
-        _timing_increment(timing, "channels", 1)
-        candidates.extend(channel_candidates)
-        windows.extend(channel_windows)
+        _timing_add(timing, "cpro_seconds", perf_counter() - stage_start if timing is not None else 0.0)
+        normalized_cwt, cprf_threshold = normalize_cwt_power(
+            valid_power[:, :, target],
+            noise_std=noise_std,
+            noise_gain=gain,
+            params=cprf_params,
+        )
+        stage_start = perf_counter() if timing is not None else 0.0
+        pelt_windows, _activity_z, segment_count = pelt_windows_from_activity(
+            result.activity,
+            result.window_occupancy,
+            penalty=pelt_penalty,
+            min_size=pelt_min_size_records,
+            jump=pelt_jump_records,
+            min_duration=window_min_duration_records,
+            min_mean=window_min_activity_mean,
+            min_raw_mean=window_min_activity_raw_mean,
+            merge_gap=window_merge_gap_records,
+        )
+        _timing_add(timing, "pelt_seconds", perf_counter() - stage_start if timing is not None else 0.0)
+        _timing_increment(timing, "segments", segment_count)
+        def cprf_getter(local_start: int, local_stop: int) -> CPRFResult:
+            return evaluate_cprf(
+                normalized_cwt[:, local_start:local_stop],
+                valid_periods,
+                normalization_threshold=cprf_threshold,
+                params=cprf_params,
+            )
 
-    candidates.sort(key=lambda row: (row["integrated_score"], row["period_peak_prominence"]), reverse=True)
+        rows, channel_windows = build_channel_candidates(
+            activity=result.activity,
+            windows=pelt_windows,
+            noise_std=noise_std,
+            calibrated_threshold=result.threshold,
+            freq_mhz=float(freqs[target]),
+            channel_idx=output_channel,
+            record_start=record_start,
+            max_candidates_per_channel=cap,
+            timing=timing,
+            cprf_getter=cprf_getter,
+        )
+        candidates.extend(rows)
+        windows.extend(channel_windows)
+        _timing_increment(timing, "channels", 1)
+    candidates.sort(
+        key=lambda row: row["score"],
+        reverse=True,
+    )
     return candidates, windows
 
 
 def add_candidate_ids(candidates: Iterable[dict]) -> list[dict]:
     rows = sorted(
         candidates,
-        key=lambda row: float(row.get("integrated_score", row.get("peak_score", 0.0)) or 0.0),
+        key=lambda row: float(row.get("score", 0.0) or 0.0),
         reverse=True,
     )
     for idx, row in enumerate(rows, start=1):

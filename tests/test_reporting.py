@@ -46,16 +46,16 @@ def test_generate_single_run_report(tmp_path: Path) -> None:
     )
     _write_csv(
         run_dir / "candidates_reviewed.csv",
-        ["candidate_id", "source_file", "candidate_status", "peak_score", "peak_period_records", "peak_record", "peak_freq_mhz", "veto_flags"],
+        ["candidate_id", "source_file", "candidate_status", "score", "period_rec", "t_peak_rec", "freq_mhz", "veto_flags"],
         [
             {
                 "candidate_id": "1",
                 "source_file": "data/example.2C",
                 "candidate_status": "needs_validation",
-                "peak_score": "9.0",
-                "peak_period_records": "8",
-                "peak_record": "100",
-                "peak_freq_mhz": "38.1",
+                "score": "9.0",
+                "period_rec": "8",
+                "t_peak_rec": "100",
+                "freq_mhz": "38.1",
                 "veto_flags": "",
             }
         ],
@@ -160,7 +160,7 @@ def test_generate_report_includes_injection_benchmark_section(tmp_path: Path) ->
             "failure_stage",
             "matched_candidate_id",
             "period_error_fraction",
-            "peak_score",
+            "score",
         ],
         [
             {

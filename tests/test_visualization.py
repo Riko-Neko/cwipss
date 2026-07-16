@@ -13,22 +13,21 @@ from cwipss.reporting.visualization import (
 
 def test_visualize_cwt_stages_writes_index_and_pngs(tmp_path: Path) -> None:
     rng = np.random.default_rng(123)
-    data = rng.normal(size=(64, 8)).astype(np.float32)
-    freqs = np.arange(8, dtype=np.float64)
+    data = rng.normal(size=(64, 9)).astype(np.float32)
+    freqs = np.arange(9, dtype=np.float64)
     candidates = [
         {
             "candidate_id": 1,
             "block_id": "block_0001",
-            "record_start": 10,
-            "record_stop": 18,
-            "period_start_records": 8,
-            "period_stop_records": 8,
-            "peak_period_records": 8,
-            "freq_start_mhz": 2.0,
-            "freq_stop_mhz": 3.0,
-            "peak_record": 12,
-            "peak_freq_mhz": 2.0,
-            "peak_score": 6.0,
+            "channel": 2,
+            "t0_rec": 10,
+            "t1_rec": 18,
+            "p0_rec": 8,
+            "p1_rec": 8,
+            "period_rec": 8,
+            "t_peak_rec": 12,
+            "freq_mhz": 2.0,
+            "score": 6.0,
             "candidate_status": "needs_validation",
         }
     ]
@@ -51,7 +50,7 @@ def test_visualize_cwt_stages_writes_index_and_pngs(tmp_path: Path) -> None:
         SearchVisualizationConfig(
             wavelet="cmor1.5-1.0",
             periods=np.geomspace(2, 16, 8),
-            block_channels=8,
+            block_channels=9,
             candidate_period_min_records=2.0,
             candidate_period_max_records=16.0,
         ),

@@ -68,24 +68,22 @@ def _int(row: Mapping[str, Any], key: str, default: int = 0) -> int:
 
 
 def candidate_metrics(row: Mapping[str, Any], context: VetoContext) -> dict[str, float]:
-    freq0 = _float(row, "freq_start_mhz")
-    freq1 = _float(row, "freq_stop_mhz")
-    freq_lo, freq_hi = sorted([freq0, freq1])
+    freq = _float(row, "freq_mhz")
     ctx_lo, ctx_hi = sorted([context.freq_start_mhz, context.freq_stop_mhz])
-    duration_records = max(0, _int(row, "duration_records"))
-    bandwidth_mhz = max(0.0, abs(freq1 - freq0))
+    duration_records = max(0, _int(row, "dur_rec"))
+    bandwidth_mhz = 0.0
 
     return {
         "bandwidth_fraction": bandwidth_mhz / context.bandwidth_mhz,
         "duration_fraction": duration_records / context.duration_records,
         "time_edge_distance_records": float(
             min(
-                max(0, _int(row, "record_start") - context.record_start),
-                max(0, context.record_stop - _int(row, "record_stop")),
+                max(0, _int(row, "t0_rec") - context.record_start),
+                max(0, context.record_stop - _int(row, "t1_rec")),
             )
         ),
         "freq_edge_distance_mhz": float(
-            min(max(0.0, freq_lo - ctx_lo), max(0.0, ctx_hi - freq_hi))
+            min(max(0.0, freq - ctx_lo), max(0.0, ctx_hi - freq))
         ),
     }
 

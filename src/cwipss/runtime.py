@@ -6,6 +6,8 @@ import numpy as np
 import pywt
 import scipy
 
+from .signal.windows import native_pelt_available
+
 
 def runtime_info() -> dict:
     return {
@@ -15,8 +17,10 @@ def runtime_info() -> dict:
         "scipy": scipy.__version__,
         "local_filter": {
             "enabled": True,
-            "noise_floor": "numpy.partition low-fraction mean",
-            "activity_smoother": "scipy.ndimage.uniform_filter1d",
-            "window_detector": "required native C++ PELT mean-shift",
+            "activity_compressor": "Calibrated Persistent Ridge Occupancy (CPRO)",
+            "window_detector": "native C++ PELT mean-shift segmentation",
+            "period_filter": "Concentrated Periodic Ridge Filter (CPRF)",
+            "native_pelt_required": True,
+            "native_pelt_available": native_pelt_available(),
         },
     }

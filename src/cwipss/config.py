@@ -27,33 +27,42 @@ class CWTSearchConfig:
     block_channels: int = 128
     time_aggregation: str = "p95"
     aggregation_percentile: float = 95.0
-    detector: str = "single_channel_lowfloor_pelt"
+    detector: str = "calibrated_persistent_ridge_occupancy"
     candidate_period_min_records: float = 10.0
     candidate_period_max_records: float = 200.0
-    noise_floor_fraction: float = 0.20
-    excess_eps_fraction: float = 1e-6
-    structure_baseline_quantile: float = 0.10
-    structure_scale_quantile: float = 0.20
-    structure_z_threshold: float = 1.0
-    structure_time_support_records: int = 64
-    structure_period_support_bins: int = 3
-    structure_min_support_fraction: float = 0.10
-    activity_trim_low: float = 0.05
-    activity_trim_high: float = 0.95
-    activity_smooth_records: int = 16
+    cpro_threshold_snr: float = 32.0
+    cpro_texture_quantile: float = 0.9375
+    cpro_period_center_bins: int = 3
+    cpro_period_context_bins: int = 15
+    cpro_min_period_contrast: float = 1.5
+    cpro_support_records: int = 65
+    cpro_min_occupancy: float = 0.65
+    cpro_period_support_bins: int = 3
+    cpro_window_support_records: int = 769
+    cpro_min_window_occupancy: float = 0.40
     pelt_penalty: float = 16.0
     pelt_min_size_records: int = 384
     pelt_jump_records: int = 1
     pelt_threads: int = 1
-    cuda_structure_batch: bool = False
-    cuda_structure_batch_channels: int | None = None
-    cuda_max_pending_blocks: int = 1
+    cuda_max_pending_blocks: int = 2
     window_min_duration_records: int = 384
     window_min_activity_mean: float = 0.05
     window_min_activity_raw_mean: float = 25.0
     window_merge_gap_records: int = 256
-    profile_min_prominence: float = 0.5
-    profile_max_peaks_per_window: int = 1
+    cprf_threshold_snr: float = 32.0
+    cprf_texture_quantile: float = 0.9375
+    cprf_smooth_bins: int = 3
+    cprf_peak_band_fraction: float = 0.50
+    cprf_min_width_bins: int = 3
+    cprf_min_peak_strength: float = 1.25
+    cprf_min_integrated_strength: float = 0.0
+    cprf_min_band_persistence: float = 0.35
+    cprf_min_band_concentration: float = 0.55
+    cprf_min_local_contrast: float = 3.60
+    cprf_harmonic_weight: float = 0.20
+    cprf_harmonic_min_relative: float = 0.12
+    cprf_harmonic_window_scale: float = 1.25
+    cprf_max_peak_hypotheses: int = 8
     max_candidates_per_channel: int | str = "auto"
     max_candidates_per_record: float = 3.0 / 4096.0
     output_dir: str = "runs"
@@ -118,30 +127,39 @@ _SECTION_KEY_MAP: dict[str, dict[str, str]] = {
         "detector": "detector",
         "candidate_period_min_records": "candidate_period_min_records",
         "candidate_period_max_records": "candidate_period_max_records",
-        "noise_floor_fraction": "noise_floor_fraction",
-        "excess_eps_fraction": "excess_eps_fraction",
-        "structure_baseline_quantile": "structure_baseline_quantile",
-        "structure_scale_quantile": "structure_scale_quantile",
-        "structure_z_threshold": "structure_z_threshold",
-        "structure_time_support_records": "structure_time_support_records",
-        "structure_period_support_bins": "structure_period_support_bins",
-        "structure_min_support_fraction": "structure_min_support_fraction",
-        "activity_trim_low": "activity_trim_low",
-        "activity_trim_high": "activity_trim_high",
-        "activity_smooth_records": "activity_smooth_records",
+        "cpro_threshold_snr": "cpro_threshold_snr",
+        "cpro_texture_quantile": "cpro_texture_quantile",
+        "cpro_period_center_bins": "cpro_period_center_bins",
+        "cpro_period_context_bins": "cpro_period_context_bins",
+        "cpro_min_period_contrast": "cpro_min_period_contrast",
+        "cpro_support_records": "cpro_support_records",
+        "cpro_min_occupancy": "cpro_min_occupancy",
+        "cpro_period_support_bins": "cpro_period_support_bins",
+        "cpro_window_support_records": "cpro_window_support_records",
+        "cpro_min_window_occupancy": "cpro_min_window_occupancy",
         "pelt_penalty": "pelt_penalty",
         "pelt_min_size_records": "pelt_min_size_records",
         "pelt_jump_records": "pelt_jump_records",
         "pelt_threads": "pelt_threads",
-        "cuda_structure_batch": "cuda_structure_batch",
-        "cuda_structure_batch_channels": "cuda_structure_batch_channels",
         "cuda_max_pending_blocks": "cuda_max_pending_blocks",
         "window_min_duration_records": "window_min_duration_records",
         "window_min_activity_mean": "window_min_activity_mean",
         "window_min_activity_raw_mean": "window_min_activity_raw_mean",
         "window_merge_gap_records": "window_merge_gap_records",
-        "profile_min_prominence": "profile_min_prominence",
-        "profile_max_peaks_per_window": "profile_max_peaks_per_window",
+        "cprf_threshold_snr": "cprf_threshold_snr",
+        "cprf_texture_quantile": "cprf_texture_quantile",
+        "cprf_smooth_bins": "cprf_smooth_bins",
+        "cprf_peak_band_fraction": "cprf_peak_band_fraction",
+        "cprf_min_width_bins": "cprf_min_width_bins",
+        "cprf_min_peak_strength": "cprf_min_peak_strength",
+        "cprf_min_integrated_strength": "cprf_min_integrated_strength",
+        "cprf_min_band_persistence": "cprf_min_band_persistence",
+        "cprf_min_band_concentration": "cprf_min_band_concentration",
+        "cprf_min_local_contrast": "cprf_min_local_contrast",
+        "cprf_harmonic_weight": "cprf_harmonic_weight",
+        "cprf_harmonic_min_relative": "cprf_harmonic_min_relative",
+        "cprf_harmonic_window_scale": "cprf_harmonic_window_scale",
+        "cprf_max_peak_hypotheses": "cprf_max_peak_hypotheses",
         "max_candidates_per_channel": "max_candidates_per_channel",
         "max_candidates_per_record": "max_candidates_per_record",
     },
@@ -225,7 +243,66 @@ def cwt_config_from_mapping(
     flat = flatten_cwt_config_mapping(payload or {})
     if overrides:
         flat.update({key: value for key, value in overrides.items() if value is not None})
-    return CWTSearchConfig(**flat)
+    config = CWTSearchConfig(**flat)
+    validate_cwt_config(config)
+    return config
+
+
+def cprf_parameters_from_config(config: CWTSearchConfig):
+    """Resolve the single production CPRF parameter set."""
+    from .signal.cprf import CPRFParameters
+
+    return CPRFParameters(
+        threshold_snr=config.cprf_threshold_snr,
+        texture_quantile=config.cprf_texture_quantile,
+        smooth_bins=config.cprf_smooth_bins,
+        peak_band_fraction=config.cprf_peak_band_fraction,
+        min_width_bins=config.cprf_min_width_bins,
+        min_peak_strength=config.cprf_min_peak_strength,
+        min_integrated_strength=config.cprf_min_integrated_strength,
+        min_band_persistence=config.cprf_min_band_persistence,
+        min_band_concentration=config.cprf_min_band_concentration,
+        min_local_contrast=config.cprf_min_local_contrast,
+        harmonic_weight=config.cprf_harmonic_weight,
+        harmonic_min_relative=config.cprf_harmonic_min_relative,
+        harmonic_window_scale=config.cprf_harmonic_window_scale,
+        max_peak_hypotheses=config.cprf_max_peak_hypotheses,
+    )
+
+
+def validate_cwt_config(config: CWTSearchConfig) -> None:
+    """Reject unsupported scientific configurations instead of falling back."""
+    from .signal.cpro import CPRO_DETECTOR, CPROParameters
+
+    if config.detector != CPRO_DETECTOR:
+        raise ValueError(f"Unsupported detector {config.detector!r}; required detector is {CPRO_DETECTOR!r}")
+    CPROParameters(
+        threshold_snr=config.cpro_threshold_snr,
+        texture_quantile=config.cpro_texture_quantile,
+        period_center_bins=config.cpro_period_center_bins,
+        period_context_bins=config.cpro_period_context_bins,
+        min_period_contrast=config.cpro_min_period_contrast,
+        support_records=config.cpro_support_records,
+        min_occupancy=config.cpro_min_occupancy,
+        period_support_bins=config.cpro_period_support_bins,
+        window_support_records=config.cpro_window_support_records,
+        min_window_occupancy=config.cpro_min_window_occupancy,
+    ).validate()
+    cprf_parameters_from_config(config).validate()
+    if config.pelt_penalty < 0.0:
+        raise ValueError("pelt_penalty must be non-negative")
+    if config.pelt_min_size_records < 1 or config.pelt_jump_records < 1:
+        raise ValueError("PELT record parameters must be positive")
+    if config.pelt_threads < 1:
+        raise ValueError("pelt_threads must be positive")
+    if config.cuda_max_pending_blocks < 1:
+        raise ValueError("cuda_max_pending_blocks must be positive")
+    if config.window_min_duration_records < 1:
+        raise ValueError("window_min_duration_records must be positive")
+    if config.window_min_activity_mean < 0.0 or config.window_min_activity_raw_mean < 0.0:
+        raise ValueError("PELT window activity thresholds must be non-negative")
+    if config.window_merge_gap_records < 0:
+        raise ValueError("window_merge_gap_records must be non-negative")
 
 
 def load_cwt_config(path: str | Path | None, overrides: Mapping[str, Any] | None = None) -> CWTSearchConfig:
@@ -247,7 +324,7 @@ def resolve_output_dir(config: CWTSearchConfig, project_dir: str | Path) -> CWTS
 
 def cwt_config_to_nested_dict(config: CWTSearchConfig) -> dict[str, Any]:
     return {
-        "schema_version": 1,
+        "schema_version": 3,
         "input": {
             "path": config.input,
         },
@@ -272,30 +349,39 @@ def cwt_config_to_nested_dict(config: CWTSearchConfig) -> dict[str, Any]:
             "detector": config.detector,
             "candidate_period_min_records": config.candidate_period_min_records,
             "candidate_period_max_records": config.candidate_period_max_records,
-            "noise_floor_fraction": config.noise_floor_fraction,
-            "excess_eps_fraction": config.excess_eps_fraction,
-            "structure_baseline_quantile": config.structure_baseline_quantile,
-            "structure_scale_quantile": config.structure_scale_quantile,
-            "structure_z_threshold": config.structure_z_threshold,
-            "structure_time_support_records": config.structure_time_support_records,
-            "structure_period_support_bins": config.structure_period_support_bins,
-            "structure_min_support_fraction": config.structure_min_support_fraction,
-            "activity_trim_low": config.activity_trim_low,
-            "activity_trim_high": config.activity_trim_high,
-            "activity_smooth_records": config.activity_smooth_records,
+            "cpro_threshold_snr": config.cpro_threshold_snr,
+            "cpro_texture_quantile": config.cpro_texture_quantile,
+            "cpro_period_center_bins": config.cpro_period_center_bins,
+            "cpro_period_context_bins": config.cpro_period_context_bins,
+            "cpro_min_period_contrast": config.cpro_min_period_contrast,
+            "cpro_support_records": config.cpro_support_records,
+            "cpro_min_occupancy": config.cpro_min_occupancy,
+            "cpro_period_support_bins": config.cpro_period_support_bins,
+            "cpro_window_support_records": config.cpro_window_support_records,
+            "cpro_min_window_occupancy": config.cpro_min_window_occupancy,
             "pelt_penalty": config.pelt_penalty,
             "pelt_min_size_records": config.pelt_min_size_records,
             "pelt_jump_records": config.pelt_jump_records,
             "pelt_threads": config.pelt_threads,
-            "cuda_structure_batch": config.cuda_structure_batch,
-            "cuda_structure_batch_channels": config.cuda_structure_batch_channels,
             "cuda_max_pending_blocks": config.cuda_max_pending_blocks,
             "window_min_duration_records": config.window_min_duration_records,
             "window_min_activity_mean": config.window_min_activity_mean,
             "window_min_activity_raw_mean": config.window_min_activity_raw_mean,
             "window_merge_gap_records": config.window_merge_gap_records,
-            "profile_min_prominence": config.profile_min_prominence,
-            "profile_max_peaks_per_window": config.profile_max_peaks_per_window,
+            "cprf_threshold_snr": config.cprf_threshold_snr,
+            "cprf_texture_quantile": config.cprf_texture_quantile,
+            "cprf_smooth_bins": config.cprf_smooth_bins,
+            "cprf_peak_band_fraction": config.cprf_peak_band_fraction,
+            "cprf_min_width_bins": config.cprf_min_width_bins,
+            "cprf_min_peak_strength": config.cprf_min_peak_strength,
+            "cprf_min_integrated_strength": config.cprf_min_integrated_strength,
+            "cprf_min_band_persistence": config.cprf_min_band_persistence,
+            "cprf_min_band_concentration": config.cprf_min_band_concentration,
+            "cprf_min_local_contrast": config.cprf_min_local_contrast,
+            "cprf_harmonic_weight": config.cprf_harmonic_weight,
+            "cprf_harmonic_min_relative": config.cprf_harmonic_min_relative,
+            "cprf_harmonic_window_scale": config.cprf_harmonic_window_scale,
+            "cprf_max_peak_hypotheses": config.cprf_max_peak_hypotheses,
             "max_candidates_per_channel": config.max_candidates_per_channel,
             "max_candidates_per_record": config.max_candidates_per_record,
         },

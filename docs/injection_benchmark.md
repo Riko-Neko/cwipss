@@ -28,10 +28,10 @@ python scripts/run_injection_benchmark.py \
   --background ce4 \
   --input data/CE4/example.2C \
   --f-start 0.1 \
-  --f-stop 2.0 \
+  --f-stop 40.0 \
   --t-start 0 \
   --t-stop 4096 \
-  --injection-config configs/injection_lowfreq_random_weak.json \
+  --injection-config configs/injection_fullband_random_100.json \
   --visualize
 ```
 
@@ -43,22 +43,10 @@ run directory. The command line controls background selection, search,
 validation, and visualization only; injection parameters live in the simulation
 config.
 
-The benchmark uses the same single-channel low-floor, structure-gated
-PELT/profile detector as the main pipeline: candidate period domain `10..200`
-records, low-floor fraction `0.20`, structure support defaults, PELT penalty
-`16`, minimum window `384` records, raw structured-activity mean floor `25.0`,
-merge gap `256` records, one period-family candidate per PELT window, and
-`max_candidates_per_channel=auto` with `max_candidates_per_record=3/4096`.
-`pelt_jump_records=1` keeps exact PELT endpoint search; `pelt_threads=1` keeps
-native PELT sequential by default. `cuda_structure_batch=false` keeps the
-stable CUDA preprocessing path unless explicitly enabled; when enabled,
-`cuda_structure_batch_channels=null` processes the full block at once, while an
-integer value controls the channel chunk size for lower peak memory. Lower
-`pelt_penalty`, `window_min_activity_mean`, or `profile_min_prominence` only for
-high-recall diagnostic sweeps.
-
-The benchmark requires the compiled `cwipss._pelt_ext` extension. Python PELT
-fallback is intentionally unsupported.
+The benchmark uses the same CPRO implementation and parameters as the main
+pipeline. It does not import the standalone frequency-referenced extension and
+uses the same required native C++ PELT bridge. No alternate window detector or
+Python PELT fallback is available.
 
 ## Injection Config
 
@@ -70,8 +58,8 @@ sampled parameters:
 - `period_records`: fixed value, list, or sampled range.
 - `amplitude`: fixed value or sampled range, including `log_uniform`.
 - `frequency_mhz` or `channel_center`: sampled injection channel.
-- `time.duration_records` or `time.duration_fraction`: random time span; the
-  start is random unless `time.record_start` is specified.
+- `time.duration_records` or `time.duration_fraction`: injection time span; the
+  bundled full-band weak suite fixes this to the entire record range.
 - `modulation.phase` and `modulation.duty_cycle`: random temporal modulation
   shape.
 - `replication`: probability and maximum number of same-signal copies at other
@@ -100,7 +88,7 @@ only when injection result rows are present.
 
 ## Failure Stages
 
-- `missed_detection`: no single-channel PELT/profile candidate overlaps the injection.
+- `missed_detection`: no single-channel CPRO/profile candidate overlaps the injection.
 - `vetoed`: the best matching raw candidate did not survive veto.
 - `not_validated`: the matched candidate was not in the validation table.
 - `period_mismatch`: validation refined period is too far from truth.

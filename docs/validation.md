@@ -9,8 +9,8 @@ Validation and multiple-testing correction are implemented in
 For each selected candidate:
 
 1. choose the candidate channel span;
-2. extract a time window centered around `peak_record`;
-3. use `peak_period_records` as the period seed;
+2. extract a time window centered around `t_peak_rec`;
+3. use `period_rec` as the period seed;
 4. search nearby integer-record periods;
 5. compute autocorrelation, FFT periodogram, folding metrics, and shuffle/null
    p-values.

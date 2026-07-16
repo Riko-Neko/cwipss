@@ -6,17 +6,21 @@ import numpy as np
 import pywt
 
 
+MIN_ROBUST_SCALE = 1e-6
+
+
 def robust_zscore(values: np.ndarray, clip: float = 8.0) -> np.ndarray:
     x = np.asarray(values, dtype=np.float32)
-    median = np.nanmedian(x)
-    centered = x - median
-    mad = np.nanmedian(np.abs(centered))
-    scale = 1.4826 * mad
-    if not np.isfinite(scale) or scale <= 0:
-        scale = np.nanstd(centered)
-    if not np.isfinite(scale) or scale <= 0:
+    finite = np.isfinite(x)
+    if not np.any(finite):
         return np.zeros_like(x, dtype=np.float32)
-    return np.clip(centered / scale, -clip, clip).astype(np.float32)
+    median = np.nanmedian(x[finite])
+    centered = x - median
+    mad = np.nanmedian(np.abs(centered[finite]))
+    scale = max(float(1.4826 * mad), MIN_ROBUST_SCALE)
+    z = np.zeros_like(x, dtype=np.float32)
+    z[finite] = centered[finite] / scale
+    return np.clip(z, -clip, clip).astype(np.float32)
 
 
 def robust_zscore_channels(values: np.ndarray, clip: float = 8.0) -> np.ndarray:
@@ -27,10 +31,10 @@ def robust_zscore_channels(values: np.ndarray, clip: float = 8.0) -> np.ndarray:
     centered = matrix - median
     mad = np.nanmedian(np.abs(centered), axis=0, keepdims=True)
     scale = 1.4826 * mad
-    fallback = np.nanstd(centered, axis=0, keepdims=True)
-    scale = np.where(np.isfinite(scale) & (scale > 0), scale, fallback)
-    scale = np.where(np.isfinite(scale) & (scale > 0), scale, 1.0)
-    return np.clip(centered / scale, -clip, clip).astype(np.float32)
+    scale = np.where(np.isfinite(scale), np.maximum(scale, MIN_ROBUST_SCALE), np.nan)
+    z = np.zeros_like(matrix, dtype=np.float32)
+    np.divide(centered, scale, out=z, where=np.isfinite(scale) & np.isfinite(matrix))
+    return np.clip(z, -clip, clip).astype(np.float32)
 
 
 def period_grid_records(

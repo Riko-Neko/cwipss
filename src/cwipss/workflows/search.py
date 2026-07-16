@@ -13,12 +13,20 @@ from typing import Any
 
 import numpy as np
 
-from ..config import CWTSearchConfig, cwt_config_to_nested_dict
+from ..config import (
+    CWTSearchConfig,
+    cprf_parameters_from_config,
+    cwt_config_to_nested_dict,
+    validate_cwt_config,
+)
+from ..signal.cpro import cpro_period_mask, impulse_cwt_noise_gain
 from ..signal.cwt import cwt_power_cube, period_grid_records
 from ..signal.detection import add_candidate_ids, detect_block_periods
+from ..signal.windows import require_native_pelt
 from ..data.readers import SpectrumReader, open_spectrum_reader
 from ..data.schemas import (
     MANIFEST_FIELDNAMES,
+    RAW_CANDIDATE_SCHEMA_VERSION,
     RAW_CANDIDATE_FIELDNAMES,
     REVIEWED_CANDIDATE_FIELDNAMES,
     TIME_WINDOW_FIELDNAMES,
@@ -27,7 +35,6 @@ from ..data.schemas import (
 )
 from ..runtime import runtime_info
 from ..analysis.veto import VetoContext, review_candidates, veto_config_from_scan_config
-from ..signal.windows import require_native_pelt
 
 
 @dataclass
@@ -39,7 +46,7 @@ class _PendingCudaBlock:
     cwt_seconds: float
     prepare_seconds: float
     detection_timing: dict[str, float] | None
-    prepared_chunks: list[Any]
+    prepared_channels: list[Any]
     pelt_future: Future
 
 
@@ -100,7 +107,7 @@ def write_summary_json(
 ) -> None:
     vetoed_count = sum(1 for row in reviewed_candidates if row.get("candidate_status") == "vetoed")
     payload = {
-        "schema_version": 1,
+        "schema_version": RAW_CANDIDATE_SCHEMA_VERSION,
         "run_id": run_id,
         "config": cwt_config_to_nested_dict(config),
         "runtime": runtime_info(),
@@ -114,9 +121,12 @@ def write_summary_json(
         },
         "top_candidates": candidates[:20],
         "notes": [
-            "CWT single-channel low-floor PELT/profile detections are candidates, not signal claims.",
-            "Frequency channels are processed independently; no cross-frequency public operation is used.",
-            "Candidate period-domain filtering is applied before activity and profile scoring.",
+            "CPRO activity, native PELT windows, and CPRF outputs are candidates, not signal claims.",
+            "Each physical frequency channel is detected independently.",
+            "Absolute CWT power is calibrated by raw first-difference noise and wavelet gain.",
+            "Native C++ PELT defines time windows from each channel's CPRO activity axis.",
+            "CPRF evaluates unmasked absolute CWT inside each PELT window.",
+            "CPRF uses the single configured concentration/contrast gate without a scientific fallback.",
             "Candidate periods require validation in the original time series.",
         ],
     }
@@ -164,12 +174,10 @@ def _timing_block_message(
 ) -> str:
     detect = _timing_value(timings, "detect_seconds")
     detail = (
-        f"floor_excess={_timing_value(detection_timing, 'floor_excess_seconds'):.3f}s "
-        f"structure={_timing_value(detection_timing, 'structure_seconds'):.3f}s "
-        f"activity={_timing_value(detection_timing, 'activity_seconds'):.3f}s "
+        f"cpro={_timing_value(detection_timing, 'cpro_seconds'):.3f}s "
         f"pelt={_timing_value(detection_timing, 'pelt_seconds'):.3f}s "
         f"pelt_wait={_timing_value(detection_timing, 'pelt_wait_seconds'):.3f}s "
-        f"profile={_timing_value(detection_timing, 'profile_seconds'):.3f}s"
+        f"cprf={_timing_value(detection_timing, 'cprf_seconds'):.3f}s"
     )
     return (
         f"[CWT TIMING] run_id={run_id} block={block_id} "
@@ -211,6 +219,8 @@ def _use_cuda_block_backend(backend: str, method: str, cuda_device: int) -> bool
 def run_cwt_search(config: CWTSearchConfig) -> Path:
     run_start = perf_counter()
     require_native_pelt()
+    validate_cwt_config(config)
+    cprf_params = cprf_parameters_from_config(config)
     if not config.input:
         raise ValueError("config.input is required")
     reader = open_spectrum_reader(config.input)
@@ -227,6 +237,16 @@ def run_cwt_search(config: CWTSearchConfig) -> Path:
         config.period_count,
         config.period_spacing,
     )
+    candidate_period_mask = cpro_period_mask(
+        periods,
+        config.candidate_period_min_records,
+        config.candidate_period_max_records,
+    )
+    noise_gain = impulse_cwt_noise_gain(
+        periods[candidate_period_mask],
+        wavelet=config.wavelet,
+        method=config.cwt_method,
+    )
     selected_records = reader.record_slice(config.t_start, config.t_stop)
     selected_channels = reader.freq_slice(config.f_start, config.f_stop)
     selected_freqs = reader.freqs_mhz[selected_channels]
@@ -242,19 +262,20 @@ def run_cwt_search(config: CWTSearchConfig) -> Path:
     timing_totals: dict[str, float] = {}
     block_count = 0
     use_cuda_block_backend = _use_cuda_block_backend(config.cwt_backend, config.cwt_method, config.cuda_device)
-    use_cuda_pipeline = use_cuda_block_backend and bool(config.cuda_structure_batch)
     if use_cuda_block_backend:
-        from ..signal.cwt_cuda import cwt_power_cube_cuda_gpu
-        from ..signal.detection_cuda import detect_block_periods_cuda_power
-        if use_cuda_pipeline:
-            from ..signal.detection_cuda import (
-                finalize_prepared_cuda_period_chunks,
-                prepare_block_period_chunks_cuda_power,
-                run_prepared_cuda_pelt,
-            )
-    max_pending_blocks = max(1, int(config.cuda_max_pending_blocks))
+        from ..signal.cwt_cuda import _cupy, cwt_power_cube_cuda_gpu
+        from ..signal.detection_cuda import (
+            finalize_prepared_cuda_period_chunks,
+            prepare_block_period_chunks_cuda_power,
+            run_prepared_cuda_pelt,
+        )
     pending_blocks: deque[_PendingCudaBlock] = deque()
-    pelt_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="cwipss-pelt") if use_cuda_pipeline else None
+    pelt_executor = (
+        ThreadPoolExecutor(max_workers=1, thread_name_prefix="cwipss-pelt")
+        if use_cuda_block_backend
+        else None
+    )
+    max_pending_blocks = max(1, int(config.cuda_max_pending_blocks))
 
     def record_block_results(
         *,
@@ -287,18 +308,20 @@ def run_cwt_search(config: CWTSearchConfig) -> Path:
                 progress=progress,
             )
         for row in windows:
-            row["schema_version"] = 1
+            row["channel"] = channel_range[0] + int(row["channel"])
+            row["schema_version"] = RAW_CANDIDATE_SCHEMA_VERSION
             row["run_id"] = run_id
             row["source_file"] = str(config.input)
             row["block_id"] = block_id
-            row["block_channel_start"] = channel_range[0]
-            row["block_channel_stop"] = channel_range[1]
+            row["block_ch0"] = channel_range[0]
+            row["block_ch1"] = channel_range[1]
             all_windows.append(row)
         for row in candidates:
-            row["cwt_wavelet"] = config.wavelet
-            row["time_aggregation"] = config.time_aggregation
-            row["block_channel_start"] = channel_range[0]
-            row["block_channel_stop"] = channel_range[1]
+            row["channel"] = channel_range[0] + int(row["channel"])
+            row["wavelet"] = config.wavelet
+            row["time_agg"] = config.time_aggregation
+            row["block_ch0"] = channel_range[0]
+            row["block_ch1"] = channel_range[1]
             all_candidates.append(
                 normalize_candidate_row(
                     row,
@@ -315,13 +338,12 @@ def run_cwt_search(config: CWTSearchConfig) -> Path:
         wait_start = perf_counter()
         segments_batch, pelt_seconds = pending.pelt_future.result()
         pelt_wait_seconds = perf_counter() - wait_start
-        if pending.detection_timing is not None:
-            _timing_add(pending.detection_timing, "pelt_seconds", pelt_seconds)
-            _timing_add(pending.detection_timing, "pelt_wait_seconds", pelt_wait_seconds)
+        _timing_add(pending.detection_timing, "pelt_seconds", pelt_seconds)
+        _timing_add(pending.detection_timing, "pelt_wait_seconds", pelt_wait_seconds)
         _timing_add(timing_totals, "pelt_wait_seconds", pelt_wait_seconds)
         finalize_start = perf_counter()
         candidates, windows = finalize_prepared_cuda_period_chunks(
-            pending.prepared_chunks,
+            pending.prepared_channels,
             segments_batch,
             timing=pending.detection_timing,
         )
@@ -345,26 +367,29 @@ def run_cwt_search(config: CWTSearchConfig) -> Path:
         for block_index, block_start in enumerate(range(int(selected_channels.start), int(selected_channels.stop), block_channels), start=1):
             read_start = perf_counter()
             block_stop = min(block_start + block_channels, int(selected_channels.stop))
-            block = reader.read_block(selected_records, slice(block_start, block_stop))
+            halo = slice(block_start, block_stop)
+            block = reader.read_block(selected_records, halo)
             read_seconds = perf_counter() - read_start
             _timing_add(timing_totals, "read_seconds", read_seconds)
             block_count += 1
             block_id = f"block_{block_index:04d}"
             cwt_start = perf_counter()
             if use_cuda_block_backend:
+                cp = _cupy()
+                cp.cuda.Device(int(config.cuda_device)).use()
+                raw_device = cp.asarray(block.data, dtype=cp.float32)
                 power = cwt_power_cube_cuda_gpu(
-                    block.data,
+                    raw_device,
                     periods,
                     wavelet=config.wavelet,
                     method=config.cwt_method,
                     device=config.cuda_device,
-                    normalize_channels=True,
+                    normalize_channels=False,
                 )
                 if timing_enabled:
-                    from ..signal.cwt_cuda import _cupy
-
-                    _cupy().cuda.Stream.null.synchronize()
+                    cp.cuda.Stream.null.synchronize()
             else:
+                raw_device = block.data
                 power = cwt_power_cube(
                     block.data,
                     periods,
@@ -372,7 +397,7 @@ def run_cwt_search(config: CWTSearchConfig) -> Path:
                     method=config.cwt_method,
                     backend=config.cwt_backend,
                     cuda_device=config.cuda_device,
-                    normalize_channels=True,
+                    normalize_channels=False,
                 )
             cwt_seconds = perf_counter() - cwt_start
             _timing_add(timing_totals, "cwt_seconds", cwt_seconds)
@@ -381,56 +406,55 @@ def run_cwt_search(config: CWTSearchConfig) -> Path:
                 periods=periods,
                 freqs_mhz=block.freqs_mhz,
                 record_start=block.record_range[0],
+                target_channel_start=block_start - int(halo.start),
+                target_channel_stop=block_stop - int(halo.start),
                 candidate_period_min_records=config.candidate_period_min_records,
                 candidate_period_max_records=config.candidate_period_max_records,
-                noise_floor_fraction=config.noise_floor_fraction,
-                excess_eps_fraction=config.excess_eps_fraction,
-                structure_baseline_quantile=config.structure_baseline_quantile,
-                structure_scale_quantile=config.structure_scale_quantile,
-                structure_z_threshold=config.structure_z_threshold,
-                structure_time_support_records=config.structure_time_support_records,
-                structure_period_support_bins=config.structure_period_support_bins,
-                structure_min_support_fraction=config.structure_min_support_fraction,
-                activity_trim_low=config.activity_trim_low,
-                activity_trim_high=config.activity_trim_high,
-                activity_smooth_records=config.activity_smooth_records,
+                noise_gain=noise_gain,
+                cpro_threshold_snr=config.cpro_threshold_snr,
+                cpro_texture_quantile=config.cpro_texture_quantile,
+                cpro_period_center_bins=config.cpro_period_center_bins,
+                cpro_period_context_bins=config.cpro_period_context_bins,
+                cpro_min_period_contrast=config.cpro_min_period_contrast,
+                cpro_support_records=config.cpro_support_records,
+                cpro_min_occupancy=config.cpro_min_occupancy,
+                cpro_period_support_bins=config.cpro_period_support_bins,
+                cpro_window_support_records=config.cpro_window_support_records,
+                cpro_min_window_occupancy=config.cpro_min_window_occupancy,
                 pelt_penalty=config.pelt_penalty,
                 pelt_min_size_records=config.pelt_min_size_records,
                 pelt_jump_records=config.pelt_jump_records,
                 pelt_threads=config.pelt_threads,
-                cuda_structure_batch_channels=config.cuda_structure_batch_channels,
-                cuda_device=config.cuda_device,
                 window_min_duration_records=config.window_min_duration_records,
                 window_min_activity_mean=config.window_min_activity_mean,
                 window_min_activity_raw_mean=config.window_min_activity_raw_mean,
                 window_merge_gap_records=config.window_merge_gap_records,
-                profile_min_prominence=config.profile_min_prominence,
-                profile_max_peaks_per_window=config.profile_max_peaks_per_window,
+                cuda_device=config.cuda_device,
+                cprf_params=cprf_params,
                 max_candidates_per_channel=config.max_candidates_per_channel,
                 max_candidates_per_record=config.max_candidates_per_record,
             )
-            if use_cuda_pipeline:
+            if use_cuda_block_backend:
                 prepare_start = perf_counter()
-                prepared_chunks = list(
-                    prepare_block_period_chunks_cuda_power(
-                        power_cube=power,
-                        timing=detection_timing,
-                        **detector_kwargs,
-                    )
+                prepared_channels = prepare_block_period_chunks_cuda_power(
+                    power_cube=power,
+                    raw_data=raw_device,
+                    timing=detection_timing,
+                    **detector_kwargs,
                 )
                 prepare_seconds = perf_counter() - prepare_start
-                del power
+                del power, raw_device
                 pending_blocks.append(
                     _PendingCudaBlock(
                         block_id=block_id,
-                        channel_range=block.channel_range,
+                        channel_range=(block_start, block_stop),
                         records=int(block.data.shape[0]),
                         read_seconds=read_seconds,
                         cwt_seconds=cwt_seconds,
                         prepare_seconds=prepare_seconds,
                         detection_timing=detection_timing,
-                        prepared_chunks=prepared_chunks,
-                        pelt_future=pelt_executor.submit(run_prepared_cuda_pelt, prepared_chunks),
+                        prepared_channels=prepared_channels,
+                        pelt_future=pelt_executor.submit(run_prepared_cuda_pelt, prepared_channels),
                     )
                 )
                 if len(pending_blocks) >= max_pending_blocks:
@@ -438,19 +462,18 @@ def run_cwt_search(config: CWTSearchConfig) -> Path:
                 continue
 
             detect_start = perf_counter()
-            detector = detect_block_periods_cuda_power if use_cuda_block_backend else detect_block_periods
-            candidates, windows = detector(
+            candidates, windows = detect_block_periods(
                 power_cube=power,
-                cuda_structure_batch=config.cuda_structure_batch,
+                raw_data=raw_device,
                 timing=detection_timing,
                 **detector_kwargs,
             )
             detect_seconds = perf_counter() - detect_start
-            del power
+            del power, raw_device
             _timing_add(timing_totals, "detect_seconds", detect_seconds)
             record_block_results(
                 block_id=block_id,
-                channel_range=block.channel_range,
+                channel_range=(block_start, block_stop),
                 records=int(block.data.shape[0]),
                 read_seconds=read_seconds,
                 cwt_seconds=cwt_seconds,
@@ -534,17 +557,30 @@ def run_cwt_search(config: CWTSearchConfig) -> Path:
                 candidate_period_max_records=config.candidate_period_max_records,
                 time_aggregation=config.time_aggregation,
                 aggregation_percentile=config.aggregation_percentile,
-                noise_floor_fraction=config.noise_floor_fraction,
-                excess_eps_fraction=config.excess_eps_fraction,
-                structure_baseline_quantile=config.structure_baseline_quantile,
-                structure_scale_quantile=config.structure_scale_quantile,
-                structure_z_threshold=config.structure_z_threshold,
-                structure_time_support_records=config.structure_time_support_records,
-                structure_period_support_bins=config.structure_period_support_bins,
-                structure_min_support_fraction=config.structure_min_support_fraction,
-                activity_trim_low=config.activity_trim_low,
-                activity_trim_high=config.activity_trim_high,
-                activity_smooth_records=config.activity_smooth_records,
+                cpro_threshold_snr=config.cpro_threshold_snr,
+                cpro_texture_quantile=config.cpro_texture_quantile,
+                cpro_period_center_bins=config.cpro_period_center_bins,
+                cpro_period_context_bins=config.cpro_period_context_bins,
+                cpro_min_period_contrast=config.cpro_min_period_contrast,
+                cpro_support_records=config.cpro_support_records,
+                cpro_min_occupancy=config.cpro_min_occupancy,
+                cpro_period_support_bins=config.cpro_period_support_bins,
+                cpro_window_support_records=config.cpro_window_support_records,
+                cpro_min_window_occupancy=config.cpro_min_window_occupancy,
+                cprf_threshold_snr=config.cprf_threshold_snr,
+                cprf_texture_quantile=config.cprf_texture_quantile,
+                cprf_smooth_bins=config.cprf_smooth_bins,
+                cprf_peak_band_fraction=config.cprf_peak_band_fraction,
+                cprf_min_width_bins=config.cprf_min_width_bins,
+                cprf_min_peak_strength=config.cprf_min_peak_strength,
+                cprf_min_integrated_strength=config.cprf_min_integrated_strength,
+                cprf_min_band_persistence=config.cprf_min_band_persistence,
+                cprf_min_band_concentration=config.cprf_min_band_concentration,
+                cprf_min_local_contrast=config.cprf_min_local_contrast,
+                cprf_harmonic_weight=config.cprf_harmonic_weight,
+                cprf_harmonic_min_relative=config.cprf_harmonic_min_relative,
+                cprf_harmonic_window_scale=config.cprf_harmonic_window_scale,
+                cprf_max_peak_hypotheses=config.cprf_max_peak_hypotheses,
             ),
             raw_candidates=final_candidates,
             reviewed_candidates=reviewed_candidates,

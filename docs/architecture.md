@@ -7,14 +7,15 @@ without introducing framework-specific abstractions.
 ```text
 src/cwipss/
   signal/
-    activity.py          CWT structure preprocessing and activity reduction
+    cpro.py              CPU CPRO definition and absolute calibration
+    cpro_cuda.py         CUDA CPRO definition; no host array transfer
+    cprf.py              frozen CPU CPRF period-family filter
+    cprf_cuda.py         device-resident CPRF with scalar-only host output
     cwt.py               CPU CWT and period-grid utilities
     cwt_cuda.py          CUDA CWT backend
-    detection.py         single-channel candidate generation
-    detection_cuda.py    CUDA structure and detection preprocessing
-    profile.py           windowed period profiles
-    windows.py           native PELT interface
-    native/              C++ PELT source
+    detection.py         CPU CPRO -> PELT -> CPRF orchestration
+    detection_cuda.py    asynchronous GPU -> native PELT -> GPU bridge
+    windows.py           required native C++ PELT bridge and window selection
   data/
     readers.py           reader protocol and instrument adapters
     schemas.py           CSV schemas and row normalization
@@ -37,6 +38,10 @@ src/cwipss/
   config.py              shared resolved configuration
   runtime.py             runtime metadata
 ```
+
+The optional frequency-referenced detector is isolated under
+`packages/frcr/`. Nothing in `src/cwipss` imports that package. The only
+production scientific path is CPRO activity, native PELT windows, then CPRF.
 
 ## Dependency Direction
 

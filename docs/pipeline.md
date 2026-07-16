@@ -5,9 +5,15 @@ per-channel continuous wavelet transform. CE4 `.2C/.2CL` is the currently
 supported input format; FilterBank support belongs in the same input adapter
 layer.
 
-The PELT stage requires the compiled `cwipss._pelt_ext` C++ extension. The
-pipeline intentionally has no Python PELT fallback and fails before reading
-input data when the extension is unavailable.
+The production method is CPRO -> native PELT -> CPRF. The former frequency-referenced detector is
+isolated in `packages/frcr` and is not imported by this pipeline. CPRO supplies
+the 1D activity axis to the required native C++ PELT time-window bridge. No
+alternate window detector or Python PELT fallback exists.
+
+Core numerical stages do not switch estimators when data are degenerate. Raw
+first-difference noise calibration must be finite and positive; otherwise the
+channel fails explicitly. CPRF candidate emission returns no row when its
+frozen concentration, contrast, persistence, width, and strength gates fail.
 
 Implementation is split between `cwipss.workflows.search` for orchestration,
 `cwipss.signal` for CWT/detection algorithms, and `cwipss.data.readers` for
@@ -20,13 +26,15 @@ time x channel data
   -> per-channel CWT over explicit period grid
   -> period x time x channel power cube
   -> candidate period-domain filter
-  -> single-channel low-fraction CWT noise floor
-  -> signed relative excess power
-  -> per-period low-quantile standardization
-  -> local 2D time-period support gate
-  -> trimmed period-axis activity curve from structured CWT map
-  -> PELT time windows per channel
-  -> windowed period-profile peaks
+  -> absolute noise and wavelet-gain calibration
+  -> period-ridge contrast and short occupancy
+  -> long-window occupancy consensus
+  -> CPRO 1D activity per channel
+  -> native C++ PELT mean-shift segments
+  -> segment activity/duration gates and merge
+  -> accepted PELT time windows
+  -> CPRF on unmasked, independently normalized absolute CWT
+  -> one accepted period-family candidate per accepted CPRF window
   -> veto, validation, statistics, report
 ```
 
@@ -38,53 +46,34 @@ The overview projection is directly interpretable:
 
 ## Candidate Meaning
 
-A peak in a PELT-windowed period profile is only a candidate. It is not a
+A CPRF-accepted peak family inside a PELT window is only a candidate. It is not a
 confirmed periodic signal. Final review still requires original time-series
 validation, null tests, RFI veto, and multiple-testing correction.
 
 ## Candidate Sensitivity
 
-The default detector is set for low sensitivity and higher review purity:
+See [cpro.md](cpro.md) for equations and the CUDA transfer boundary. Defaults:
 
 - candidate period domain `10..200` records;
-- low-floor noise fraction `0.20`;
-- per-period structure background quantile `0.10`, scale quantile `0.20`,
-  structure z threshold `1.0`, time support `64` records, period support `3`
-  bins, and minimum local support fraction `0.10`;
-- PELT penalty `16`, activity smoothing `16` records, minimum segment/window
-  size `384` records, and exact PELT endpoint search
-  (`pelt_jump_records=1`); CUDA runs can parallelize native CPU PELT across
-  channels with `pelt_threads > 1`;
-- CUDA structure preprocessing uses the stable per-channel path by default;
-  `cuda_structure_batch=true` batches structure/activity preprocessing across
-  the full channel block unless `cuda_structure_batch_channels` is set to an
-  integer chunk size for lower peak memory;
-- `cuda_max_pending_blocks=1` keeps CUDA block processing sequential, while
-  `2` allows one prepared `structured` block to wait for CPU PELT as the GPU
-  prepares the following block; PELT still uses one executor job with
-  `pelt_threads` native workers;
-- after PELT, a raw structured-activity mean floor of `25.0` is applied before
-  period-profile candidates are emitted;
-- nearby PELT windows are merged across gaps up to `256` records;
-- each PELT time window emits one default period-family candidate
-  (`profile_max_peaks_per_window=1`), so Sa-like side lobes are not split into
-  separate default candidates;
+- calibrated threshold `32` and texture quantile `0.9375`;
+- period contrast `1.5` using center/context widths `3/15` bins;
+- short occupancy `0.65` over `65` records and `3` contiguous period bins;
+- long occupancy `0.40` over `769` records; CPRO activity does not fill gaps,
+  delete short runs, or define windows;
+- native PELT uses penalty `16`, minimum segment size `384`, endpoint stride
+  `1`, and one C++ worker by default;
+- accepted PELT windows require duration `384`, standardized/raw activity means
+  `0.05/25`, and merge across gaps up to `256` records;
+- CPRF uses `min_band_concentration=0.55`, `min_local_contrast=3.60`, and
+  `min_integrated_strength=0.0`; it evaluates up to eight local peak hypotheses
+  but emits only the highest-scoring accepted period family;
 - retained candidates capped per channel: `max_candidates_per_channel=auto`
   uses `max_candidates_per_record=3/4096`, while an integer value is a hard
   per-channel cap;
 - validation capped at `validation.max_candidates=25`.
 
-Lower PELT/profile thresholds or `profile_max_peaks_per_window > 1` are
-debug/high-recall settings. They are useful for inspecting weak period
-responses, but they can split one Sa-like response envelope into many visually
-plausible candidates and should not be used as the default review
-configuration.
-
-The raw structured-activity floor is deliberately separate from
-`window_min_activity_mean`: PELT runs on robust-standardized activity to find
-time boundaries, but candidate emission also needs absolute structured CWT
-energy. Without this second gate, a noise-only channel can be standardized to
-unit variance and segmented into visually plausible but weak false windows.
+CPRO parameters are scientific configuration, not performance knobs. Modified
+values must be retained in `config.resolved.json`.
 
 ## Feasible Period Domain
 
@@ -125,8 +114,8 @@ the bar or `--progress-leave` to keep it in terminal logs.
 
 Use `--timing` to print per-block timing diagnostics. This is disabled by
 default. Each timing line reports block read time, CWT time, total detection
-time, and detection substage totals for floor/excess, structure gating,
-activity compression, PELT, and period-profile scoring. The final summary line
+time, and detection substage totals for CPRO, native PELT, PELT wait, and
+CPRF scoring. The final summary line
 reports file-level totals.
 
 ## CWT Backend
@@ -138,9 +127,11 @@ and commands.
 `--cwt-backend cuda` enables the optional CuPy FFT backend for CWT power
 generation. It currently supports `--cwt-method fft`. In the main scan and
 injection benchmark paths, CUDA keeps the CWT power and array-heavy structure /
-activity / profile compression on the GPU; PELT, window handling, profile peak
-selection, and candidate row construction reuse the same CPU logic as the
-default backend. `--cwt-backend auto` uses CUDA only when CuPy and the selected
+activity, and window-specific CPRF computation on the GPU. Only the two 1D
+CPRO activity/occupancy axes reach CPU for native PELT; returned window indices
+resume CPRF on retained 2D CWT, and only final candidate scalars reach CPU.
+The default pending depth is two blocks so native PELT overlaps the next GPU block.
+`--cwt-backend auto` uses CUDA only when CuPy and the selected
 CUDA device are available; otherwise it falls back to the CPU backend. Explicit
 `cuda` mode fails fast if CUDA cannot be initialized.
 
@@ -153,8 +144,8 @@ Supported aggregation methods are `max`, `mean`, `median`, `pNN`, and
 `percentile`.
 
 Before aggregation, visualization can write representative-channel
-`period x time` scalograms, trusted-period structure-gated maps, PELT activity
-curves, and windowed period profiles. These are the required middleware views
+`period x time` scalograms, CPRO score maps, PELT activity windows, period profiles,
+and period-channel overview maps. These are middleware views
 for inspecting whether a period response is persistent, burst-like, coherent
 over neighboring period-time pixels, or contaminated by isolated texture.
 
@@ -174,8 +165,9 @@ Each run writes:
 - `summary.json`
 - optional `visualization/index.md`
 
-Candidate rows include `peak_period_records`, `period_start_records`,
-`period_stop_records`, `peak_freq_mhz`, and `peak_record`.
+Candidate rows use schema v4 stage-specific evidence: `cpro_*`, `pelt_*`,
+`ridge_*`, `band_conc`, `band_persist`, `local_contrast`, and `score`.
+Coordinates use `t0_rec`, `t1_rec`, `freq_mhz`, and `period_rec`.
 
 Post-processing may additionally create `candidate_gallery/index.md` and
 candidate-identified PNGs grouped under `candidate_gallery/raw/` and

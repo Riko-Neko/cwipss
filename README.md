@@ -10,26 +10,15 @@ FilterBank support is planned for the same adapter interface. CWT detection,
 veto, validation, injection benchmarking, and reporting are defined
 independently of any one input format.
 
-The candidate generator is:
+The production chain is Calibrated Persistent Ridge Occupancy (CPRO), native
+C++ PELT, then the Concentrated Periodic Ridge Filter (CPRF). Every stage uses
+one physical frequency channel's own absolute `period x time` CWT map; no
+neighboring physical channel contributes to the result.
 
-1. read time-channel data through an adapter;
-2. run per-channel CWT over an explicit period grid;
-3. crop to the configured trusted period domain;
-4. estimate a single-channel low-fraction CWT noise floor from the lowest 20%
-   of valid CWT power;
-5. compute signed relative excess power;
-6. build a structure-gated CWT map using per-period low-quantile background
-   removal and local 2D time-period support;
-7. compress the structured map into a trimmed period-axis activity curve;
-8. use PELT to propose time windows per channel;
-9. integrate each window into a period profile and rank period peaks.
-
-Detected period-profile peaks are candidates only. Validation in the original
-time series is still required before any signal interpretation.
-
-Single-channel period candidates are valid targets. The legacy-style
-`fixed_channel` and time-edge vetoes are disabled by default because they are
-not meaningful for this single-channel candidate engine.
+The frequency-referenced detector retained from earlier experiments now lives
+as the independent [`packages/frcr`](packages/frcr) extension. It is not
+imported by `src/cwipss` and is documented only for its single-channel or
+narrowband frequency-contrast use case.
 
 ## Layout
 
@@ -39,7 +28,7 @@ not meaningful for this single-channel candidate engine.
   docs/                    design notes and scientific assumptions
   scripts/                 command-line entrypoints
   src/cwipss/
-    signal/                CWT, structure activity, PELT, detection, CPU/CUDA
+    signal/                CWT, CPRO, CPRF, native PELT, CPU/CUDA
     data/                  spectrum readers and CSV schemas
     workflows/             single-file search and multi-file batch orchestration
     analysis/              veto, validation, statistics, injection benchmarks
@@ -47,6 +36,7 @@ not meaningful for this single-channel candidate engine.
     config.py              resolved project configuration
     runtime.py             runtime and dependency metadata
   tests/                   synthetic tests
+  packages/frcr/           standalone frequency-referenced detector core
 ```
 
 See `docs/architecture.md` for package boundaries and dependency direction.
@@ -55,20 +45,17 @@ Generated products go under `runs/` and are ignored by git.
 
 ## Installation
 
-PELT is implemented only by the required native C++ extension. There is no
-Python fallback because its runtime is not acceptable for production scans.
 Install the project in the active environment before running scripts:
 
 ```bash
 python -m pip install -e .
 ```
 
-Building requires a C++17 compiler and CMake. The build dependencies declared
-in `pyproject.toml` install `scikit-build-core` and `pybind11`; Ninja is
-recommended but optional. A missing `cwipss._pelt_ext` fails immediately before
-input data or CWT processing begins.
+Candidate generation requires the native C++ PELT extension. Building it
+requires a C++17 compiler and CMake; there is intentionally no Python or
+alternate window-detector fallback.
 
-## Quick Start
+## Search Entrypoint
 
 Activate a Python environment with the project dependencies installed, then run:
 
@@ -88,50 +75,37 @@ python scripts/run_cwt_candidates.py \
 Config files can use the structured layout in `configs/cwt_default.json`. CLI
 arguments override matching config values.
 
+The standalone frequency-referenced extension is documented in
+[`packages/frcr/README.md`](packages/frcr/README.md).
+CPRO and the PELT-to-CPRF boundary are documented in [`docs/cpro.md`](docs/cpro.md).
+
 Default candidate generation is intentionally conservative:
 
 - `candidate_period_min_records=10` and `candidate_period_max_records=200`:
   reject low-period instrument-like stripes and long-period trend-like domains.
-- `noise_floor_fraction=0.20`: estimate the channel floor from the lowest 20%
-  of trusted CWT power.
-- `structure_baseline_quantile=0.10`, `structure_scale_quantile=0.20`,
-  `structure_z_threshold=1.0`, `structure_time_support_records=64`,
-  `structure_period_support_bins=3`, and
-  `structure_min_support_fraction=0.10`: suppress isolated noise texture before
-  the period-axis activity compression.
-- `activity_smooth_records=16`, `pelt_penalty=16`, `pelt_min_size_records=384`,
-  `pelt_jump_records=1`, `pelt_threads=1`, and
-  `window_min_duration_records=384`: reject
-  short unstable activity windows.
-  Increase `pelt_jump_records` only for long-record performance sweeps; `1`
-  keeps the exact PELT endpoint search. Increase `pelt_threads` on CUDA runs to
-  parallelize native CPU PELT across channels.
-- `cuda_structure_batch=false`, `cuda_structure_batch_channels=null`: keep CUDA
-  structure preprocessing on the stable per-channel path by default. Enable
-  batching on GPU servers to process the full channel block at once; set
-  `cuda_structure_batch_channels` to an integer only when you need to lower
-  `cupy.quantile` peak memory.
-- `cuda_max_pending_blocks=1`: finish PELT and window profiles before starting
-  the next CUDA block. Set it to `2` to retain one prepared `structured` block
-  while native CPU PELT runs, allowing the GPU to prepare the next block.
-- `window_min_activity_raw_mean=25.0`: after PELT proposes a window on the
-  standardized activity curve, require enough raw structured CWT activity
-  before the window can emit period candidates. This prevents per-channel
-  robust standardization from turning weak residual noise texture into false
-  windows.
-- `window_merge_gap_records=256`: merge nearby PELT segments so one persistent
-  signal is less likely to be split into multiple windows.
-- `profile_max_peaks_per_window=1`: treat one PELT time window as one
-  period-family candidate; Sa-like side lobes or harmonics are not emitted as
-  separate default candidates.
+- `cpro_threshold_snr=32` and `cpro_texture_quantile=0.9375`: require absolute
+  calibrated power above both the fixed and map-texture thresholds.
+- `cpro_min_period_contrast=1.5`, center width `3`, and context width `15`:
+  require a narrow period ridge rather than broad CWT texture.
+- `cpro_support_records=65`, `cpro_min_occupancy=0.65`, and
+  `cpro_period_support_bins=3`: require persistent local ridge occupancy.
+- `cpro_window_support_records=769` and `cpro_min_window_occupancy=0.40`:
+  require long-consensus activity before PELT. CPRO does not fill gaps, delete
+  short runs, or define time windows.
+- `pelt_penalty=16`, `pelt_min_size_records=384`, and `pelt_jump_records=1`:
+  run the required native mean-shift segmentation on that 1D activity.
+- `window_min_duration_records=384`, standardized/raw activity gates
+  `0.05/25`, and merge gap `256`: select and merge PELT segments.
+- `cprf_min_band_concentration=0.55`, `cprf_min_local_contrast=3.60`, and
+  `cprf_min_integrated_strength=0`: apply the selected low-false-positive CPRF
+  working point to unmasked absolute CWT inside each PELT window.
 - `max_candidates_per_channel=auto` and `max_candidates_per_record=3/4096`:
   derive a per-channel cap from the current record length. Set
   `max_candidates_per_channel` to an integer to use that hard per-channel cap.
 - `validation.max_candidates=25`: cap rows passed to validation by default.
 
-For diagnostic/high-recall sweeps, lower `--pelt-penalty`,
-`--window-min-activity-mean`, or `--profile-min-prominence` explicitly. Do not
-use high-recall settings as the default review mode.
+Changing CPRO or CPRF parameters changes the scientific method and must be
+recorded in resolved configuration; there is no alternate scientific fallback.
 
 The default candidate period domain assumes local scans of roughly 4096 records
 and target responses lasting at least half that window: with at least 10 cycles
@@ -147,8 +121,9 @@ and detection substages. It is disabled by default.
 The CWT backend defaults to `cpu`, preserving the original PyWavelets path.
 Systems with CuPy/CUDA can opt in with `--cwt-backend cuda --cuda-device 0`.
 `--cwt-backend auto` uses CUDA when available and otherwise falls back to CPU.
-CUDA scans keep CWT power plus structure/activity/profile compression on the GPU
-before returning to the shared CPU PELT/candidate logic.
+CUDA scans keep CWT power, CPRO maps, and CPRF on the GPU. Only CPRO's two 1D
+activity/occupancy products cross to CPU for native C++ PELT; returned window
+indices resume CPRF on the retained 2D CWT, and only final scalars return.
 
 Each run writes:
 
@@ -217,10 +192,6 @@ This writes `visualization/index.md` plus PNG diagnostics for:
 
 - raw time-channel matrix;
 - representative-channel full `period x time` CWT scalograms;
-- trusted-period structure-gated maps after floor normalization, per-period
-  low-quantile standardization, and local 2D support gating;
-- single-channel signed activity curves with recorded PELT windows;
-- windowed period profiles with candidate period spans;
 - aggregated `period x channel` overview maps for review only;
 - veto review and optional validation/injection summaries.
 
@@ -234,8 +205,8 @@ python scripts/run_candidate_gallery.py \
   --top 100
 ```
 
-The default ordering uses validation `evidence_rank` when available and falls
-back to `integrated_score`. Raw views are written as
+The default ordering uses validation `evidence_rank` when available and CPRF
+`score` otherwise. Raw views are written as
 `candidate_gallery/raw/<rank>_<run>_candidate_<id>.png`, and CWT views use the
 same filename under `candidate_gallery/cwt/`. Use `--source-root` when result
 CSVs contain source paths from another machine.
@@ -256,9 +227,9 @@ The smoke config uses single-channel, time-modulated periodic signals.
 Cross-channel injection models remain available only as explicit stress tests
 inside injection configs.
 Injection benchmark settings are always loaded from JSON; use
-`configs/injection_lowfreq_random_weak.json` for a weak randomized suite with
-sampled periods, modulation, time spans, frequencies, and same-signal frequency
-copies.
+`configs/injection_fullband_random_100.json` for a weak randomized
+full-duration suite with 100 base signals, full-band frequency placement, and
+same-signal frequency copies.
 
 ## Report
 
