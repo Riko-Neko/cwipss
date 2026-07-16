@@ -60,8 +60,11 @@ python scripts/run_cwt_candidates.py \
 - `--pelt-penalty`: native mean-shift segmentation penalty. Default `16`.
 - `--pelt-min-size-records`: minimum native PELT segment size. Default `384`.
 - `--window-min-duration-records`: minimum accepted PELT window. Default `384`.
-- `--profile-min-prominence`: minimum period-profile peak prominence.
-  Default `0.5`.
+- `--cprf-min-band-concentration`: minimum profile mass in the selected ridge
+  band. Default `0.55`.
+- `--cprf-min-local-contrast`: minimum ridge-to-local-background contrast.
+  Default `3.60`.
+- `--cprf-min-integrated-strength`: minimum integrated ridge excess. Default `0`.
 - `--viz-max-blocks`: maximum blocks to visualize; `0` renders all.
 - `--viz-max-channels`: representative channels per block for period-time CWT
   scalograms; `0` renders all channels in each visualized block.
