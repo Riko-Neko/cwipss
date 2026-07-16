@@ -82,6 +82,15 @@ def _peak_record(activity: np.ndarray, start: int, stop: int, record_start: int)
     return int(record_start + start + (int(np.nanargmax(local)) if local.size else 0))
 
 
+def activity_can_reach_window_mean(activity_z: np.ndarray, min_mean: float) -> bool:
+    """Return whether any segment can possibly satisfy the activity-mean gate."""
+    values = np.asarray(activity_z, dtype=np.float32)
+    if values.size == 0:
+        return False
+    effective = np.where(np.isfinite(values), values, 0.0)
+    return float(np.max(effective)) >= float(min_mean)
+
+
 def pelt_windows_from_activity(
     activity: np.ndarray,
     window_occupancy: np.ndarray,
@@ -100,6 +109,8 @@ def pelt_windows_from_activity(
     if raw.ndim != 1 or occupancy.shape != raw.shape:
         raise ValueError("CPRO activity and window occupancy must be matching 1D arrays")
     activity_z = robust_standardize(raw)
+    if not activity_can_reach_window_mean(activity_z, min_mean):
+        return [], activity_z, 0
     segments = pelt_mean_shift(
         activity_z,
         penalty=penalty,

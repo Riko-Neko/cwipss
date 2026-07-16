@@ -15,6 +15,7 @@ from .cprf_cuda import cprf_normalization_threshold_cuda, evaluate_cprf_cuda
 from .detection import (
     _timing_add,
     _timing_increment,
+    activity_can_reach_window_mean,
     build_channel_candidates,
     pelt_windows_from_segments,
     resolve_channel_candidate_cap,
@@ -244,25 +245,52 @@ def prepare_block_period_chunks_cuda_power(
 def run_prepared_cuda_pelt(
     prepared: list[PreparedCudaPeriodChannel],
     cancellation: PeltCancellation | None = None,
+    timing: dict[str, float] | None = None,
 ) -> tuple[list[list[Segment]], float]:
     """Run the required native C++ batch PELT outside the CUDA worker."""
     if not prepared:
         return [], 0.0
-    reference = prepared[0]
+    start = perf_counter()
+    segments_batch: list[list[Segment]] = [[] for _channel in prepared]
+    native_indices = [
+        index
+        for index, channel in enumerate(prepared)
+        if activity_can_reach_window_mean(channel.activity_z, channel.window_min_activity_mean)
+    ]
+    skipped_channels = len(prepared) - len(native_indices)
+    _timing_increment(timing, "pelt_short_circuit_channels", skipped_channels)
+    if not native_indices:
+        if timing is not None:
+            timing.update(
+                {
+                    "pelt_candidates_mean": 0.0,
+                    "pelt_candidates_max": 0.0,
+                    "pelt_candidate_observations": 0.0,
+                    "pelt_constant_channels": 0.0,
+                }
+            )
+        return segments_batch, perf_counter() - start
+
+    reference = prepared[native_indices[0]]
     activity_z_batch = np.ascontiguousarray(
-        np.stack([channel.activity_z for channel in prepared], axis=0),
+        np.stack([prepared[index].activity_z for index in native_indices], axis=0),
         dtype=np.float64,
     )
-    start = perf_counter()
-    segments = pelt_mean_shift_batch(
+    native_diagnostics: dict[str, float] | None = {} if timing is not None else None
+    native_segments = pelt_mean_shift_batch(
         activity_z_batch,
         penalty=reference.pelt_penalty,
         min_size=reference.pelt_min_size_records,
         jump=reference.pelt_jump_records,
         threads=reference.pelt_threads,
         cancellation=cancellation,
+        diagnostics=native_diagnostics,
     )
-    return segments, perf_counter() - start
+    for index, segments in zip(native_indices, native_segments, strict=True):
+        segments_batch[index] = segments
+    if timing is not None and native_diagnostics is not None:
+        timing.update(native_diagnostics)
+    return segments_batch, perf_counter() - start
 
 
 def finalize_prepared_cuda_period_chunks(
@@ -333,6 +361,6 @@ def finalize_prepared_cuda_period_chunks(
 def detect_block_periods_cuda_power(*args, timing: dict[str, float] | None = None, **kwargs):
     """Run the mandatory three-stage CUDA/CPU/CUDA detection bridge synchronously."""
     prepared = prepare_block_period_chunks_cuda_power(*args, timing=timing, **kwargs)
-    segments_batch, pelt_seconds = run_prepared_cuda_pelt(prepared)
+    segments_batch, pelt_seconds = run_prepared_cuda_pelt(prepared, timing=timing)
     _timing_add(timing, "pelt_seconds", pelt_seconds)
     return finalize_prepared_cuda_period_chunks(prepared, segments_batch, timing=timing)

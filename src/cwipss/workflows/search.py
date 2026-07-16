@@ -226,6 +226,10 @@ def _timing_block_message(
         f"cpro={_timing_value(detection_timing, 'cpro_seconds'):.3f}s "
         f"pelt={_timing_value(detection_timing, 'pelt_seconds'):.3f}s "
         f"pelt_wait={_timing_value(detection_timing, 'pelt_wait_seconds'):.3f}s "
+        f"pelt_candidates(mean={_timing_value(detection_timing, 'pelt_candidates_mean'):.1f} "
+        f"max={_timing_value(detection_timing, 'pelt_candidates_max'):.0f}) "
+        f"pelt_skip={_timing_value(detection_timing, 'pelt_short_circuit_channels'):.0f} "
+        f"pelt_constant={_timing_value(detection_timing, 'pelt_constant_channels'):.0f} "
         f"cprf={_timing_value(detection_timing, 'cprf_seconds'):.3f}s"
     )
     return (
@@ -534,6 +538,7 @@ def run_cwt_search(config: CWTSearchConfig) -> Path:
                             run_prepared_cuda_pelt,
                             prepared_channels,
                             pelt_cancellation,
+                            detection_timing,
                         ),
                     )
                 )

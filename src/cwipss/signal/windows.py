@@ -75,20 +75,27 @@ def pelt_mean_shift_batch(
     jump: int = 1,
     threads: int = 1,
     cancellation: PeltCancellation | None = None,
+    diagnostics: dict[str, float] | None = None,
 ) -> list[list[Segment]]:
     values = np.asarray(activity, dtype=np.float64)
     if values.ndim != 2:
         raise ValueError("activity must have shape (channels, records)")
     threads = max(1, int(threads))
     require_native_pelt()
-    batch_rows = _pelt_ext.pelt_mean_shift_batch(
+    native_result = _pelt_ext.pelt_mean_shift_batch(
         values,
         penalty=float(penalty),
         min_size=int(min_size),
         jump=int(jump),
         threads=threads,
         cancellation=None if cancellation is None else cancellation._native,
+        return_diagnostics=diagnostics is not None,
     )
+    if diagnostics is None:
+        batch_rows = native_result
+    else:
+        batch_rows, native_diagnostics = native_result
+        diagnostics.update({str(key): float(value) for key, value in native_diagnostics.items()})
     return [
         [Segment(int(start), int(stop), float(cost), float(mean)) for start, stop, cost, mean in rows]
         for rows in batch_rows

@@ -23,6 +23,20 @@ struct Segment {
   double mean;
 };
 
+struct PeltDiagnostics {
+  std::uint64_t candidate_count_sum{0};
+  std::uint64_t candidate_observations{0};
+  std::uint64_t candidate_count_max{0};
+  bool constant_fast_path{false};
+
+  void observe_candidates(std::size_t count) noexcept {
+    const auto value = static_cast<std::uint64_t>(count);
+    candidate_count_sum += value;
+    ++candidate_observations;
+    candidate_count_max = std::max(candidate_count_max, value);
+  }
+};
+
 class PeltCancellation {
  public:
   void cancel() noexcept { cancelled_.store(true, std::memory_order_relaxed); }
@@ -105,21 +119,31 @@ std::vector<Segment> pelt_exact(
     double penalty,
     std::int64_t min_size,
     std::int64_t jump,
-    const std::shared_ptr<PeltCancellation>& cancellation = nullptr) {
+    const std::shared_ptr<PeltCancellation>& cancellation = nullptr,
+    PeltDiagnostics* diagnostics = nullptr) {
   const std::int64_t n = static_cast<std::int64_t>(y.size());
   std::vector<double> prefix_sum(static_cast<std::size_t>(n + 1), 0.0);
   std::vector<double> prefix_sq(static_cast<std::size_t>(n + 1), 0.0);
+  bool is_constant = n > 0;
+  const double first_value = n > 0 ? y.front() : 0.0;
   for (std::int64_t i = 0; i < n; ++i) {
     if ((i & 1023) == 0 && is_cancelled(cancellation)) {
       return {};
     }
     const double value = y[static_cast<std::size_t>(i)];
+    is_constant = is_constant && value == first_value;
     prefix_sum[static_cast<std::size_t>(i + 1)] = prefix_sum[static_cast<std::size_t>(i)] + value;
     prefix_sq[static_cast<std::size_t>(i + 1)] = prefix_sq[static_cast<std::size_t>(i)] + value * value;
   }
 
   if (n == 0) {
     return {};
+  }
+  if (is_constant) {
+    if (diagnostics != nullptr) {
+      diagnostics->constant_fast_path = true;
+    }
+    return {Segment{0, n, segment_cost(prefix_sum, prefix_sq, 0, n), segment_mean(prefix_sum, 0, n)}};
   }
   if (n <= min_size) {
     return {Segment{0, n, segment_cost(prefix_sum, prefix_sq, 0, n), segment_mean(prefix_sum, 0, n)}};
@@ -136,6 +160,9 @@ std::vector<Segment> pelt_exact(
     for (std::int64_t t = min_size; t <= n; ++t) {
       if (is_cancelled(cancellation)) {
         return {};
+      }
+      if (diagnostics != nullptr) {
+        diagnostics->observe_candidates(candidates.size());
       }
       std::vector<std::int64_t> valid;
       valid.reserve(candidates.size());
@@ -187,6 +214,9 @@ std::vector<Segment> pelt_exact(
     for (const auto t : endpoints) {
       if (is_cancelled(cancellation)) {
         return {};
+      }
+      if (diagnostics != nullptr) {
+        diagnostics->observe_candidates(candidates.size());
       }
       std::vector<std::int64_t> valid;
       valid.reserve(candidates.size());
@@ -263,13 +293,14 @@ py::list pelt_mean_shift(
   return rows;
 }
 
-py::list pelt_mean_shift_batch(
+py::object pelt_mean_shift_batch(
     py::array_t<double, py::array::c_style | py::array::forcecast> activity,
     double penalty,
     std::int64_t min_size,
     std::int64_t jump,
     std::int64_t threads,
-    const std::shared_ptr<PeltCancellation>& cancellation) {
+    const std::shared_ptr<PeltCancellation>& cancellation,
+    bool return_diagnostics) {
   const auto buf = activity.request();
   if (buf.ndim != 2) {
     throw py::value_error("activity must be a 2D array with shape (channels, records)");
@@ -283,6 +314,7 @@ py::list pelt_mean_shift_batch(
   const auto* ptr = static_cast<const double*>(buf.ptr);
 
   std::vector<std::vector<Segment>> results(static_cast<std::size_t>(channels));
+  std::vector<PeltDiagnostics> diagnostics(static_cast<std::size_t>(channels));
   const std::int64_t worker_count = std::max<std::int64_t>(1, std::min<std::int64_t>(threads, channels));
   {
     py::gil_scoped_release release;
@@ -310,7 +342,13 @@ py::list pelt_mean_shift_batch(
           if (is_cancelled(cancellation)) {
             break;
           }
-          results[static_cast<std::size_t>(channel)] = pelt_exact(y, penalty, min_size, jump, cancellation);
+          results[static_cast<std::size_t>(channel)] = pelt_exact(
+              y,
+              penalty,
+              min_size,
+              jump,
+              cancellation,
+              return_diagnostics ? &diagnostics[static_cast<std::size_t>(channel)] : nullptr);
         }
       });
     }
@@ -331,7 +369,29 @@ py::list pelt_mean_shift_batch(
     }
     batch_rows.append(rows);
   }
-  return batch_rows;
+  if (!return_diagnostics) {
+    return batch_rows;
+  }
+
+  std::uint64_t candidate_count_sum = 0;
+  std::uint64_t candidate_observations = 0;
+  std::uint64_t candidate_count_max = 0;
+  std::int64_t constant_channels = 0;
+  for (const auto& row : diagnostics) {
+    candidate_count_sum += row.candidate_count_sum;
+    candidate_observations += row.candidate_observations;
+    candidate_count_max = std::max(candidate_count_max, row.candidate_count_max);
+    constant_channels += row.constant_fast_path ? 1 : 0;
+  }
+  py::dict diagnostic_rows;
+  diagnostic_rows["pelt_candidates_mean"] =
+      candidate_observations > 0
+          ? static_cast<double>(candidate_count_sum) / static_cast<double>(candidate_observations)
+          : 0.0;
+  diagnostic_rows["pelt_candidates_max"] = candidate_count_max;
+  diagnostic_rows["pelt_candidate_observations"] = candidate_observations;
+  diagnostic_rows["pelt_constant_channels"] = constant_channels;
+  return py::make_tuple(batch_rows, diagnostic_rows);
 }
 
 }  // namespace
@@ -357,5 +417,6 @@ PYBIND11_MODULE(_pelt_ext, m) {
       py::arg("min_size") = 384,
       py::arg("jump") = 1,
       py::arg("threads") = 1,
-      py::arg("cancellation") = nullptr);
+      py::arg("cancellation") = nullptr,
+      py::arg("return_diagnostics") = false);
 }

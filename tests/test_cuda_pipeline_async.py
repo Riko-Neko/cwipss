@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import inspect
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
-from cwipss.signal import cpro_cuda, detection_cuda
-from cwipss.signal.windows import PeltCancellation, pelt_mean_shift_batch
+from cwipss.signal import cpro_cuda, detection, detection_cuda
+from cwipss.signal.windows import PeltCancellation, Segment, pelt_mean_shift_batch
 from cwipss.workflows import search
 
 
@@ -15,6 +16,28 @@ def test_async_timing_accumulator_accepts_disabled_timing() -> None:
     totals: dict[str, float] = {}
     search._timing_add(totals, "pelt_seconds", 1.0)
     assert totals == {"pelt_seconds": 1.0}
+
+
+def test_block_timing_reports_native_pelt_candidate_diagnostics() -> None:
+    message = search._timing_block_message(
+        "run",
+        "block_0001",
+        (0, 8),
+        2048,
+        {"detect_seconds": 1.0},
+        {
+            "pelt_candidates_mean": 12.5,
+            "pelt_candidates_max": 21.0,
+            "pelt_short_circuit_channels": 3.0,
+            "pelt_constant_channels": 1.0,
+        },
+        candidates=0,
+        windows=0,
+    )
+
+    assert "pelt_candidates(mean=12.5 max=21)" in message
+    assert "pelt_skip=3" in message
+    assert "pelt_constant=1" in message
 
 
 def test_invalid_channel_quality_is_compacted_per_file() -> None:
@@ -77,3 +100,113 @@ def test_native_batch_pelt_honors_preexisting_cancellation() -> None:
             threads=2,
             cancellation=cancellation,
         )
+
+
+def test_native_batch_pelt_constant_fast_path_preserves_segments_and_reports_diagnostics() -> None:
+    diagnostics: dict[str, float] = {}
+    activity = np.stack(
+        [
+            np.zeros(4096, dtype=np.float64),
+            np.full(4096, 0.1, dtype=np.float64),
+        ]
+    )
+
+    segments = pelt_mean_shift_batch(
+        activity,
+        penalty=16.0,
+        min_size=384,
+        jump=1,
+        threads=2,
+        diagnostics=diagnostics,
+    )
+
+    assert [[(row.start, row.stop) for row in channel] for channel in segments] == [
+        [(0, 4096)],
+        [(0, 4096)],
+    ]
+    assert segments[0][0].cost == 0.0
+    assert segments[0][0].mean == 0.0
+    assert segments[1][0].cost == 0.0
+    assert segments[1][0].mean == pytest.approx(0.1)
+    assert diagnostics["pelt_constant_channels"] == 2.0
+    assert diagnostics["pelt_candidates_mean"] == 0.0
+    assert diagnostics["pelt_candidates_max"] == 0.0
+
+
+def test_native_batch_pelt_reports_candidate_growth() -> None:
+    diagnostics: dict[str, float] = {}
+    activity = np.random.default_rng(123).normal(size=(1, 2048))
+
+    pelt_mean_shift_batch(
+        activity,
+        penalty=16.0,
+        min_size=128,
+        jump=1,
+        diagnostics=diagnostics,
+    )
+
+    assert diagnostics["pelt_candidate_observations"] > 0.0
+    assert diagnostics["pelt_candidates_mean"] > 0.0
+    assert diagnostics["pelt_candidates_max"] >= diagnostics["pelt_candidates_mean"]
+
+
+def test_shared_window_pipeline_short_circuits_below_mean_gate(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fail_pelt(*_args, **_kwargs):
+        raise AssertionError("native PELT must not run below the activity-mean gate")
+
+    monkeypatch.setattr(detection, "pelt_mean_shift", fail_pelt)
+    windows, activity_z, segment_count = detection.pelt_windows_from_activity(
+        np.zeros(2048, dtype=np.float32),
+        np.zeros(2048, dtype=np.float32),
+        penalty=16.0,
+        min_size=384,
+        jump=1,
+        min_duration=96,
+        min_mean=0.05,
+        min_raw_mean=25.0,
+        merge_gap=256,
+    )
+
+    assert windows == []
+    assert segment_count == 0
+    assert np.array_equal(activity_z, np.zeros_like(activity_z))
+
+
+def test_cuda_pelt_short_circuit_preserves_batch_order_and_timing(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_batch(activity, **kwargs):
+        captured["activity"] = np.asarray(activity)
+        diagnostics = kwargs["diagnostics"]
+        diagnostics.update(
+            {
+                "pelt_candidates_mean": 12.5,
+                "pelt_candidates_max": 21.0,
+                "pelt_candidate_observations": 10.0,
+                "pelt_constant_channels": 0.0,
+            }
+        )
+        return [[Segment(0, 3, 1.0, 2.0)]]
+
+    monkeypatch.setattr(detection_cuda, "pelt_mean_shift_batch", fake_batch)
+    common = {
+        "window_min_activity_mean": 1.0,
+        "pelt_penalty": 16.0,
+        "pelt_min_size_records": 1,
+        "pelt_jump_records": 1,
+        "pelt_threads": 8,
+    }
+    prepared = [
+        SimpleNamespace(activity_z=np.array([0.0, 0.5, 0.0]), **common),
+        SimpleNamespace(activity_z=np.array([0.0, 2.0, 0.0]), **common),
+    ]
+    timing: dict[str, float] = {}
+
+    segments, _seconds = detection_cuda.run_prepared_cuda_pelt(prepared, timing=timing)
+
+    assert segments[0] == []
+    assert segments[1] == [Segment(0, 3, 1.0, 2.0)]
+    assert np.asarray(captured["activity"]).shape == (1, 3)
+    assert timing["pelt_short_circuit_channels"] == 1.0
+    assert timing["pelt_candidates_mean"] == 12.5
+    assert timing["pelt_candidates_max"] == 21.0
