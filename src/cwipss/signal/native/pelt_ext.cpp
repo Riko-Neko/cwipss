@@ -7,6 +7,8 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <memory>
+#include <stdexcept>
 #include <thread>
 #include <vector>
 
@@ -20,6 +22,19 @@ struct Segment {
   double cost;
   double mean;
 };
+
+class PeltCancellation {
+ public:
+  void cancel() noexcept { cancelled_.store(true, std::memory_order_relaxed); }
+  bool cancelled() const noexcept { return cancelled_.load(std::memory_order_relaxed); }
+
+ private:
+  std::atomic<bool> cancelled_{false};
+};
+
+bool is_cancelled(const std::shared_ptr<PeltCancellation>& cancellation) {
+  return cancellation != nullptr && cancellation->cancelled();
+}
 
 double segment_cost(
     const std::vector<double>& prefix_sum,
@@ -89,11 +104,15 @@ std::vector<Segment> pelt_exact(
     const std::vector<double>& y,
     double penalty,
     std::int64_t min_size,
-    std::int64_t jump) {
+    std::int64_t jump,
+    const std::shared_ptr<PeltCancellation>& cancellation = nullptr) {
   const std::int64_t n = static_cast<std::int64_t>(y.size());
   std::vector<double> prefix_sum(static_cast<std::size_t>(n + 1), 0.0);
   std::vector<double> prefix_sq(static_cast<std::size_t>(n + 1), 0.0);
   for (std::int64_t i = 0; i < n; ++i) {
+    if ((i & 1023) == 0 && is_cancelled(cancellation)) {
+      return {};
+    }
     const double value = y[static_cast<std::size_t>(i)];
     prefix_sum[static_cast<std::size_t>(i + 1)] = prefix_sum[static_cast<std::size_t>(i)] + value;
     prefix_sq[static_cast<std::size_t>(i + 1)] = prefix_sq[static_cast<std::size_t>(i)] + value * value;
@@ -115,6 +134,9 @@ std::vector<Segment> pelt_exact(
 
   if (jump <= 1) {
     for (std::int64_t t = min_size; t <= n; ++t) {
+      if (is_cancelled(cancellation)) {
+        return {};
+      }
       std::vector<std::int64_t> valid;
       valid.reserve(candidates.size());
       for (const auto s : candidates) {
@@ -163,6 +185,9 @@ std::vector<Segment> pelt_exact(
     }
 
     for (const auto t : endpoints) {
+      if (is_cancelled(cancellation)) {
+        return {};
+      }
       std::vector<std::int64_t> valid;
       valid.reserve(candidates.size());
       for (const auto s : candidates) {
@@ -243,7 +268,8 @@ py::list pelt_mean_shift_batch(
     double penalty,
     std::int64_t min_size,
     std::int64_t jump,
-    std::int64_t threads) {
+    std::int64_t threads,
+    const std::shared_ptr<PeltCancellation>& cancellation) {
   const auto buf = activity.request();
   if (buf.ndim != 2) {
     throw py::value_error("activity must be a 2D array with shape (channels, records)");
@@ -266,7 +292,7 @@ py::list pelt_mean_shift_batch(
     for (std::int64_t worker = 0; worker < worker_count; ++worker) {
       workers.emplace_back([&, worker]() {
         (void)worker;
-        while (true) {
+        while (!is_cancelled(cancellation)) {
           const std::int64_t channel = next_channel.fetch_add(1);
           if (channel >= channels) {
             break;
@@ -275,16 +301,26 @@ py::list pelt_mean_shift_batch(
           y.reserve(static_cast<std::size_t>(records));
           const auto offset = channel * records;
           for (std::int64_t i = 0; i < records; ++i) {
+            if ((i & 1023) == 0 && is_cancelled(cancellation)) {
+              break;
+            }
             const double value = ptr[offset + i];
             y.push_back(std::isfinite(value) ? value : 0.0);
           }
-          results[static_cast<std::size_t>(channel)] = pelt_exact(y, penalty, min_size, jump);
+          if (is_cancelled(cancellation)) {
+            break;
+          }
+          results[static_cast<std::size_t>(channel)] = pelt_exact(y, penalty, min_size, jump, cancellation);
         }
       });
     }
     for (auto& worker : workers) {
       worker.join();
     }
+  }
+
+  if (is_cancelled(cancellation)) {
+    throw std::runtime_error("native PELT cancelled");
   }
 
   py::list batch_rows;
@@ -302,6 +338,10 @@ py::list pelt_mean_shift_batch(
 
 PYBIND11_MODULE(_pelt_ext, m) {
   m.doc() = "Native PELT kernels for cwipss";
+  py::class_<PeltCancellation, std::shared_ptr<PeltCancellation>>(m, "PeltCancellation")
+      .def(py::init<>())
+      .def("cancel", &PeltCancellation::cancel)
+      .def_property_readonly("cancelled", &PeltCancellation::cancelled);
   m.def(
       "pelt_mean_shift",
       &pelt_mean_shift,
@@ -316,5 +356,6 @@ PYBIND11_MODULE(_pelt_ext, m) {
       py::arg("penalty") = 16.0,
       py::arg("min_size") = 384,
       py::arg("jump") = 1,
-      py::arg("threads") = 1);
+      py::arg("threads") = 1,
+      py::arg("cancellation") = nullptr);
 }

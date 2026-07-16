@@ -27,6 +27,21 @@ class Segment:
         return max(0, int(self.stop) - int(self.start))
 
 
+class PeltCancellation:
+    """Run-local cooperative cancellation for native batch PELT."""
+
+    def __init__(self) -> None:
+        require_native_pelt()
+        self._native = _pelt_ext.PeltCancellation()
+
+    def cancel(self) -> None:
+        self._native.cancel()
+
+    @property
+    def cancelled(self) -> bool:
+        return bool(self._native.cancelled)
+
+
 def native_pelt_available() -> bool:
     return _pelt_ext is not None
 
@@ -59,6 +74,7 @@ def pelt_mean_shift_batch(
     min_size: int = 384,
     jump: int = 1,
     threads: int = 1,
+    cancellation: PeltCancellation | None = None,
 ) -> list[list[Segment]]:
     values = np.asarray(activity, dtype=np.float64)
     if values.ndim != 2:
@@ -71,6 +87,7 @@ def pelt_mean_shift_batch(
         min_size=int(min_size),
         jump=int(jump),
         threads=threads,
+        cancellation=None if cancellation is None else cancellation._native,
     )
     return [
         [Segment(int(start), int(stop), float(cost), float(mean)) for start, stop, cost, mean in rows]

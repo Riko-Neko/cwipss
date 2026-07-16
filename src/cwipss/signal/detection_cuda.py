@@ -19,7 +19,7 @@ from .detection import (
     pelt_windows_from_segments,
     resolve_channel_candidate_cap,
 )
-from .windows import Segment, pelt_mean_shift_batch
+from .windows import PeltCancellation, Segment, pelt_mean_shift_batch
 
 
 @dataclass
@@ -243,6 +243,7 @@ def prepare_block_period_chunks_cuda_power(
 
 def run_prepared_cuda_pelt(
     prepared: list[PreparedCudaPeriodChannel],
+    cancellation: PeltCancellation | None = None,
 ) -> tuple[list[list[Segment]], float]:
     """Run the required native C++ batch PELT outside the CUDA worker."""
     if not prepared:
@@ -259,6 +260,7 @@ def run_prepared_cuda_pelt(
         min_size=reference.pelt_min_size_records,
         jump=reference.pelt_jump_records,
         threads=reference.pelt_threads,
+        cancellation=cancellation,
     )
     return segments, perf_counter() - start
 

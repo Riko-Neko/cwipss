@@ -22,7 +22,7 @@ from ..config import (
 from ..signal.cpro import cpro_period_mask, impulse_cwt_noise_gain
 from ..signal.cwt import cwt_power_cube, period_grid_records
 from ..signal.detection import add_candidate_ids, detect_block_periods
-from ..signal.windows import require_native_pelt
+from ..signal.windows import PeltCancellation, require_native_pelt
 from ..data.readers import SpectrumReader, open_spectrum_reader
 from ..data.schemas import (
     MANIFEST_FIELDNAMES,
@@ -325,6 +325,7 @@ def run_cwt_search(config: CWTSearchConfig) -> Path:
         if use_cuda_block_backend
         else None
     )
+    pelt_cancellation = PeltCancellation() if pelt_executor is not None else None
     max_pending_blocks = max(1, int(config.cuda_max_pending_blocks))
 
     def record_block_results(
@@ -529,7 +530,11 @@ def run_cwt_search(config: CWTSearchConfig) -> Path:
                         prepare_seconds=prepare_seconds,
                         detection_timing=detection_timing,
                         prepared_channels=prepared_channels,
-                        pelt_future=pelt_executor.submit(run_prepared_cuda_pelt, prepared_channels),
+                        pelt_future=pelt_executor.submit(
+                            run_prepared_cuda_pelt,
+                            prepared_channels,
+                            pelt_cancellation,
+                        ),
                     )
                 )
                 if len(pending_blocks) >= max_pending_blocks:
@@ -562,6 +567,11 @@ def run_cwt_search(config: CWTSearchConfig) -> Path:
             )
         while pending_blocks:
             finalize_pending_block(pending_blocks.popleft())
+    except KeyboardInterrupt:
+        if pelt_cancellation is not None:
+            pelt_cancellation.cancel()
+        pending_blocks.clear()
+        raise
     finally:
         if pelt_executor is not None:
             pelt_executor.shutdown(wait=True, cancel_futures=True)

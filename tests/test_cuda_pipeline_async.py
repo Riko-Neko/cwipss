@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import inspect
 
+import numpy as np
+import pytest
+
 from cwipss.signal import cpro_cuda, detection_cuda
+from cwipss.signal.windows import PeltCancellation, pelt_mean_shift_batch
 from cwipss.workflows import search
 
 
@@ -54,6 +58,22 @@ def test_cuda_orchestration_keeps_cwt_resident_through_cprf() -> None:
     assert "channel.power_map = None" in finalize_source
 
     workflow_source = inspect.getsource(search.run_cwt_search)
-    assert "pelt_executor.submit(run_prepared_cuda_pelt" in workflow_source
+    assert "pelt_executor.submit(" in workflow_source
+    assert "run_prepared_cuda_pelt," in workflow_source
+    assert "pelt_cancellation.cancel()" in workflow_source
     assert "pending_blocks.popleft()" in workflow_source
     assert search.CWTSearchConfig().cuda_max_pending_blocks == 2
+
+
+def test_native_batch_pelt_honors_preexisting_cancellation() -> None:
+    cancellation = PeltCancellation()
+    cancellation.cancel()
+
+    with pytest.raises(RuntimeError, match="native PELT cancelled"):
+        pelt_mean_shift_batch(
+            np.zeros((2, 64), dtype=np.float64),
+            penalty=1.0,
+            min_size=8,
+            threads=2,
+            cancellation=cancellation,
+        )
