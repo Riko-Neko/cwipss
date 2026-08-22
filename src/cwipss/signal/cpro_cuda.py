@@ -11,13 +11,9 @@ from .cpro import CPROParameters, MIN_POSITIVE
 
 @dataclass(frozen=True)
 class CPROActivityCudaResult:
-    activity: object
-    score_map: object
+    shape_activity: object
+    shape_map: object
     occupancy_map: object
-    ridge_mask: object
-    ridge_time_mask: object
-    window_occupancy: object
-    active_mask: object
     threshold: object
 
 
@@ -70,17 +66,29 @@ def _edge_corrected_time_mean(values, width: int, cp, ndimage):
     return (summed / cp.maximum(counts[None, :], 1.0)).astype(cp.float32, copy=False)
 
 
-def _contiguous_period_support(mask, bins: int, cp, ndimage):
-    width = max(1, min(int(bins), int(mask.shape[0])))
+def _period_mean(values, bins: int, cp, ndimage):
+    width = max(1, min(int(bins), int(values.shape[0])))
     if width <= 1:
-        return mask.astype(cp.bool_, copy=False)
-    count = ndimage.uniform_filter1d(
-        mask.astype(cp.float32),
+        return values.astype(cp.float32, copy=False)
+    return ndimage.uniform_filter1d(
+        values,
         size=width,
         axis=0,
         mode="constant",
-    )
-    return count >= (1.0 - 0.5 / float(width))
+        cval=0.0,
+    ).astype(cp.float32, copy=False)
+
+
+def _sigmoid(values, cp):
+    clipped = cp.clip(values, -40.0, 40.0)
+    return (1.0 / (1.0 + cp.exp(-clipped))).astype(cp.float32, copy=False)
+
+
+def _top_k_period_mean(values, top_k: int, cp):
+    count = max(1, min(int(top_k), int(values.shape[0])))
+    split = int(values.shape[0]) - count
+    top = cp.partition(values, split, axis=0)[split:, :]
+    return cp.mean(top, axis=0, dtype=cp.float32).astype(cp.float32, copy=False)
 
 
 def _period_ridge_contrast(calibrated, params: CPROParameters, cp, ndimage):
@@ -143,46 +151,56 @@ def cpro_activity_cuda(
         cp,
         ndimage,
     )
-    persistent = occupancy >= float(params.min_occupancy)
-    persistent = _contiguous_period_support(
-        persistent,
-        params.period_support_bins,
-        cp,
-        ndimage,
-    )
 
-    occupied_power = _edge_corrected_time_mean(
-        calibrated * exceedance,
+    power_log_ratio = cp.log(cp.maximum(calibrated, MIN_POSITIVE) / threshold)
+    shape_power = threshold * float(params.shape_power_softness) * cp.logaddexp(
+        0.0,
+        power_log_ratio / float(params.shape_power_softness),
+    )
+    if params.min_period_contrast > 0.0:
+        contrast_log_ratio = cp.log(
+            cp.maximum(period_contrast, MIN_POSITIVE) / float(params.min_period_contrast)
+        )
+        contrast_weight = _sigmoid(
+            contrast_log_ratio / float(params.shape_contrast_softness),
+            cp,
+        )
+    else:
+        contrast_weight = cp.ones_like(shape_power, dtype=cp.float32)
+    shape_map = _edge_corrected_time_mean(
+        shape_power * contrast_weight,
         params.support_records,
         cp,
         ndimage,
     )
-    bright_mean = occupied_power / cp.maximum(
-        occupancy,
-        1.0 / float(max(1, params.support_records)),
+    shape_map = _period_mean(shape_map, params.period_support_bins, cp, ndimage)
+    occupancy_weight = _sigmoid(
+        (occupancy - float(params.min_occupancy))
+        / float(params.shape_occupancy_softness),
+        cp,
     )
-    ridge_time_mask = cp.any(persistent, axis=0)
-    window_occupancy_map = persistent.astype(cp.float32)
-    if params.window_support_records > 1 and params.min_window_occupancy > 0.0:
-        window_occupancy_map = _edge_corrected_time_mean(
-            persistent.astype(cp.float32),
-            params.window_support_records,
-            cp,
-            ndimage,
-        )
-        window_ridge_mask = window_occupancy_map >= float(params.min_window_occupancy)
-    else:
-        window_ridge_mask = persistent
-    score_map = cp.where(window_ridge_mask, bright_mean, 0.0).astype(cp.float32, copy=False)
-    activity = cp.max(score_map, axis=0).astype(cp.float32, copy=False)
-    active_mask = cp.any(window_ridge_mask, axis=0)
+    occupancy_weight = _period_mean(
+        occupancy_weight,
+        params.period_support_bins,
+        cp,
+        ndimage,
+    )
+    window_support = _edge_corrected_time_mean(
+        occupancy_weight,
+        params.window_support_records,
+        cp,
+        ndimage,
+    )
+    window_weight = _sigmoid(
+        (window_support - float(params.min_window_occupancy))
+        / float(params.shape_occupancy_softness),
+        cp,
+    )
+    shape_map = (shape_map * window_weight).astype(cp.float32, copy=False)
+    shape_activity = _top_k_period_mean(shape_map, params.shape_top_k, cp)
     return CPROActivityCudaResult(
-        activity=activity,
-        score_map=score_map,
+        shape_activity=shape_activity,
+        shape_map=shape_map,
         occupancy_map=occupancy.astype(cp.float32, copy=False),
-        ridge_mask=persistent,
-        ridge_time_mask=ridge_time_mask,
-        window_occupancy=cp.max(window_occupancy_map, axis=0).astype(cp.float32, copy=False),
-        active_mask=active_mask,
         threshold=threshold,
     )

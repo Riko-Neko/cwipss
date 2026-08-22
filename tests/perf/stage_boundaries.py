@@ -22,7 +22,7 @@ from cwipss.signal.windows import (
 class PELTWindowParameters:
     penalty: float = 16.0
     min_size_records: int = 384
-    jump_records: int = 1
+    jump_records: int = 8
     min_duration_records: int = 384
     min_activity_mean: float = 0.05
     merge_gap_records: int = 256

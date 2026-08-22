@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+from scipy import ndimage
 
+from cwipss.signal import cpro_cuda
 from cwipss.signal.cpro import CPROParameters, cpro_activity, difference_noise_std
 from cwipss.signal.cprf import CPRFParameters
 from cwipss.signal.detection import detect_block_periods, resolve_channel_candidate_cap
@@ -23,7 +25,7 @@ def _small_params() -> CPROParameters:
     )
 
 
-def test_cpro_retains_persistent_absolute_ridge() -> None:
+def test_cpro_shape_axis_responds_to_persistent_ridge() -> None:
     power = np.ones((3, 128), dtype=np.float32)
     power[1, 24:104] = 12.0
     result = cpro_activity(
@@ -32,11 +34,10 @@ def test_cpro_retains_persistent_absolute_ridge() -> None:
         noise_gain=np.ones(3),
         params=_small_params(),
     )
-    assert np.max(result.activity[40:90]) > 0.0
-    assert np.any(result.active_mask[40:90])
+    assert np.max(result.shape_activity[40:90]) > np.max(result.shape_activity[:20])
 
 
-def test_cpro_rejects_short_bright_transient() -> None:
+def test_cpro_shape_axis_suppresses_short_bright_transient() -> None:
     power = np.ones((3, 128), dtype=np.float32)
     power[1, 60:62] = 100.0
     result = cpro_activity(
@@ -45,7 +46,15 @@ def test_cpro_rejects_short_bright_transient() -> None:
         noise_gain=np.ones(3),
         params=_small_params(),
     )
-    assert not np.any(result.active_mask)
+    persistent = np.ones((3, 128), dtype=np.float32)
+    persistent[1, 24:104] = 12.0
+    persistent_result = cpro_activity(
+        persistent,
+        noise_std=1.0,
+        noise_gain=np.ones(3),
+        params=_small_params(),
+    )
+    assert np.max(result.shape_activity) < np.max(persistent_result.shape_activity)
 
 
 def test_cpro_activity_has_no_legacy_window_parameters() -> None:
@@ -57,7 +66,7 @@ def test_cpro_activity_has_no_legacy_window_parameters() -> None:
 
     assert "max_gap_records" not in params.__dict__
     assert "min_duration_records" not in params.__dict__
-    assert np.max(result.activity) > 0.0
+    assert np.max(result.shape_activity) > 0.0
 
 
 def test_cpro_activity_is_in_noise_calibrated_power_units() -> None:
@@ -67,8 +76,40 @@ def test_cpro_activity_is_in_noise_calibrated_power_units() -> None:
     base = cpro_activity(power, noise_std=1.0, noise_gain=np.ones(3), params=_small_params())
     scaled = cpro_activity(4.0 * power, noise_std=2.0, noise_gain=np.ones(3), params=_small_params())
 
-    np.testing.assert_allclose(base.activity, scaled.activity)
-    np.testing.assert_allclose(base.score_map, scaled.score_map)
+    np.testing.assert_allclose(base.shape_activity, scaled.shape_activity)
+    np.testing.assert_allclose(base.shape_map, scaled.shape_map)
+
+
+def test_cpro_cpu_cuda_math_is_identical_without_host_transfer(monkeypatch) -> None:
+    rng = np.random.default_rng(123)
+    power = rng.lognormal(mean=1.0, sigma=0.8, size=(8, 256)).astype(np.float32)
+    power[3:6, 64:208] *= 20.0
+    gain = np.linspace(0.8, 1.2, power.shape[0], dtype=np.float32)
+    params = CPROParameters(
+        threshold_snr=4.0,
+        texture_quantile=0.8,
+        support_records=17,
+        min_occupancy=0.4,
+        period_support_bins=3,
+        window_support_records=65,
+        min_window_occupancy=0.3,
+    )
+    cpu = cpro_activity(power, noise_std=1.5, noise_gain=gain, params=params)
+    monkeypatch.setattr(cpro_cuda, "_cupy_modules", lambda: (np, ndimage))
+
+    cuda = cpro_cuda.cpro_activity_cuda(
+        power,
+        noise_std=1.5,
+        noise_gain=gain,
+        params=params,
+    )
+
+    for field in (
+        "shape_activity",
+        "shape_map",
+        "occupancy_map",
+    ):
+        np.testing.assert_allclose(getattr(cuda, field), getattr(cpu, field), rtol=2e-5, atol=2e-5)
 
 
 def test_noise_calibration_has_no_degenerate_fallback() -> None:
@@ -99,13 +140,16 @@ def test_detector_excludes_zero_channel_without_noise_fallback() -> None:
         cpro_period_support_bins=1,
         cpro_window_support_records=5,
         cpro_min_window_occupancy=0.4,
+        cpro_shape_power_softness=0.5,
+        cpro_shape_contrast_softness=0.25,
+        cpro_shape_occupancy_softness=0.1,
+        cpro_shape_top_k=3,
         pelt_penalty=1.0,
         pelt_min_size_records=4,
         pelt_jump_records=1,
         pelt_threads=1,
         window_min_duration_records=4,
         window_min_activity_mean=0.0,
-        window_min_activity_raw_mean=0.0,
         window_merge_gap_records=0,
         cprf_params=CPRFParameters(),
         max_candidates_per_channel="auto",

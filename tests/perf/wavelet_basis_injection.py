@@ -211,13 +211,17 @@ def _compress_with_pipeline_functions(
             period_support_bins=config.cpro_period_support_bins,
             window_support_records=config.cpro_window_support_records,
             min_window_occupancy=config.cpro_min_window_occupancy,
+            shape_power_softness=config.cpro_shape_power_softness,
+            shape_contrast_softness=config.cpro_shape_contrast_softness,
+            shape_occupancy_softness=config.cpro_shape_occupancy_softness,
+            shape_top_k=config.cpro_shape_top_k,
         ),
     )
-    activity_raw = np.asarray(result.activity, dtype=np.float32)
+    activity_raw = np.asarray(result.shape_activity, dtype=np.float32)
     activity_z = robust_standardize(activity_raw)
     return {
         "valid_periods": valid_periods,
-        "structured": np.asarray(result.score_map, dtype=np.float32),
+        "structured": np.asarray(result.shape_map, dtype=np.float32),
         "activity_raw": activity_raw,
         "activity_smooth": activity_raw,
         "activity_z": activity_z,

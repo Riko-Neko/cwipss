@@ -139,7 +139,7 @@ def single_map_cpro_catalog(algorithm_class) -> list[Any]:
         "window_support_records": 769,
         "min_window_occupancy": 0.40,
     }
-    configurations: dict[str, dict[str, float | int]] = {"sm_cpro_base": dict(base)}
+    configurations: dict[str, dict[str, float | int | str]] = {"sm_cpro_base": dict(base)}
     sweeps = {
         "e": ("threshold_snr", (8.0, 16.0, 24.0, 48.0, 64.0)),
         "q": ("texture_quantile", (0.80, 0.85, 0.90, 0.925, 0.95, 0.975)),

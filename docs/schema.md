@@ -1,6 +1,7 @@
 # Cwipss Output Schema
 
-Schema version 4 defines CPRO -> PELT -> CPRF candidate and time-window fields.
+Schema version 6 defines single-output CPRO -> PELT -> CPRF candidate and
+time-window fields.
 
 Canonical field lists and row normalization are defined in
 `cwipss.data.schemas`.
@@ -17,15 +18,15 @@ Important fields:
 - `method`, `wavelet`, `time_agg`: method and transform provenance.
 - `window_id`, `block_id`, `channel`, `freq_mhz`: source PELT window, absolute source-channel index, and frequency.
 - `t0_rec`, `t1_rec`, `dur_rec`: half-open PELT time span `[t0_rec, t1_rec)`.
-- `t_peak_rec`: maximum CPRO activity location within that span.
+- `t_peak_rec`: maximum continuous CPRO shape activity location within that span.
 - `period_rec`, `p0_rec`, `p1_rec`, `p_span_rec`, `p_bins`: selected period,
   ridge-band bounds, period-coordinate span, and grid-bin width.
 - `period_s`, `dur_s`, `t_peak_s`: physical-time conversions using `tsamp_seconds`.
 - `noise_sigma`: robust raw-series noise estimate from first differences.
 - `cpro_thr`: absolute CWT-power threshold used by CPRO.
-- `cpro_mean`, `cpro_max`: absolute CPRO ridge activity inside the PELT window.
-- `cpro_occ`, `cpro_occ_max`: mean and maximum long-window ridge occupancy.
-- `pelt_z_mean`, `pelt_z_max`: robust-standardized CPRO activity inside the segment.
+- `shape_mean`, `shape_max`: continuous CPRO shape evidence used by PELT inside
+  the window; these are not absolute signal-strength statistics.
+- `pelt_z_mean`, `pelt_z_max`: robust-standardized CPRO shape evidence inside the segment.
 - `pelt_pen`: configured native PELT penalty.
 - `cprf_thr`: independent absolute-power normalization threshold used by CPRF.
 - `ridge_peak`: CPRF profile peak excess above its local period background.
@@ -63,7 +64,7 @@ candidate generation. Important fields:
 - `window_id`: channel-local window id.
 - `method`, `channel`, `freq_mhz`: source method and channel.
 - `t0_rec`, `t1_rec`, `dur_rec`: PELT window span.
-- `cpro_*`, `pelt_*`: the same stage-specific evidence as candidate rows.
+- `cpro_thr`, `shape_*`, `pelt_*`: the same stage-specific evidence as candidate rows.
 - `accepted`: CPRF gate decision.
 - `period_rec`, `p0_rec`, `p1_rec`, `p_bins`: best CPRF hypothesis even when rejected.
 - `ridge_*`, `band_*`, `local_contrast`, `h2`, `h3`, `harm_n`, `core_score`,

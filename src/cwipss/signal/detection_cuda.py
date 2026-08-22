@@ -34,8 +34,7 @@ class PreparedCudaPeriodChannel:
     noise_std_device: object
     cprf_normalization_threshold: object
     cprf_params: CPRFParameters
-    activity: np.ndarray
-    window_occupancy: np.ndarray
+    shape_activity: np.ndarray
     activity_z: np.ndarray
     noise_std: float
     calibrated_threshold: float
@@ -50,7 +49,6 @@ class PreparedCudaPeriodChannel:
     pelt_threads: int
     window_min_duration_records: int
     window_min_activity_mean: float
-    window_min_activity_raw_mean: float
     window_merge_gap_records: int
 
 
@@ -109,13 +107,16 @@ def prepare_block_period_chunks_cuda_power(
     cpro_period_support_bins: int,
     cpro_window_support_records: int,
     cpro_min_window_occupancy: float,
+    cpro_shape_power_softness: float,
+    cpro_shape_contrast_softness: float,
+    cpro_shape_occupancy_softness: float,
+    cpro_shape_top_k: int,
     pelt_penalty: float,
     pelt_min_size_records: int,
     pelt_jump_records: int,
     pelt_threads: int,
     window_min_duration_records: int,
     window_min_activity_mean: float,
-    window_min_activity_raw_mean: float,
     window_merge_gap_records: int,
     cprf_params: CPRFParameters,
     max_candidates_per_channel: int | str,
@@ -166,6 +167,10 @@ def prepare_block_period_chunks_cuda_power(
             period_support_bins=cpro_period_support_bins,
             window_support_records=cpro_window_support_records,
             min_window_occupancy=cpro_min_window_occupancy,
+            shape_power_softness=cpro_shape_power_softness,
+            shape_contrast_softness=cpro_shape_contrast_softness,
+            shape_occupancy_softness=cpro_shape_occupancy_softness,
+            shape_top_k=cpro_shape_top_k,
         )
         params.validate()
         cprf_params.validate()
@@ -205,9 +210,8 @@ def prepare_block_period_chunks_cuda_power(
                 noise_gain=gain_device,
                 params=cprf_params,
             )
-            # This is the only array boundary before PELT: two 1D axes per channel.
-            activity = cp.asnumpy(result.activity).astype(np.float32, copy=False)
-            window_occupancy = cp.asnumpy(result.window_occupancy).astype(np.float32, copy=False)
+            # Only the 1D proposal axis crosses the boundary; CWT2D remains resident for CPRF.
+            shape_activity = cp.asnumpy(result.shape_activity).astype(np.float32, copy=False)
             prepared.append(
                 PreparedCudaPeriodChannel(
                     output_channel=output_channel,
@@ -217,9 +221,8 @@ def prepare_block_period_chunks_cuda_power(
                     noise_std_device=noise_std_gpu,
                     cprf_normalization_threshold=cprf_threshold,
                     cprf_params=cprf_params,
-                    activity=activity,
-                    window_occupancy=window_occupancy,
-                    activity_z=robust_standardize(activity),
+                    shape_activity=shape_activity,
+                    activity_z=robust_standardize(shape_activity),
                     noise_std=float(noise_std_gpu.item()),
                     calibrated_threshold=float(result.threshold.item()),
                     valid_periods=valid_periods,
@@ -233,7 +236,6 @@ def prepare_block_period_chunks_cuda_power(
                     pelt_threads=int(pelt_threads),
                     window_min_duration_records=int(window_min_duration_records),
                     window_min_activity_mean=float(window_min_activity_mean),
-                    window_min_activity_raw_mean=float(window_min_activity_raw_mean),
                     window_merge_gap_records=int(window_merge_gap_records),
                 )
             )
@@ -310,14 +312,12 @@ def finalize_prepared_cuda_period_chunks(
     with cp.cuda.Device(prepared[0].cuda_device):
         for channel, segments in zip(prepared, segments_batch, strict=True):
             channel_windows_raw = pelt_windows_from_segments(
-                channel.activity,
-                channel.window_occupancy,
+                channel.shape_activity,
                 channel.activity_z,
                 segments,
                 penalty=channel.pelt_penalty,
                 min_duration=channel.window_min_duration_records,
                 min_mean=channel.window_min_activity_mean,
-                min_raw_mean=channel.window_min_activity_raw_mean,
                 merge_gap=channel.window_merge_gap_records,
             )
 
@@ -332,7 +332,7 @@ def finalize_prepared_cuda_period_chunks(
                 )
 
             rows, channel_windows = build_channel_candidates(
-                activity=channel.activity,
+                shape_activity=channel.shape_activity,
                 windows=channel_windows_raw,
                 noise_std=channel.noise_std,
                 calibrated_threshold=channel.calibrated_threshold,

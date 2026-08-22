@@ -47,8 +47,10 @@ from period_profile_benchmark import (  # noqa: E402
     _summaries,
     _write_csv,
 )
-from stage_boundaries import pelt_parameters_from_config  # noqa: E402
-from persistent_occupancy import mask_windows, regularize_time_mask  # noqa: E402
+from stage_boundaries import (  # noqa: E402
+    pelt_parameters_from_config,
+    segment_activity_with_pelt,
+)
 from cwipss.analysis.injection_config import load_injection_config, make_injections_from_config  # noqa: E402
 from cwipss.config import load_cwt_config  # noqa: E402
 from cwipss.data.readers import open_spectrum_reader  # noqa: E402
@@ -76,12 +78,6 @@ NEW_CPRF = "cprf_concentrated_ridge_c45"
 OLD_CPRF = "cprf_absolute_ridge_c35_r140"
 TRIAL_CPRF = "cprf_contrast_balanced_c40_r150_i300"
 SWEEP_DIRNAME = "threshold_sweep_integrated0_fine_v1"
-HISTORICAL_NEGATIVE_COUNTS = {
-    "20211205": 1051,
-    "20190830": 3253,
-}
-
-
 @dataclass(frozen=True)
 class StressConfig:
     output_dir: Path
@@ -135,8 +131,9 @@ def _historical_negative_cases(
     channel_stop: int,
     block_channels: int,
     progress_every: int,
+    pelt_parameters: Any,
 ) -> list[_WindowCase]:
-    """Rebuild the historical w385_v40_d096 negative-window corpus."""
+    """Build negative windows with the current shape-axis CPRO and PELT."""
     parameters = CPROParameters(window_support_records=385, min_window_occupancy=0.40)
     cases: list[_WindowCase] = []
     first = max(0, int(channel_start))
@@ -170,13 +167,10 @@ def _historical_negative_cases(
                 noise_gain=noise_gain[historical_period_mask],
                 params=parameters,
             )
-            legacy_mask = regularize_time_mask(
-                activity_result.active_mask,
-                max_gap=64,
-                min_duration=96,
+            pelt_result = segment_activity_with_pelt(
+                activity_result.shape_activity,
+                pelt_parameters,
             )
-            legacy_activity = np.where(legacy_mask, activity_result.activity, 0.0)
-            legacy_windows = mask_windows(legacy_mask, legacy_activity)
             threshold = _profile_normalization_threshold(
                 power,
                 noise_std=noise_std,
@@ -190,7 +184,7 @@ def _historical_negative_cases(
                 noise_gain=noise_gain,
                 calibrated_threshold=threshold,
             )
-            for window_index, window in enumerate(legacy_windows, start=1):
+            for window_index, window in enumerate(pelt_result.windows, start=1):
                 start = int(window["record_start"])
                 stop = int(window["record_stop"])
                 cases.append(
@@ -1014,13 +1008,8 @@ def run(config: StressConfig) -> Path:
             channel_stop=config.negative_channel_stop,
             block_channels=config.negative_block_channels,
             progress_every=config.progress_every,
+            pelt_parameters=pelt_parameters,
         )
-        expected_negative_count = HISTORICAL_NEGATIVE_COUNTS.get(observation)
-        if expected_negative_count is not None and len(negative_cases) != expected_negative_count:
-            raise RuntimeError(
-                f"Historical negative corpus mismatch for {observation}: "
-                f"expected {expected_negative_count}, rebuilt {len(negative_cases)}"
-            )
         cases.extend(positive_cases)
         cases.extend(negative_cases)
         stage1_rows.extend(positive_rows)

@@ -51,7 +51,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cuda-max-pending-blocks", type=int, default=None, help="Maximum CUDA blocks retained while native PELT runs.")
     parser.add_argument("--window-min-duration-records", type=int, default=None, help="Minimum accepted PELT window duration.")
     parser.add_argument("--window-min-activity-mean", type=float, default=None, help="Minimum standardized PELT segment mean.")
-    parser.add_argument("--window-min-activity-raw-mean", type=float, default=None, help="Minimum raw CPRO activity mean.")
     parser.add_argument("--window-merge-gap-records", type=int, default=None, help="Maximum gap merged between PELT windows.")
     parser.add_argument("--cprf-threshold-snr", type=float, default=None, help="CPRF absolute CWT normalization floor.")
     parser.add_argument("--cprf-texture-quantile", type=float, default=None, help="CPRF absolute CWT texture quantile.")

@@ -225,7 +225,7 @@ class CompressionBenchmarkConfig:
     structure_min_support_fraction: float = 0.10
     pelt_penalty: float = 16.0
     pelt_min_size_records: int = 384
-    pelt_jump_records: int = 1
+    pelt_jump_records: int = 8
     pelt_threads: int = 1
     window_min_duration_records: int = 384
     window_min_activity_mean: float = 0.05

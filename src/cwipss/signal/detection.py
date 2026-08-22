@@ -92,23 +92,20 @@ def activity_can_reach_window_mean(activity_z: np.ndarray, min_mean: float) -> b
 
 
 def pelt_windows_from_activity(
-    activity: np.ndarray,
-    window_occupancy: np.ndarray,
+    shape_activity: np.ndarray,
     *,
     penalty: float,
     min_size: int,
     jump: int,
     min_duration: int,
     min_mean: float,
-    min_raw_mean: float,
     merge_gap: int,
 ) -> tuple[list[dict[str, float | int]], np.ndarray, int]:
-    """Segment one CPRO activity axis with the required native PELT bridge."""
-    raw = np.asarray(activity, dtype=np.float32)
-    occupancy = np.asarray(window_occupancy, dtype=np.float32)
-    if raw.ndim != 1 or occupancy.shape != raw.shape:
-        raise ValueError("CPRO activity and window occupancy must be matching 1D arrays")
-    activity_z = robust_standardize(raw)
+    """Segment the sole CPRO shape axis with the required native PELT bridge."""
+    shape = np.asarray(shape_activity, dtype=np.float32)
+    if shape.ndim != 1:
+        raise ValueError("CPRO shape activity must be a 1D array")
+    activity_z = robust_standardize(shape)
     if not activity_can_reach_window_mean(activity_z, min_mean):
         return [], activity_z, 0
     segments = pelt_mean_shift(
@@ -118,36 +115,31 @@ def pelt_windows_from_activity(
         jump=jump,
     )
     accepted = pelt_windows_from_segments(
-        raw,
-        occupancy,
+        shape,
         activity_z,
         segments,
         penalty=penalty,
         min_duration=min_duration,
         min_mean=min_mean,
-        min_raw_mean=min_raw_mean,
         merge_gap=merge_gap,
     )
     return accepted, activity_z, len(segments)
 
 
 def pelt_windows_from_segments(
-    activity: np.ndarray,
-    window_occupancy: np.ndarray,
+    shape_activity: np.ndarray,
     activity_z: np.ndarray,
     segments: list[Segment],
     *,
     penalty: float,
     min_duration: int,
     min_mean: float,
-    min_raw_mean: float,
     merge_gap: int,
 ) -> list[dict[str, float | int]]:
-    """Apply the frozen post-PELT window gates to native segments."""
-    raw = np.asarray(activity, dtype=np.float32)
-    occupancy = np.asarray(window_occupancy, dtype=np.float32)
+    """Apply boundary-only gates to native PELT segments."""
+    shape = np.asarray(shape_activity, dtype=np.float32)
     standardized = np.asarray(activity_z, dtype=np.float32)
-    if raw.ndim != 1 or occupancy.shape != raw.shape or standardized.shape != raw.shape:
+    if shape.ndim != 1 or standardized.shape != shape.shape:
         raise ValueError("CPRO activity products must be matching 1D arrays")
     windows = active_windows_from_segments(
         segments,
@@ -160,23 +152,17 @@ def pelt_windows_from_segments(
     for window in windows:
         start = int(window["record_start"])
         stop = int(window["record_stop"])
-        raw_window = raw[start:stop]
-        if raw_window.size == 0:
-            continue
-        raw_mean = float(np.mean(raw_window))
-        if raw_mean < float(min_raw_mean):
+        shape_window = shape[start:stop]
+        if shape_window.size == 0:
             continue
         z_window = standardized[start:stop]
-        occupancy_window = occupancy[start:stop]
         accepted.append(
             {
                 **window,
-                "activity_mean": raw_mean,
-                "activity_max": float(np.max(raw_window)),
+                "shape_activity_mean": float(np.mean(shape_window)),
+                "shape_activity_max": float(np.max(shape_window)),
                 "pelt_activity_mean": float(np.mean(z_window)),
                 "pelt_activity_max": float(np.max(z_window)),
-                "window_occupancy_mean": float(np.mean(occupancy_window)),
-                "window_occupancy_max": float(np.max(occupancy_window)),
                 "pelt_penalty": float(penalty),
             }
         )
@@ -185,7 +171,7 @@ def pelt_windows_from_segments(
 
 def build_channel_candidates(
     *,
-    activity: np.ndarray,
+    shape_activity: np.ndarray,
     windows: Sequence[dict[str, float | int]],
     noise_std: float,
     calibrated_threshold: float,
@@ -203,7 +189,6 @@ def build_channel_candidates(
     for window_index, window in enumerate(windows, start=1):
         local_start = int(window["record_start"])
         local_stop = int(window["record_stop"])
-        activity_window = activity[local_start:local_stop]
         window_id = f"ch{int(channel_idx):04d}_w{window_index:04d}"
         window_row = {
             "method": WINDOW_METHOD,
@@ -215,10 +200,8 @@ def build_channel_candidates(
             "dur_rec": int(local_stop - local_start),
             "noise_sigma": float(noise_std),
             "cpro_thr": float(calibrated_threshold),
-            "cpro_mean": float(np.nanmean(activity_window)) if activity_window.size else 0.0,
-            "cpro_max": float(np.nanmax(activity_window)) if activity_window.size else 0.0,
-            "cpro_occ": float(window.get("window_occupancy_mean", 0.0)),
-            "cpro_occ_max": float(window.get("window_occupancy_max", 0.0)),
+            "shape_mean": float(window.get("shape_activity_mean", 0.0)),
+            "shape_max": float(window.get("shape_activity_max", 0.0)),
             "pelt_z_mean": float(window.get("pelt_activity_mean", 0.0)),
             "pelt_z_max": float(window.get("pelt_activity_max", 0.0)),
             "pelt_pen": float(window.get("pelt_penalty", 0.0)),
@@ -255,7 +238,12 @@ def build_channel_candidates(
                     "t0_rec": window_row["t0_rec"],
                     "t1_rec": window_row["t1_rec"],
                     "dur_rec": window_row["dur_rec"],
-                    "t_peak_rec": _peak_record(activity, local_start, local_stop, record_start),
+                    "t_peak_rec": _peak_record(
+                        shape_activity,
+                        local_start,
+                        local_stop,
+                        record_start,
+                    ),
                     "period_rec": result.peak_period_records,
                     "p0_rec": result.period_start_records,
                     "p1_rec": result.period_stop_records,
@@ -265,10 +253,8 @@ def build_channel_candidates(
                     "p_bins": result.width_bins,
                     "noise_sigma": window_row["noise_sigma"],
                     "cpro_thr": window_row["cpro_thr"],
-                    "cpro_mean": window_row["cpro_mean"],
-                    "cpro_max": window_row["cpro_max"],
-                    "cpro_occ": window_row["cpro_occ"],
-                    "cpro_occ_max": window_row["cpro_occ_max"],
+                    "shape_mean": window_row["shape_mean"],
+                    "shape_max": window_row["shape_max"],
                     "pelt_z_mean": window_row["pelt_z_mean"],
                     "pelt_z_max": window_row["pelt_z_max"],
                     "pelt_pen": window_row["pelt_pen"],
@@ -317,13 +303,16 @@ def detect_block_periods(
     cpro_period_support_bins: int,
     cpro_window_support_records: int,
     cpro_min_window_occupancy: float,
+    cpro_shape_power_softness: float,
+    cpro_shape_contrast_softness: float,
+    cpro_shape_occupancy_softness: float,
+    cpro_shape_top_k: int,
     pelt_penalty: float,
     pelt_min_size_records: int,
     pelt_jump_records: int,
     pelt_threads: int,
     window_min_duration_records: int,
     window_min_activity_mean: float,
-    window_min_activity_raw_mean: float,
     window_merge_gap_records: int,
     cprf_params: CPRFParameters,
     max_candidates_per_channel: int | str,
@@ -371,6 +360,10 @@ def detect_block_periods(
         period_support_bins=cpro_period_support_bins,
         window_support_records=cpro_window_support_records,
         min_window_occupancy=cpro_min_window_occupancy,
+        shape_power_softness=cpro_shape_power_softness,
+        shape_contrast_softness=cpro_shape_contrast_softness,
+        shape_occupancy_softness=cpro_shape_occupancy_softness,
+        shape_top_k=cpro_shape_top_k,
     )
     params.validate()
     cap = resolve_channel_candidate_cap(
@@ -411,14 +404,12 @@ def detect_block_periods(
         )
         stage_start = perf_counter() if timing is not None else 0.0
         pelt_windows, _activity_z, segment_count = pelt_windows_from_activity(
-            result.activity,
-            result.window_occupancy,
+            result.shape_activity,
             penalty=pelt_penalty,
             min_size=pelt_min_size_records,
             jump=pelt_jump_records,
             min_duration=window_min_duration_records,
             min_mean=window_min_activity_mean,
-            min_raw_mean=window_min_activity_raw_mean,
             merge_gap=window_merge_gap_records,
         )
         _timing_add(timing, "pelt_seconds", perf_counter() - stage_start if timing is not None else 0.0)
@@ -432,7 +423,7 @@ def detect_block_periods(
             )
 
         rows, channel_windows = build_channel_candidates(
-            activity=result.activity,
+            shape_activity=result.shape_activity,
             windows=pelt_windows,
             noise_std=noise_std,
             calibrated_threshold=result.threshold,

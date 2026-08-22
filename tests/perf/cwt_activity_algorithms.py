@@ -1317,8 +1317,8 @@ def compute_cwt_activity(
             params=params,
         )
         return CWTActivityResult(
-            activity=np.asarray(result.activity, dtype=np.float32),
-            score_map=np.asarray(result.score_map, dtype=np.float32),
+            activity=np.asarray(result.shape_activity, dtype=np.float32),
+            score_map=np.asarray(result.shape_map, dtype=np.float32),
         )
     if method == "raw_max_power_ratio":
         score = _finite_power(power)

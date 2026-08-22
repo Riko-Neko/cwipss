@@ -27,6 +27,10 @@ class CPROParameters:
     period_support_bins: int = 3
     window_support_records: int = 769
     min_window_occupancy: float = 0.40
+    shape_power_softness: float = 0.50
+    shape_contrast_softness: float = 0.25
+    shape_occupancy_softness: float = 0.10
+    shape_top_k: int = 3
 
     def validate(self) -> None:
         if self.threshold_snr <= 0.0:
@@ -49,17 +53,21 @@ class CPROParameters:
             raise ValueError("cpro_window_support_records must be positive")
         if not 0.0 <= self.min_window_occupancy <= 1.0:
             raise ValueError("cpro_min_window_occupancy must be in [0, 1]")
+        if self.shape_power_softness <= 0.0:
+            raise ValueError("cpro_shape_power_softness must be positive")
+        if self.shape_contrast_softness <= 0.0:
+            raise ValueError("cpro_shape_contrast_softness must be positive")
+        if self.shape_occupancy_softness <= 0.0:
+            raise ValueError("cpro_shape_occupancy_softness must be positive")
+        if self.shape_top_k < 1:
+            raise ValueError("cpro_shape_top_k must be positive")
 
 
 @dataclass(frozen=True)
 class CPROActivityResult:
-    activity: np.ndarray
-    score_map: np.ndarray
+    shape_activity: np.ndarray
+    shape_map: np.ndarray
     occupancy_map: np.ndarray
-    ridge_mask: np.ndarray
-    ridge_time_mask: np.ndarray
-    window_occupancy: np.ndarray
-    active_mask: np.ndarray
     threshold: float
 
 
@@ -148,17 +156,29 @@ def _edge_corrected_time_mean(values: np.ndarray, width: int) -> np.ndarray:
     return (summed / np.maximum(counts[None, :], 1.0)).astype(np.float32, copy=False)
 
 
-def _contiguous_period_support(mask: np.ndarray, bins: int) -> np.ndarray:
-    width = max(1, min(int(bins), int(mask.shape[0])))
+def _period_mean(values: np.ndarray, bins: int) -> np.ndarray:
+    width = max(1, min(int(bins), int(values.shape[0])))
     if width <= 1:
-        return mask.astype(bool, copy=False)
-    count = ndimage.uniform_filter1d(
-        mask.astype(np.float32),
+        return values.astype(np.float32, copy=False)
+    return ndimage.uniform_filter1d(
+        values,
         size=width,
         axis=0,
         mode="constant",
-    )
-    return count >= (1.0 - 0.5 / float(width))
+        cval=0.0,
+    ).astype(np.float32, copy=False)
+
+
+def _sigmoid(values: np.ndarray) -> np.ndarray:
+    clipped = np.clip(values, -40.0, 40.0)
+    return (1.0 / (1.0 + np.exp(-clipped))).astype(np.float32, copy=False)
+
+
+def _top_k_period_mean(values: np.ndarray, top_k: int) -> np.ndarray:
+    count = max(1, min(int(top_k), int(values.shape[0])))
+    split = int(values.shape[0]) - count
+    top = np.partition(values, split, axis=0)[split:, :]
+    return np.mean(top, axis=0, dtype=np.float32).astype(np.float32, copy=False)
 
 
 def _period_ridge_contrast(
@@ -196,7 +216,7 @@ def cpro_activity(
     noise_gain: np.ndarray,
     params: CPROParameters | None = None,
 ) -> CPROActivityResult:
-    """Stage 1 only: compress one absolute CWT map into time activity."""
+    """Compress one CWT2D map into the continuous time-proposal axis."""
     params = params or CPROParameters()
     params.validate()
     values = np.asarray(power, dtype=np.float32)
@@ -220,35 +240,45 @@ def cpro_activity(
     if params.min_period_contrast > 0.0:
         exceedance &= period_contrast >= float(params.min_period_contrast)
     occupancy = _edge_corrected_time_mean(exceedance.astype(np.float32), params.support_records)
-    persistent = occupancy >= float(params.min_occupancy)
-    persistent = _contiguous_period_support(persistent, params.period_support_bins)
 
-    occupied_power = _edge_corrected_time_mean(calibrated * exceedance, params.support_records)
-    bright_mean = occupied_power / np.maximum(
-        occupancy,
-        1.0 / float(max(1, params.support_records)),
+    power_log_ratio = np.log(np.maximum(calibrated, MIN_POSITIVE) / threshold)
+    shape_power = threshold * float(params.shape_power_softness) * np.logaddexp(
+        0.0,
+        power_log_ratio / float(params.shape_power_softness),
     )
-    ridge_time_mask = np.any(persistent, axis=0)
-    window_occupancy_map = persistent.astype(np.float32)
-    if params.window_support_records > 1 and params.min_window_occupancy > 0.0:
-        window_occupancy_map = _edge_corrected_time_mean(
-            persistent.astype(np.float32),
-            params.window_support_records,
+    if params.min_period_contrast > 0.0:
+        contrast_log_ratio = np.log(
+            np.maximum(period_contrast, MIN_POSITIVE) / float(params.min_period_contrast)
         )
-        window_ridge_mask = window_occupancy_map >= float(params.min_window_occupancy)
+        contrast_weight = _sigmoid(
+            contrast_log_ratio / float(params.shape_contrast_softness)
+        )
     else:
-        window_ridge_mask = persistent
-    score_map = np.where(window_ridge_mask, bright_mean, 0.0).astype(np.float32, copy=False)
-    activity = np.max(score_map, axis=0).astype(np.float32, copy=False)
-    window_occupancy = np.max(window_occupancy_map, axis=0).astype(np.float32, copy=False)
-    active_mask = np.any(window_ridge_mask, axis=0)
+        contrast_weight = np.ones_like(shape_power, dtype=np.float32)
+    shape_map = _edge_corrected_time_mean(
+        shape_power * contrast_weight,
+        params.support_records,
+    )
+    shape_map = _period_mean(shape_map, params.period_support_bins)
+    occupancy_weight = _sigmoid(
+        (occupancy - float(params.min_occupancy))
+        / float(params.shape_occupancy_softness)
+    )
+    occupancy_weight = _period_mean(occupancy_weight, params.period_support_bins)
+    window_support = _edge_corrected_time_mean(
+        occupancy_weight,
+        params.window_support_records,
+    )
+    window_weight = _sigmoid(
+        (window_support - float(params.min_window_occupancy))
+        / float(params.shape_occupancy_softness)
+    )
+    shape_map *= window_weight
+    shape_map = shape_map.astype(np.float32, copy=False)
+    shape_activity = _top_k_period_mean(shape_map, params.shape_top_k)
     return CPROActivityResult(
-        activity=activity,
-        score_map=score_map,
+        shape_activity=shape_activity,
+        shape_map=shape_map,
         occupancy_map=occupancy.astype(np.float32, copy=False),
-        ridge_mask=persistent,
-        ridge_time_mask=ridge_time_mask,
-        window_occupancy=window_occupancy,
-        active_mask=active_mask,
         threshold=threshold,
     )

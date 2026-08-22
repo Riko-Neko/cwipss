@@ -29,9 +29,9 @@ time x channel data
   -> absolute noise and wavelet-gain calibration
   -> period-ridge contrast and short occupancy
   -> long-window occupancy consensus
-  -> CPRO 1D activity per channel
-  -> native C++ PELT mean-shift segments
-  -> segment activity/duration gates and merge
+  -> one continuous CPRO shape axis per channel
+  -> native C++ PELT mean-shift segments on that axis
+  -> standardized activity/duration gates and merge
   -> accepted PELT time windows
   -> CPRF on unmasked, independently normalized absolute CWT
   -> one accepted period-family candidate per accepted CPRF window
@@ -60,12 +60,16 @@ See [cpro.md](cpro.md) for equations and the CUDA transfer boundary. Defaults:
 - short occupancy `0.65` over `65` records and `3` contiguous period bins;
 - long occupancy `0.40` over `769` records; CPRO activity does not fill gaps,
   delete short runs, or define windows;
+- CPRO shape softness `0.50/0.25/0.10` for calibrated power, period contrast,
+  and occupancy, with Top-3 period pooling; this continuous axis proposes PELT
+  segments while CPRF owns absolute ridge-strength acceptance;
 - native PELT uses penalty `16`, minimum segment size `384`, endpoint stride
-  `1`, and one C++ worker by default;
-- accepted PELT windows require duration `384`, standardized/raw activity means
-  `0.05/25`, and merge across gaps up to `256` records;
-- CPRF uses `min_band_concentration=0.55`, `min_local_contrast=3.60`, and
-  `min_integrated_strength=0.0`; it evaluates up to eight local peak hypotheses
+  `8`, and eight C++ workers in the main configuration;
+- accepted PELT windows require duration `384`, standardized activity mean
+  `0.05`, and merge across gaps up to `256` records;
+- CPRF uses `min_band_persistence=0.40`, `min_band_concentration=0.50`,
+  `min_local_contrast=1.20`, and `min_integrated_strength=0.0`; it evaluates up
+  to eight local peak hypotheses
   but emits only the highest-scoring accepted period family;
 - retained candidates capped per channel: `max_candidates_per_channel=auto`
   uses `max_candidates_per_record=3/4096`, while an integer value is a hard
@@ -127,8 +131,8 @@ and commands.
 `--cwt-backend cuda` enables the optional CuPy FFT backend for CWT power
 generation. It currently supports `--cwt-method fft`. In the main scan and
 injection benchmark paths, CUDA keeps the CWT power and array-heavy structure /
-activity, and window-specific CPRF computation on the GPU. Only the two 1D
-CPRO activity/occupancy axes reach CPU for native PELT; returned window indices
+activity, and window-specific CPRF computation on the GPU. Only the 1D CPRO
+shape axis reaches CPU for native PELT; returned window indices
 resume CPRF on retained 2D CWT, and only final candidate scalars reach CPU.
 The default pending depth is two blocks so native PELT overlaps the next GPU block.
 `--cwt-backend auto` uses CUDA only when CuPy and the selected
@@ -165,7 +169,7 @@ Each run writes:
 - `summary.json`
 - optional `visualization/index.md`
 
-Candidate rows use schema v4 stage-specific evidence: `cpro_*`, `pelt_*`,
+Candidate rows use schema v6 stage-specific evidence: `shape_*`, `pelt_*`,
 `ridge_*`, `band_conc`, `band_persist`, `local_contrast`, and `score`.
 Coordinates use `t0_rec`, `t1_rec`, `freq_mhz`, and `period_rec`.
 

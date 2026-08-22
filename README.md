@@ -90,14 +90,18 @@ Default candidate generation is intentionally conservative:
 - `cpro_support_records=65`, `cpro_min_occupancy=0.65`, and
   `cpro_period_support_bins=3`: require persistent local ridge occupancy.
 - `cpro_window_support_records=769` and `cpro_min_window_occupancy=0.40`:
-  require long-consensus activity before PELT. CPRO does not fill gaps, delete
-  short runs, or define time windows.
-- `pelt_penalty=16`, `pelt_min_size_records=384`, and `pelt_jump_records=1`:
+  define the continuous shape axis's long-consensus reference.
+- `cpro_shape_power_softness=0.50`, `cpro_shape_contrast_softness=0.25`,
+  `cpro_shape_occupancy_softness=0.10`, and `cpro_shape_top_k=3`: produce the
+  continuous CPRO shape axis used only for PELT proposals. CPRO does not fill
+  gaps, delete short runs, or define time windows.
+- `pelt_penalty=16`, `pelt_min_size_records=384`, and `pelt_jump_records=8`:
   run the required native mean-shift segmentation on that 1D activity.
-- `window_min_duration_records=384`, standardized/raw activity gates
-  `0.05/25`, and merge gap `256`: select and merge PELT segments.
-- `cprf_min_band_concentration=0.55`, `cprf_min_local_contrast=3.60`, and
-  `cprf_min_integrated_strength=0`: apply the selected low-false-positive CPRF
+- `window_min_duration_records=384`, standardized activity gate `0.05`, and
+  merge gap `256`: select and merge PELT segments.
+- `cprf_min_band_persistence=0.40`, `cprf_min_band_concentration=0.50`,
+  `cprf_min_local_contrast=1.20`, and `cprf_min_integrated_strength=0`: apply
+  the selected low-false-positive CPRF
   working point to unmasked absolute CWT inside each PELT window.
 - `max_candidates_per_channel=auto` and `max_candidates_per_record=3/4096`:
   derive a per-channel cap from the current record length. Set
@@ -121,8 +125,8 @@ and detection substages. It is disabled by default.
 The CWT backend defaults to `cpu`, preserving the original PyWavelets path.
 Systems with CuPy/CUDA can opt in with `--cwt-backend cuda --cuda-device 0`.
 `--cwt-backend auto` uses CUDA when available and otherwise falls back to CPU.
-CUDA scans keep CWT power, CPRO maps, and CPRF on the GPU. Only CPRO's two 1D
-activity/occupancy products cross to CPU for native C++ PELT; returned window
+CUDA scans keep CWT power, CPRO maps, and CPRF on the GPU. Only CPRO's 1D shape
+axis crosses to CPU for native C++ PELT; returned window
 indices resume CPRF on the retained 2D CWT, and only final scalars return.
 
 Each run writes:

@@ -106,7 +106,7 @@ def _candidate_table(rows: list[dict[str, str]], limit: int) -> str:
                 _fmt(row.get("band_conc")),
                 _fmt(row.get("band_persist")),
                 _fmt(row.get("local_contrast")),
-                _fmt(row.get("cpro_mean")),
+                _fmt(row.get("shape_mean")),
                 _fmt(row.get("pelt_z_mean")),
                 row.get("candidate_status", "-"),
                 row.get("veto_flags", "") or "-",
@@ -114,7 +114,7 @@ def _candidate_table(rows: list[dict[str, str]], limit: int) -> str:
             ]
         )
     return _markdown_table(
-        ["id", "score", "period_rec", "freq_mhz", "dur_rec", "ridge_peak", "ridge_int", "band_conc", "band_persist", "local_contrast", "cpro_mean", "pelt_z_mean", "status", "veto", "source"],
+        ["id", "score", "period_rec", "freq_mhz", "dur_rec", "ridge_peak", "ridge_int", "band_conc", "band_persist", "local_contrast", "shape_mean", "pelt_z_mean", "status", "veto", "source"],
         table_rows,
     )
 

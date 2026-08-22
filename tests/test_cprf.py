@@ -20,8 +20,9 @@ def _ridge_map() -> tuple[np.ndarray, np.ndarray]:
 
 def test_cprf_defaults_match_selected_low_false_positive_working_point() -> None:
     params = CPRFParameters()
-    assert params.min_band_concentration == 0.55
-    assert params.min_local_contrast == 3.60
+    assert params.min_band_persistence == 0.40
+    assert params.min_band_concentration == 0.50
+    assert params.min_local_contrast == 1.20
     assert params.min_integrated_strength == 0.0
 
 
@@ -33,15 +34,16 @@ def test_cprf_accepts_a_persistent_concentrated_period_band() -> None:
         normalization_threshold=32.0,
     )
     assert result.accepted
-    assert result.band_concentration >= 0.55
-    assert result.local_contrast >= 3.60
+    assert result.band_persistence >= CPRFParameters().min_band_persistence
+    assert result.band_concentration >= CPRFParameters().min_band_concentration
+    assert result.local_contrast >= CPRFParameters().min_local_contrast
     assert 10 <= result.peak_index <= 14
 
 
-def test_cprf_rejects_low_contrast_period_texture() -> None:
+def test_cprf_rejects_short_lived_period_texture() -> None:
     periods = np.geomspace(10.0, 200.0, 24)
-    normalized = np.full((periods.size, 256), 2.0, dtype=np.float32)
-    normalized[10:15, :] = 4.0
+    normalized = np.full((periods.size, 256), 0.25, dtype=np.float32)
+    normalized[10:15, 100:110] = 12.0
     result = evaluate_cprf(
         normalized,
         periods,
@@ -71,13 +73,13 @@ def test_cprf_absolute_normalization_is_noise_scale_invariant() -> None:
 
 def test_candidate_builder_emits_only_cprf_accepted_windows() -> None:
     accepted_map, periods = _ridge_map()
-    rejected_map = np.full_like(accepted_map, 2.0)
-    rejected_map[10:15, :] = 4.0
+    rejected_map = np.full_like(accepted_map, 0.25)
+    rejected_map[10:15, 100:110] = 12.0
     accepted = evaluate_cprf(accepted_map, periods, normalization_threshold=32.0)
     rejected = evaluate_cprf(rejected_map, periods, normalization_threshold=32.0)
 
     candidates, windows = build_channel_candidates(
-        activity=np.ones(64, dtype=np.float32),
+        shape_activity=np.ones(64, dtype=np.float32),
         windows=(
             {"record_start": 0, "record_stop": 32},
             {"record_start": 32, "record_stop": 64},
@@ -96,7 +98,7 @@ def test_candidate_builder_emits_only_cprf_accepted_windows() -> None:
     assert candidates[0]["band_conc"] == accepted.band_concentration
     assert candidates[0]["score"] == accepted.total_score
     assert {
-        "cpro_mean",
+        "shape_mean",
         "pelt_z_mean",
         "ridge_peak",
         "ridge_int",

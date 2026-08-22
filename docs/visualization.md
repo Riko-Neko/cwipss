@@ -34,8 +34,8 @@ python scripts/run_cwt_candidates.py \
 - Stage 01, `stage_01_input_matrix.png`: raw `time x channel` matrix.
 - Stage 02, `stage_02_<block>_channel_<channel>_scalogram.png`:
   representative-channel full `period x time` CWT scalograms.
-- Stage 03: calibrated CPRO persistent-ridge score map.
-- Stage 04: absolute CPRO activity with accepted PELT time windows.
+- Stage 03: continuous CPRO ridge-shape proposal map.
+- Stage 04: CPRO shape activity with accepted PELT time windows.
 - Stage 05: PELT-windowed CPRO period profiles used to choose candidate periods.
 - Stage 06: aggregated `period x channel` overview response map for review
   only; detection does not use this projection.
@@ -61,9 +61,9 @@ python scripts/run_cwt_candidates.py \
 - `--pelt-min-size-records`: minimum native PELT segment size. Default `384`.
 - `--window-min-duration-records`: minimum accepted PELT window. Default `384`.
 - `--cprf-min-band-concentration`: minimum profile mass in the selected ridge
-  band. Default `0.55`.
+  band. Default `0.50`.
 - `--cprf-min-local-contrast`: minimum ridge-to-local-background contrast.
-  Default `3.60`.
+  Default `1.20`.
 - `--cprf-min-integrated-strength`: minimum integrated ridge excess. Default `0`.
 - `--viz-max-blocks`: maximum blocks to visualize; `0` renders all.
 - `--viz-max-channels`: representative channels per block for period-time CWT

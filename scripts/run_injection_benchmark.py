@@ -70,16 +70,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cpro-min-window-occupancy", type=float, default=0.40, help="Minimum long-window ridge occupancy.")
     parser.add_argument("--pelt-penalty", type=float, default=16.0, help="Native PELT mean-shift penalty.")
     parser.add_argument("--pelt-min-size-records", type=int, default=384, help="Native PELT minimum segment size.")
-    parser.add_argument("--pelt-jump-records", type=int, default=1, help="Native PELT endpoint stride.")
+    parser.add_argument("--pelt-jump-records", type=int, default=8, help="Native PELT endpoint stride.")
     parser.add_argument("--pelt-threads", type=int, default=1, help="Native PELT worker threads.")
     parser.add_argument("--window-min-duration-records", type=int, default=384, help="Minimum accepted PELT window duration.")
     parser.add_argument("--window-min-activity-mean", type=float, default=0.05, help="Minimum standardized PELT segment mean.")
-    parser.add_argument("--window-min-activity-raw-mean", type=float, default=25.0, help="Minimum raw CPRO activity mean.")
     parser.add_argument("--window-merge-gap-records", type=int, default=256, help="Maximum gap merged between PELT windows.")
     parser.add_argument("--cprf-threshold-snr", type=float, default=32.0, help="CPRF absolute CWT normalization floor.")
     parser.add_argument("--cprf-texture-quantile", type=float, default=0.9375, help="CPRF absolute CWT texture quantile.")
-    parser.add_argument("--cprf-min-band-concentration", type=float, default=0.55, help="Minimum CPRF main-band concentration.")
-    parser.add_argument("--cprf-min-local-contrast", type=float, default=3.60, help="Minimum CPRF local sideband contrast.")
+    parser.add_argument("--cprf-min-band-concentration", type=float, default=0.50, help="Minimum CPRF main-band concentration.")
+    parser.add_argument("--cprf-min-local-contrast", type=float, default=1.20, help="Minimum CPRF local sideband contrast.")
     parser.add_argument("--cprf-min-integrated-strength", type=float, default=0.0, help="Minimum CPRF integrated strength.")
     parser.add_argument("--candidate-period-min-records", type=float, default=10.0, help="Reject candidates below this period in records.")
     parser.add_argument("--candidate-period-max-records", type=float, default=200.0, help="Reject candidates above this period in records.")
@@ -180,7 +179,6 @@ def main() -> None:
         pelt_threads=args.pelt_threads,
         window_min_duration_records=args.window_min_duration_records,
         window_min_activity_mean=args.window_min_activity_mean,
-        window_min_activity_raw_mean=args.window_min_activity_raw_mean,
         window_merge_gap_records=args.window_merge_gap_records,
         cprf_threshold_snr=args.cprf_threshold_snr,
         cprf_texture_quantile=args.cprf_texture_quantile,

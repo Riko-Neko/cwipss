@@ -40,14 +40,17 @@ class CWTSearchConfig:
     cpro_period_support_bins: int = 3
     cpro_window_support_records: int = 769
     cpro_min_window_occupancy: float = 0.40
+    cpro_shape_power_softness: float = 0.50
+    cpro_shape_contrast_softness: float = 0.25
+    cpro_shape_occupancy_softness: float = 0.10
+    cpro_shape_top_k: int = 3
     pelt_penalty: float = 16.0
     pelt_min_size_records: int = 384
-    pelt_jump_records: int = 1
+    pelt_jump_records: int = 8
     pelt_threads: int = 1
     cuda_max_pending_blocks: int = 2
     window_min_duration_records: int = 384
     window_min_activity_mean: float = 0.05
-    window_min_activity_raw_mean: float = 25.0
     window_merge_gap_records: int = 256
     cprf_threshold_snr: float = 32.0
     cprf_texture_quantile: float = 0.9375
@@ -56,9 +59,9 @@ class CWTSearchConfig:
     cprf_min_width_bins: int = 3
     cprf_min_peak_strength: float = 1.25
     cprf_min_integrated_strength: float = 0.0
-    cprf_min_band_persistence: float = 0.35
-    cprf_min_band_concentration: float = 0.55
-    cprf_min_local_contrast: float = 3.60
+    cprf_min_band_persistence: float = 0.40
+    cprf_min_band_concentration: float = 0.50
+    cprf_min_local_contrast: float = 1.20
     cprf_harmonic_weight: float = 0.20
     cprf_harmonic_min_relative: float = 0.12
     cprf_harmonic_window_scale: float = 1.25
@@ -137,6 +140,10 @@ _SECTION_KEY_MAP: dict[str, dict[str, str]] = {
         "cpro_period_support_bins": "cpro_period_support_bins",
         "cpro_window_support_records": "cpro_window_support_records",
         "cpro_min_window_occupancy": "cpro_min_window_occupancy",
+        "cpro_shape_power_softness": "cpro_shape_power_softness",
+        "cpro_shape_contrast_softness": "cpro_shape_contrast_softness",
+        "cpro_shape_occupancy_softness": "cpro_shape_occupancy_softness",
+        "cpro_shape_top_k": "cpro_shape_top_k",
         "pelt_penalty": "pelt_penalty",
         "pelt_min_size_records": "pelt_min_size_records",
         "pelt_jump_records": "pelt_jump_records",
@@ -144,7 +151,6 @@ _SECTION_KEY_MAP: dict[str, dict[str, str]] = {
         "cuda_max_pending_blocks": "cuda_max_pending_blocks",
         "window_min_duration_records": "window_min_duration_records",
         "window_min_activity_mean": "window_min_activity_mean",
-        "window_min_activity_raw_mean": "window_min_activity_raw_mean",
         "window_merge_gap_records": "window_merge_gap_records",
         "cprf_threshold_snr": "cprf_threshold_snr",
         "cprf_texture_quantile": "cprf_texture_quantile",
@@ -287,6 +293,10 @@ def validate_cwt_config(config: CWTSearchConfig) -> None:
         period_support_bins=config.cpro_period_support_bins,
         window_support_records=config.cpro_window_support_records,
         min_window_occupancy=config.cpro_min_window_occupancy,
+        shape_power_softness=config.cpro_shape_power_softness,
+        shape_contrast_softness=config.cpro_shape_contrast_softness,
+        shape_occupancy_softness=config.cpro_shape_occupancy_softness,
+        shape_top_k=config.cpro_shape_top_k,
     ).validate()
     cprf_parameters_from_config(config).validate()
     if config.pelt_penalty < 0.0:
@@ -299,8 +309,8 @@ def validate_cwt_config(config: CWTSearchConfig) -> None:
         raise ValueError("cuda_max_pending_blocks must be positive")
     if config.window_min_duration_records < 1:
         raise ValueError("window_min_duration_records must be positive")
-    if config.window_min_activity_mean < 0.0 or config.window_min_activity_raw_mean < 0.0:
-        raise ValueError("PELT window activity thresholds must be non-negative")
+    if config.window_min_activity_mean < 0.0:
+        raise ValueError("PELT window activity threshold must be non-negative")
     if config.window_merge_gap_records < 0:
         raise ValueError("window_merge_gap_records must be non-negative")
 
@@ -359,6 +369,10 @@ def cwt_config_to_nested_dict(config: CWTSearchConfig) -> dict[str, Any]:
             "cpro_period_support_bins": config.cpro_period_support_bins,
             "cpro_window_support_records": config.cpro_window_support_records,
             "cpro_min_window_occupancy": config.cpro_min_window_occupancy,
+            "cpro_shape_power_softness": config.cpro_shape_power_softness,
+            "cpro_shape_contrast_softness": config.cpro_shape_contrast_softness,
+            "cpro_shape_occupancy_softness": config.cpro_shape_occupancy_softness,
+            "cpro_shape_top_k": config.cpro_shape_top_k,
             "pelt_penalty": config.pelt_penalty,
             "pelt_min_size_records": config.pelt_min_size_records,
             "pelt_jump_records": config.pelt_jump_records,
@@ -366,7 +380,6 @@ def cwt_config_to_nested_dict(config: CWTSearchConfig) -> dict[str, Any]:
             "cuda_max_pending_blocks": config.cuda_max_pending_blocks,
             "window_min_duration_records": config.window_min_duration_records,
             "window_min_activity_mean": config.window_min_activity_mean,
-            "window_min_activity_raw_mean": config.window_min_activity_raw_mean,
             "window_merge_gap_records": config.window_merge_gap_records,
             "cprf_threshold_snr": config.cprf_threshold_snr,
             "cprf_texture_quantile": config.cprf_texture_quantile,

@@ -67,6 +67,10 @@ class SearchVisualizationConfig:
     cpro_period_support_bins: int = 3
     cpro_window_support_records: int = 769
     cpro_min_window_occupancy: float = 0.40
+    cpro_shape_power_softness: float = 0.50
+    cpro_shape_contrast_softness: float = 0.25
+    cpro_shape_occupancy_softness: float = 0.10
+    cpro_shape_top_k: int = 3
     cprf_threshold_snr: float = 32.0
     cprf_texture_quantile: float = 0.9375
     cprf_smooth_bins: int = 3
@@ -74,9 +78,9 @@ class SearchVisualizationConfig:
     cprf_min_width_bins: int = 3
     cprf_min_peak_strength: float = 1.25
     cprf_min_integrated_strength: float = 0.0
-    cprf_min_band_persistence: float = 0.35
-    cprf_min_band_concentration: float = 0.55
-    cprf_min_local_contrast: float = 3.60
+    cprf_min_band_persistence: float = 0.40
+    cprf_min_band_concentration: float = 0.50
+    cprf_min_local_contrast: float = 1.20
     cprf_harmonic_weight: float = 0.20
     cprf_harmonic_min_relative: float = 0.12
     cprf_harmonic_window_scale: float = 1.25
@@ -147,6 +151,10 @@ def _cpro_products(
         period_support_bins=cfg.cpro_period_support_bins,
         window_support_records=cfg.cpro_window_support_records,
         min_window_occupancy=cfg.cpro_min_window_occupancy,
+        shape_power_softness=cfg.cpro_shape_power_softness,
+        shape_contrast_softness=cfg.cpro_shape_contrast_softness,
+        shape_occupancy_softness=cfg.cpro_shape_occupancy_softness,
+        shape_top_k=cfg.cpro_shape_top_k,
     )
     noise_std = difference_noise_std(raw_series)
     result = cpro_activity(
@@ -190,7 +198,7 @@ def _activity_plot(path, activity, offset, windows, truths, title, dpi):
                     ax.axvspan(start, stop, color=color, alpha=alpha)
             if spans:
                 ax.plot([], [], color=color, linewidth=4, alpha=0.6, label=label)
-        ax.set(title=title, xlabel="Record", ylabel="Absolute CWT ridge activity")
+        ax.set(title=title, xlabel="Record", ylabel="CPRO continuous shape evidence")
 
     _simple_plot(path, dpi, draw)
 
@@ -366,22 +374,22 @@ def visualize_cwt_stages(
             path = output / f"stage_03_{prefix}_cpro_score_map.png"
             cwt_view(
                 path,
-                result.score_map,
+                result.shape_map,
                 valid_periods,
                 offset=record_offset,
                 title=f"Stage 03 CPRO score map: {block_id}, channel {channel}",
                 candidates=rows,
                 truths=channel_truths,
                 cmap="viridis",
-                colorbar="Absolute persistent-ridge power",
+                colorbar="Continuous ridge-shape response",
                 log_power=True,
                 dpi=cfg.dpi,
             )
-            _add(index, f"Stage 03 CPRO Score Map {block_id} Ch {channel}", path, "Calibrated persistent-ridge score.")
+            _add(index, f"Stage 03 CPRO Shape Map {block_id} Ch {channel}", path, "Continuous CPRO proposal response.")
             path = output / f"stage_04_{prefix}_activity_windows.png"
             _activity_plot(
                 path,
-                result.activity,
+                result.shape_activity,
                 record_offset,
                 channel_windows,
                 channel_truths,

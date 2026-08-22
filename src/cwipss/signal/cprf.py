@@ -24,9 +24,9 @@ class CPRFParameters:
     min_width_bins: int = 3
     min_peak_strength: float = 1.25
     min_integrated_strength: float = 0.0
-    min_band_persistence: float = 0.35
-    min_band_concentration: float = 0.55
-    min_local_contrast: float = 3.60
+    min_band_persistence: float = 0.40
+    min_band_concentration: float = 0.50
+    min_local_contrast: float = 1.20
     harmonic_weight: float = 0.20
     harmonic_min_relative: float = 0.12
     harmonic_window_scale: float = 1.25

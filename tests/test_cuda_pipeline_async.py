@@ -64,9 +64,8 @@ def test_cpro_core_has_no_host_array_transfer() -> None:
 
 def test_cuda_orchestration_keeps_cwt_resident_through_cprf() -> None:
     source = inspect.getsource(detection_cuda.prepare_block_period_chunks_cuda_power)
-    assert "cp.asnumpy(result.activity)" in source
-    assert "cp.asnumpy(result.window_occupancy)" in source
-    assert "cp.asnumpy(result.score_map)" not in source
+    assert "cp.asnumpy(result.shape_activity)" in source
+    assert "cp.asnumpy(result.shape_map)" not in source
     assert "cp.asnumpy(result.occupancy_map)" not in source
     assert "cp.asnumpy(power" not in source
     assert "power_map=valid_power[:, :, target]" in source
@@ -157,13 +156,11 @@ def test_shared_window_pipeline_short_circuits_below_mean_gate(monkeypatch: pyte
     monkeypatch.setattr(detection, "pelt_mean_shift", fail_pelt)
     windows, activity_z, segment_count = detection.pelt_windows_from_activity(
         np.zeros(2048, dtype=np.float32),
-        np.zeros(2048, dtype=np.float32),
         penalty=16.0,
         min_size=384,
         jump=1,
         min_duration=96,
         min_mean=0.05,
-        min_raw_mean=25.0,
         merge_gap=256,
     )
 
@@ -197,8 +194,14 @@ def test_cuda_pelt_short_circuit_preserves_batch_order_and_timing(monkeypatch: p
         "pelt_threads": 8,
     }
     prepared = [
-        SimpleNamespace(activity_z=np.array([0.0, 0.5, 0.0]), **common),
-        SimpleNamespace(activity_z=np.array([0.0, 2.0, 0.0]), **common),
+        SimpleNamespace(
+            activity_z=np.array([0.0, 0.5, 0.0]),
+            **common,
+        ),
+        SimpleNamespace(
+            activity_z=np.array([0.0, 2.0, 0.0]),
+            **common,
+        ),
     ]
     timing: dict[str, float] = {}
 

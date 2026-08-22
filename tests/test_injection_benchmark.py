@@ -307,5 +307,5 @@ def test_run_injection_benchmark_writes_expected_outputs(tmp_path: Path) -> None
     assert "integrated_score" not in candidate_fields
     assert _read_csv(run_dir / "injection_results.csv")[0]["injection_id"] == "inj_0001"
     summary = json.loads((run_dir / "injection_summary.json").read_text())
-    assert summary["schema_version"] == 4
+    assert summary["schema_version"] == 6
     assert summary["injection_count"] == 1

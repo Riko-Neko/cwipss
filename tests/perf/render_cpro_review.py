@@ -131,7 +131,7 @@ def _render(
     eps = max(float(np.median(positive)) * 1e-8, np.finfo(np.float32).tiny) if positive.size else 1e-30
     log_power = np.log10(np.maximum(power, eps))
     log_calibrated = np.log10(np.maximum(calibrated, np.finfo(np.float32).tiny))
-    accepted = np.where(result.score_map > 0.0, log_power, np.nan)
+    accepted = np.where(result.absolute_score_map > 0.0, log_power, np.nan)
 
     fig = plt.figure(figsize=(16, 17), constrained_layout=True)
     grid = fig.add_gridspec(6, 1, height_ratios=(1.0, 1.0, 1.0, 1.0, 1.0, 0.78))
@@ -201,7 +201,7 @@ def _render(
         cmap="inferno",
     )
 
-    activity = np.asarray(result.activity, dtype=np.float64)
+    activity = np.asarray(result.absolute_activity, dtype=np.float64)
     activity_shown, activity_indices = _downsample(activity)
     ax_activity.plot(activity_indices, activity_shown, color="#ef476f", linewidth=1.0, label="CPRO activity")
     for index, window in enumerate(result.windows):

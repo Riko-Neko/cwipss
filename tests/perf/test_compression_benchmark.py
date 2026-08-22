@@ -694,7 +694,7 @@ def test_cwt_activity_real_ce4_rank() -> None:
     expected_count = result["available_algorithm_count"] if "all" in selected_algorithms else len(selected_algorithms)
     assert result["algorithm_count"] == expected_count
     assert result["available_algorithm_count"] >= 10
-    assert result["paradigm"]["constraint"].startswith("no shared post-CWT")
+    assert result["paradigm"]["constraint"].startswith("strict unary P(period,time)")
     assert "negative_control" in result
     assert (output_dir / "component_cases.csv").exists()
     assert (output_dir / "group_cases.csv").exists()
