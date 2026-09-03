@@ -264,11 +264,7 @@ def test_run_injection_benchmark_writes_expected_outputs(tmp_path: Path) -> None
             cpro_period_center_bins=1,
             cpro_period_context_bins=1,
             cpro_min_period_contrast=0.0,
-            cpro_support_records=5,
-            cpro_min_occupancy=0.4,
             cpro_period_support_bins=1,
-            cpro_window_support_records=9,
-            cpro_min_window_occupancy=0.2,
             cprf_threshold_snr=1.0,
             cprf_texture_quantile=0.0,
             cprf_smooth_bins=1,
@@ -304,8 +300,10 @@ def test_run_injection_benchmark_writes_expected_outputs(tmp_path: Path) -> None
         candidate_fields = csv.DictReader(stream).fieldnames or []
     assert "band_conc" in candidate_fields
     assert "local_contrast" in candidate_fields
+    assert "cont_mean" in candidate_fields
+    assert "ridge_lock" in candidate_fields
     assert "integrated_score" not in candidate_fields
     assert _read_csv(run_dir / "injection_results.csv")[0]["injection_id"] == "inj_0001"
     summary = json.loads((run_dir / "injection_summary.json").read_text())
-    assert summary["schema_version"] == 6
+    assert summary["schema_version"] == 7
     assert summary["injection_count"] == 1

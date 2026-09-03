@@ -10,7 +10,7 @@ FilterBank support is planned for the same adapter interface. CWT detection,
 veto, validation, injection benchmarking, and reporting are defined
 independently of any one input format.
 
-The production chain is Calibrated Persistent Ridge Occupancy (CPRO), native
+The production chain is Calibrated Period-Ridge Observation (CPRO), native
 C++ PELT, then the Concentrated Periodic Ridge Filter (CPRF). Every stage uses
 one physical frequency channel's own absolute `period x time` CWT map; no
 neighboring physical channel contributes to the result.
@@ -37,6 +37,7 @@ narrowband frequency-contrast use case.
     runtime.py             runtime and dependency metadata
   tests/                   synthetic tests
   packages/frcr/           standalone frequency-referenced detector core
+  datasets/cpsr_1993/      CPSR-1993 manual-review dataset documentation
 ```
 
 See `docs/architecture.md` for package boundaries and dependency direction.
@@ -78,6 +79,10 @@ arguments override matching config values.
 The standalone frequency-referenced extension is documented in
 [`packages/frcr/README.md`](packages/frcr/README.md).
 CPRO and the PELT-to-CPRF boundary are documented in [`docs/cpro.md`](docs/cpro.md).
+The 1,993-case manual-review benchmark is documented in
+[`datasets/cpsr_1993/README.md`](datasets/cpsr_1993/README.md). Its 57 MB
+single-channel data archive is distributed as a GitHub Release asset rather
+than committed to the repository.
 
 Default candidate generation is intentionally conservative:
 
@@ -87,22 +92,21 @@ Default candidate generation is intentionally conservative:
   calibrated power above both the fixed and map-texture thresholds.
 - `cpro_min_period_contrast=1.5`, center width `3`, and context width `15`:
   require a narrow period ridge rather than broad CWT texture.
-- `cpro_support_records=65`, `cpro_min_occupancy=0.65`, and
-  `cpro_period_support_bins=3`: require persistent local ridge occupancy.
-- `cpro_window_support_records=769` and `cpro_min_window_occupancy=0.40`:
-  define the continuous shape axis's long-consensus reference.
-- `cpro_shape_power_softness=0.50`, `cpro_shape_contrast_softness=0.25`,
-  `cpro_shape_occupancy_softness=0.10`, and `cpro_shape_top_k=3`: produce the
-  continuous CPRO shape axis used only for PELT proposals. CPRO does not fill
-  gaps, delete short runs, or define time windows.
-- `pelt_penalty=16`, `pelt_min_size_records=384`, and `pelt_jump_records=8`:
+- `cpro_period_support_bins=3`, `cpro_shape_power_softness=1.0`, and
+  `cpro_shape_contrast_softness=0.10`: form an edge-preserving CPRO map and take
+  the strongest period response at each record for PELT boundaries.
+- `pelt_penalty=16`, `pelt_min_size_records=64`, and `pelt_jump_records=8`:
   run the required native mean-shift segmentation on that 1D activity.
-- `window_min_duration_records=384`, standardized activity gate `0.05`, and
-  merge gap `256`: select and merge PELT segments.
-- `cprf_min_band_persistence=0.40`, `cprf_min_band_concentration=0.50`,
-  `cprf_min_local_contrast=1.20`, and `cprf_min_integrated_strength=0`: apply
-  the selected low-false-positive CPRF
-  working point to unmasked absolute CWT inside each PELT window.
+- `cpro_continuity_decay=0.995`, `cpro_continuity_power=2`,
+  `cpro_min_continuity_mean=0.47`, and `cpro_min_ridge_lock=0.94`: retain PELT
+  segments whose energy persists bidirectionally in time and remains locked to
+  one CWT period ridge. No independent `96`/`640`-record duration cutoff exists.
+- standardized PELT activity gate `0.05` and merge gap `0`: select and join
+  adjacent active segments without moving PELT boundaries.
+- `cprf_min_band_persistence=0.20`, `cprf_min_band_concentration=0.30`,
+  `cprf_min_local_contrast=0.65`, and `cprf_min_integrated_strength=0`: apply
+  the current broad-recall CPRF working point to unmasked absolute CWT inside
+  each PELT window.
 - `max_candidates_per_channel=auto` and `max_candidates_per_record=3/4096`:
   derive a per-channel cap from the current record length. Set
   `max_candidates_per_channel` to an integer to use that hard per-channel cap.

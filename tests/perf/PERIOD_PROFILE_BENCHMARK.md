@@ -31,14 +31,14 @@ tau_profile = max(profile_threshold_snr,
 Z(p,t) = C(p,t) / tau_profile
 ```
 
-## Frozen Stage 1
+## Historical Pre-v2 Stage 1
 
 The activity rank screened 366 strict single-channel `O(P*T)` candidates and
 then ran 100 configured weak-signal groups on two independent CE4 files. Every
 positive and negative window metric used native PELT.
 
-The selected activity candidate is `sm_cpro_w769`, equivalent to production
-CPRO with `window_support_records=769`. It uses first-difference MAD noise
+The selected historical activity candidate was `sm_cpro_w769`, equivalent to
+the pre-v2 CPRO with `window_support_records=769`. It uses first-difference MAD noise
 calibration and emits calibrated-power activity. It performs no gap filling,
 short-run deletion, or window generation before PELT.
 
@@ -113,7 +113,7 @@ logic.
 
 The positive corpus contains 216 deterministic, independent weak injections
 per observation, equally split among sinusoidal, medium-duty pulsed, and
-narrow-duty pulsed models. Current CPRO-w769 plus native C++ PELT recovers
+narrow-duty pulsed models. Historical CPRO-w769 plus native C++ PELT recovers
 420/432 windows (97.22%), producing a 4,304:420 or 10.25:1 paired stress set.
 
 | Algorithm | Conditional acceptance | End-to-end acceptance | Historical retention | Accepted 10%-period accuracy |

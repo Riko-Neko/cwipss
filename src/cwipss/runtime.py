@@ -17,7 +17,7 @@ def runtime_info() -> dict:
         "scipy": scipy.__version__,
         "local_filter": {
             "enabled": True,
-            "activity_compressor": "Calibrated Persistent Ridge Occupancy (CPRO)",
+            "activity_compressor": "Calibrated Period-Ridge Observation (CPRO)",
             "window_detector": "native C++ PELT mean-shift segmentation",
             "period_filter": "Concentrated Periodic Ridge Filter (CPRF)",
             "native_pelt_required": True,

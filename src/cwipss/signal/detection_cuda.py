@@ -9,7 +9,12 @@ import numpy as np
 
 from .activity import robust_standardize
 from .cpro import CPROParameters, cpro_period_mask
-from .cpro_cuda import cpro_activity_cuda, difference_noise_std_cuda
+from .cpro_cuda import (
+    cpro_activity_cuda,
+    cpro_continuity_features_cuda,
+    cpro_continuity_map_cuda,
+    difference_noise_std_cuda,
+)
 from .cprf import CPRFParameters
 from .cprf_cuda import cprf_normalization_threshold_cuda, evaluate_cprf_cuda
 from .detection import (
@@ -17,7 +22,9 @@ from .detection import (
     _timing_increment,
     activity_can_reach_window_mean,
     build_channel_candidates,
-    pelt_windows_from_segments,
+    describe_pelt_windows,
+    filter_ridge_continuity_windows,
+    pelt_proposals_from_segments,
     resolve_channel_candidate_cap,
 )
 from .windows import PeltCancellation, Segment, pelt_mean_shift_batch
@@ -34,6 +41,7 @@ class PreparedCudaPeriodChannel:
     noise_std_device: object
     cprf_normalization_threshold: object
     cprf_params: CPRFParameters
+    continuity_map: object
     shape_activity: np.ndarray
     activity_z: np.ndarray
     noise_std: float
@@ -47,9 +55,10 @@ class PreparedCudaPeriodChannel:
     pelt_min_size_records: int
     pelt_jump_records: int
     pelt_threads: int
-    window_min_duration_records: int
     window_min_activity_mean: float
     window_merge_gap_records: int
+    min_continuity_mean: float
+    min_ridge_lock: float
 
 
 def _cupy():
@@ -102,20 +111,17 @@ def prepare_block_period_chunks_cuda_power(
     cpro_period_center_bins: int,
     cpro_period_context_bins: int,
     cpro_min_period_contrast: float,
-    cpro_support_records: int,
-    cpro_min_occupancy: float,
     cpro_period_support_bins: int,
-    cpro_window_support_records: int,
-    cpro_min_window_occupancy: float,
     cpro_shape_power_softness: float,
     cpro_shape_contrast_softness: float,
-    cpro_shape_occupancy_softness: float,
-    cpro_shape_top_k: int,
+    cpro_continuity_decay: float,
+    cpro_continuity_power: float,
+    cpro_min_continuity_mean: float,
+    cpro_min_ridge_lock: float,
     pelt_penalty: float,
     pelt_min_size_records: int,
     pelt_jump_records: int,
     pelt_threads: int,
-    window_min_duration_records: int,
     window_min_activity_mean: float,
     window_merge_gap_records: int,
     cprf_params: CPRFParameters,
@@ -162,15 +168,13 @@ def prepare_block_period_chunks_cuda_power(
             period_center_bins=cpro_period_center_bins,
             period_context_bins=cpro_period_context_bins,
             min_period_contrast=cpro_min_period_contrast,
-            support_records=cpro_support_records,
-            min_occupancy=cpro_min_occupancy,
             period_support_bins=cpro_period_support_bins,
-            window_support_records=cpro_window_support_records,
-            min_window_occupancy=cpro_min_window_occupancy,
             shape_power_softness=cpro_shape_power_softness,
             shape_contrast_softness=cpro_shape_contrast_softness,
-            shape_occupancy_softness=cpro_shape_occupancy_softness,
-            shape_top_k=cpro_shape_top_k,
+            continuity_decay=cpro_continuity_decay,
+            continuity_power=cpro_continuity_power,
+            min_continuity_mean=cpro_min_continuity_mean,
+            min_ridge_lock=cpro_min_ridge_lock,
         )
         params.validate()
         cprf_params.validate()
@@ -204,6 +208,11 @@ def prepare_block_period_chunks_cuda_power(
                 noise_gain=gain_device,
                 params=params,
             )
+            continuity_map = cpro_continuity_map_cuda(
+                result.shape_map,
+                decay=params.continuity_decay,
+                power=params.continuity_power,
+            )
             cprf_threshold = cprf_normalization_threshold_cuda(
                 valid_power[:, :, target],
                 noise_std=noise_std_gpu,
@@ -221,6 +230,7 @@ def prepare_block_period_chunks_cuda_power(
                     noise_std_device=noise_std_gpu,
                     cprf_normalization_threshold=cprf_threshold,
                     cprf_params=cprf_params,
+                    continuity_map=continuity_map,
                     shape_activity=shape_activity,
                     activity_z=robust_standardize(shape_activity),
                     noise_std=float(noise_std_gpu.item()),
@@ -234,9 +244,10 @@ def prepare_block_period_chunks_cuda_power(
                     pelt_min_size_records=int(pelt_min_size_records),
                     pelt_jump_records=int(pelt_jump_records),
                     pelt_threads=int(pelt_threads),
-                    window_min_duration_records=int(window_min_duration_records),
                     window_min_activity_mean=float(window_min_activity_mean),
                     window_merge_gap_records=int(window_merge_gap_records),
+                    min_continuity_mean=float(params.min_continuity_mean),
+                    min_ridge_lock=float(params.min_ridge_lock),
                 )
             )
             _timing_add(timing, "cpro_seconds", perf_counter() - stage_start if timing is not None else 0.0)
@@ -311,14 +322,38 @@ def finalize_prepared_cuda_period_chunks(
     windows: list[dict] = []
     with cp.cuda.Device(prepared[0].cuda_device):
         for channel, segments in zip(prepared, segments_batch, strict=True):
-            channel_windows_raw = pelt_windows_from_segments(
+            proposals = pelt_proposals_from_segments(
                 channel.shape_activity,
                 channel.activity_z,
                 segments,
                 penalty=channel.pelt_penalty,
-                min_duration=channel.window_min_duration_records,
                 min_mean=channel.window_min_activity_mean,
+            )
+            continuity_means, ridge_locks = cpro_continuity_features_cuda(
+                channel.continuity_map,
+                proposals,
+                threshold=channel.calibrated_threshold,
+            )
+            selected = filter_ridge_continuity_windows(
+                proposals,
+                continuity_means,
+                ridge_locks,
+                min_continuity_mean=channel.min_continuity_mean,
+                min_ridge_lock=channel.min_ridge_lock,
                 merge_gap=channel.window_merge_gap_records,
+            )
+            merged_means, merged_locks = cpro_continuity_features_cuda(
+                channel.continuity_map,
+                selected,
+                threshold=channel.calibrated_threshold,
+            )
+            channel_windows_raw = describe_pelt_windows(
+                channel.shape_activity,
+                channel.activity_z,
+                selected,
+                merged_means,
+                merged_locks,
+                penalty=channel.pelt_penalty,
             )
 
             def cprf_getter(local_start: int, local_stop: int):
@@ -351,6 +386,7 @@ def finalize_prepared_cuda_period_chunks(
             channel.noise_gain_device = None
             channel.noise_std_device = None
             channel.cprf_normalization_threshold = None
+            channel.continuity_map = None
     candidates.sort(
         key=lambda row: row["score"],
         reverse=True,

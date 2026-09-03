@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 
-RAW_CANDIDATE_SCHEMA_VERSION = 6
+RAW_CANDIDATE_SCHEMA_VERSION = 7
 
 
 RAW_CANDIDATE_FIELDNAMES = [
@@ -42,6 +42,8 @@ RAW_CANDIDATE_FIELDNAMES = [
     "pelt_z_mean",
     "pelt_z_max",
     "pelt_pen",
+    "cont_mean",
+    "ridge_lock",
     "cprf_thr",
     "ridge_peak",
     "ridge_int",
@@ -154,6 +156,8 @@ TIME_WINDOW_FIELDNAMES = [
     "pelt_z_mean",
     "pelt_z_max",
     "pelt_pen",
+    "cont_mean",
+    "ridge_lock",
     "accepted",
     "cprf_thr",
     "period_rec",

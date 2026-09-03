@@ -206,15 +206,9 @@ def _compress_with_pipeline_functions(
             period_center_bins=config.cpro_period_center_bins,
             period_context_bins=config.cpro_period_context_bins,
             min_period_contrast=config.cpro_min_period_contrast,
-            support_records=config.cpro_support_records,
-            min_occupancy=config.cpro_min_occupancy,
             period_support_bins=config.cpro_period_support_bins,
-            window_support_records=config.cpro_window_support_records,
-            min_window_occupancy=config.cpro_min_window_occupancy,
             shape_power_softness=config.cpro_shape_power_softness,
             shape_contrast_softness=config.cpro_shape_contrast_softness,
-            shape_occupancy_softness=config.cpro_shape_occupancy_softness,
-            shape_top_k=config.cpro_shape_top_k,
         ),
     )
     activity_raw = np.asarray(result.shape_activity, dtype=np.float32)

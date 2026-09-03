@@ -112,10 +112,7 @@ python scripts/run_candidate_gallery.py \
 ```
 
 Outputs are written to `candidate_gallery/index.md`, `candidate_gallery/raw/`,
-and `candidate_gallery/cwt/`. Existing unrelated or stale files are not
-automatically removed. The index is created before rendering starts and updated
-after each candidate, so completed entries remain browsable if a long run is
-interrupted.
+and `candidate_gallery/cwt/`.
 
 Useful gallery controls:
 

@@ -27,11 +27,13 @@ time x channel data
   -> period x time x channel power cube
   -> candidate period-domain filter
   -> absolute noise and wavelet-gain calibration
-  -> period-ridge contrast and short occupancy
-  -> long-window occupancy consensus
-  -> one continuous CPRO shape axis per channel
+  -> soft absolute-power and local period-ridge contrast response
+  -> 3-bin period support and strongest-period reduction
+  -> one edge-preserving CPRO observation axis per channel
   -> native C++ PELT mean-shift segments on that axis
-  -> standardized activity/duration gates and merge
+  -> bidirectional single-ridge continuity evidence on CWT2D
+  -> active-segment mean + continuity + ridge-lock gates
+  -> merge adjacent accepted PELT segments
   -> accepted PELT time windows
   -> CPRF on unmasked, independently normalized absolute CWT
   -> one accepted period-family candidate per accepted CPRF window
@@ -57,18 +59,19 @@ See [cpro.md](cpro.md) for equations and the CUDA transfer boundary. Defaults:
 - candidate period domain `10..200` records;
 - calibrated threshold `32` and texture quantile `0.9375`;
 - period contrast `1.5` using center/context widths `3/15` bins;
-- short occupancy `0.65` over `65` records and `3` contiguous period bins;
-- long occupancy `0.40` over `769` records; CPRO activity does not fill gaps,
-  delete short runs, or define windows;
-- CPRO shape softness `0.50/0.25/0.10` for calibrated power, period contrast,
-  and occupancy, with Top-3 period pooling; this continuous axis proposes PELT
-  segments while CPRF owns absolute ridge-strength acceptance;
-- native PELT uses penalty `16`, minimum segment size `384`, endpoint stride
+- period support `3` bins, power softness `1.0`, and contrast softness `0.10`;
+- fixed strongest-period reduction supplies the unsmoothed PELT boundary axis;
+- bidirectional continuity uses decay `0.995` and power `2`; accepted PELT
+  segments require normalized continuity mean `0.47` and single-ridge energy
+  lock `0.94`;
+- native PELT uses penalty `16`, minimum segment size `64`, endpoint stride
   `8`, and eight C++ workers in the main configuration;
-- accepted PELT windows require duration `384`, standardized activity mean
-  `0.05`, and merge across gaps up to `256` records;
-- CPRF uses `min_band_persistence=0.40`, `min_band_concentration=0.50`,
-  `min_local_contrast=1.20`, and `min_integrated_strength=0.0`; it evaluates up
+- active PELT segments require standardized activity mean `0.05`; adjacent
+  accepted segments are merged with gap `0`. There is no independent hard
+  duration gate after PELT; `pelt_min_size_records=64` is the sole time-size
+  constraint and belongs to the segmentation model itself;
+- CPRF uses `min_band_persistence=0.20`, `min_band_concentration=0.30`,
+  `min_local_contrast=0.65`, and `min_integrated_strength=0.0`; it evaluates up
   to eight local peak hypotheses
   but emits only the highest-scoring accepted period family;
 - retained candidates capped per channel: `max_candidates_per_channel=auto`
@@ -169,8 +172,9 @@ Each run writes:
 - `summary.json`
 - optional `visualization/index.md`
 
-Candidate rows use schema v6 stage-specific evidence: `shape_*`, `pelt_*`,
-`ridge_*`, `band_conc`, `band_persist`, `local_contrast`, and `score`.
+Candidate rows use schema v7 stage-specific evidence: `shape_*`, `pelt_*`,
+`cont_mean`, `ridge_lock`, `ridge_*`, `band_conc`, `band_persist`,
+`local_contrast`, and `score`.
 Coordinates use `t0_rec`, `t1_rec`, `freq_mhz`, and `period_rec`.
 
 Post-processing may additionally create `candidate_gallery/index.md` and

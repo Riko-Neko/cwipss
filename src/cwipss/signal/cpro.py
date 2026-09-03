@@ -1,4 +1,4 @@
-"""Calibrated Persistent Ridge Occupancy (CPRO) detector."""
+"""Calibrated Period-Ridge Observation (CPRO) detector."""
 
 from __future__ import annotations
 
@@ -6,31 +6,29 @@ from dataclasses import dataclass
 from math import ceil, log2, sqrt
 
 import numpy as np
-from scipy import ndimage
+from scipy import ndimage, signal
 
 
-CPRO_DETECTOR = "calibrated_persistent_ridge_occupancy"
+CPRO_DETECTOR = "calibrated_period_ridge_observation"
 MIN_POSITIVE = float(np.finfo(np.float32).tiny)
 
 
 @dataclass(frozen=True)
 class CPROParameters:
-    """Scientific parameters of the validated CPRO configuration."""
+    """Scientific parameters of the edge-preserving CPRO configuration."""
 
     threshold_snr: float = 32.0
     texture_quantile: float = 0.9375
     period_center_bins: int = 3
     period_context_bins: int = 15
     min_period_contrast: float = 1.5
-    support_records: int = 65
-    min_occupancy: float = 0.65
     period_support_bins: int = 3
-    window_support_records: int = 769
-    min_window_occupancy: float = 0.40
-    shape_power_softness: float = 0.50
-    shape_contrast_softness: float = 0.25
-    shape_occupancy_softness: float = 0.10
-    shape_top_k: int = 3
+    shape_power_softness: float = 1.0
+    shape_contrast_softness: float = 0.10
+    continuity_decay: float = 0.995
+    continuity_power: float = 2.0
+    min_continuity_mean: float = 0.47
+    min_ridge_lock: float = 0.94
 
     def validate(self) -> None:
         if self.threshold_snr <= 0.0:
@@ -43,32 +41,95 @@ class CPROParameters:
             raise ValueError("cpro_period_context_bins must not be narrower than the center")
         if self.min_period_contrast < 0.0:
             raise ValueError("cpro_min_period_contrast must be non-negative")
-        if self.support_records < 1:
-            raise ValueError("cpro_support_records must be positive")
-        if not 0.0 < self.min_occupancy <= 1.0:
-            raise ValueError("cpro_min_occupancy must be in (0, 1]")
         if self.period_support_bins < 1:
             raise ValueError("cpro_period_support_bins must be positive")
-        if self.window_support_records < 1:
-            raise ValueError("cpro_window_support_records must be positive")
-        if not 0.0 <= self.min_window_occupancy <= 1.0:
-            raise ValueError("cpro_min_window_occupancy must be in [0, 1]")
         if self.shape_power_softness <= 0.0:
             raise ValueError("cpro_shape_power_softness must be positive")
         if self.shape_contrast_softness <= 0.0:
             raise ValueError("cpro_shape_contrast_softness must be positive")
-        if self.shape_occupancy_softness <= 0.0:
-            raise ValueError("cpro_shape_occupancy_softness must be positive")
-        if self.shape_top_k < 1:
-            raise ValueError("cpro_shape_top_k must be positive")
+        if not 0.0 <= self.continuity_decay < 1.0:
+            raise ValueError("cpro_continuity_decay must be in [0, 1)")
+        if self.continuity_power <= 0.0:
+            raise ValueError("cpro_continuity_power must be positive")
+        if self.min_continuity_mean < 0.0:
+            raise ValueError("cpro_min_continuity_mean must be non-negative")
+        if not 0.0 <= self.min_ridge_lock <= 1.0:
+            raise ValueError("cpro_min_ridge_lock must be in [0, 1]")
 
 
 @dataclass(frozen=True)
 class CPROActivityResult:
     shape_activity: np.ndarray
     shape_map: np.ndarray
-    occupancy_map: np.ndarray
     threshold: float
+
+
+def _exponential_mean(values: np.ndarray, decay: float) -> np.ndarray:
+    """Apply a boundary-initialized first-order IIR along time."""
+    data = np.asarray(values, dtype=np.float32)
+    initial = float(decay) * data[:, :1]
+    filtered, _state = signal.lfilter(
+        [1.0 - float(decay)],
+        [1.0, -float(decay)],
+        data,
+        axis=1,
+        zi=initial,
+    )
+    return filtered.astype(np.float32, copy=False)
+
+
+def cpro_continuity_map(
+    shape_map: np.ndarray,
+    *,
+    decay: float,
+    power: float,
+) -> np.ndarray:
+    """Retain responses supported from both time directions on one CWT ridge."""
+    if not 0.0 <= float(decay) < 1.0:
+        raise ValueError("continuity decay must be in [0, 1)")
+    if float(power) <= 0.0:
+        raise ValueError("continuity power must be positive")
+    values = np.maximum(np.asarray(shape_map, dtype=np.float32), 0.0)
+    if values.ndim != 2 or values.shape[1] == 0:
+        raise ValueError("shape_map must have shape (periods, non-empty records)")
+    forward = _exponential_mean(values, decay)
+    backward = _exponential_mean(values[:, ::-1], decay)[:, ::-1]
+    support = np.sqrt(np.maximum(forward * backward, 0.0))
+    ratio = np.divide(
+        np.minimum(support, values),
+        values,
+        out=np.zeros_like(values),
+        where=values > 0.0,
+    )
+    return (
+        values * np.power(ratio, float(power), dtype=np.float32)
+    ).astype(np.float32, copy=False)
+
+
+def cpro_continuity_features(
+    continuity_map: np.ndarray,
+    start: int,
+    stop: int,
+    *,
+    threshold: float,
+) -> tuple[float, float]:
+    """Return normalized continuity strength and single-ridge energy locking."""
+    values = np.maximum(np.asarray(continuity_map, dtype=np.float32), 0.0)
+    start = int(start)
+    stop = int(stop)
+    if values.ndim != 2 or not 0 <= start < stop <= values.shape[1]:
+        raise ValueError("continuity window must be a non-empty in-range interval")
+    if not np.isfinite(threshold) or float(threshold) <= 0.0:
+        raise ValueError("CPRO threshold must be finite and positive")
+    window = values[:, start:stop]
+    time_peak = np.max(window, axis=0)
+    continuity_mean = float(np.mean(time_peak, dtype=np.float64)) / float(threshold)
+    ridge_energy = np.sum(window, axis=1, dtype=np.float64)
+    ridge_lock = float(np.max(ridge_energy)) / max(
+        float(np.sum(time_peak, dtype=np.float64)),
+        MIN_POSITIVE,
+    )
+    return continuity_mean, ridge_lock
 
 
 def cpro_period_mask(
@@ -134,28 +195,6 @@ def impulse_cwt_noise_gain(
     return gain.astype(np.float32)
 
 
-def _edge_corrected_time_mean(values: np.ndarray, width: int) -> np.ndarray:
-    matrix = np.asarray(values, dtype=np.float32)
-    records = int(matrix.shape[1])
-    size = max(1, min(int(width), records))
-    if size <= 1:
-        return matrix.astype(np.float32, copy=False)
-    summed = ndimage.uniform_filter1d(
-        matrix,
-        size=size,
-        axis=1,
-        mode="constant",
-        cval=0.0,
-    ) * float(size)
-    counts = ndimage.uniform_filter1d(
-        np.ones(records, dtype=np.float32),
-        size=size,
-        mode="constant",
-        cval=0.0,
-    ) * float(size)
-    return (summed / np.maximum(counts[None, :], 1.0)).astype(np.float32, copy=False)
-
-
 def _period_mean(values: np.ndarray, bins: int) -> np.ndarray:
     width = max(1, min(int(bins), int(values.shape[0])))
     if width <= 1:
@@ -164,21 +203,13 @@ def _period_mean(values: np.ndarray, bins: int) -> np.ndarray:
         values,
         size=width,
         axis=0,
-        mode="constant",
-        cval=0.0,
+        mode="nearest",
     ).astype(np.float32, copy=False)
 
 
 def _sigmoid(values: np.ndarray) -> np.ndarray:
     clipped = np.clip(values, -40.0, 40.0)
     return (1.0 / (1.0 + np.exp(-clipped))).astype(np.float32, copy=False)
-
-
-def _top_k_period_mean(values: np.ndarray, top_k: int) -> np.ndarray:
-    count = max(1, min(int(top_k), int(values.shape[0])))
-    split = int(values.shape[0]) - count
-    top = np.partition(values, split, axis=0)[split:, :]
-    return np.mean(top, axis=0, dtype=np.float32).astype(np.float32, copy=False)
 
 
 def _period_ridge_contrast(
@@ -216,7 +247,7 @@ def cpro_activity(
     noise_gain: np.ndarray,
     params: CPROParameters | None = None,
 ) -> CPROActivityResult:
-    """Compress one CWT2D map into the continuous time-proposal axis."""
+    """Compress one CWT2D map into an edge-preserving ridge-observation axis."""
     params = params or CPROParameters()
     params.validate()
     values = np.asarray(power, dtype=np.float32)
@@ -236,11 +267,6 @@ def cpro_activity(
         center_bins=params.period_center_bins,
         context_bins=params.period_context_bins,
     )
-    exceedance = calibrated >= threshold
-    if params.min_period_contrast > 0.0:
-        exceedance &= period_contrast >= float(params.min_period_contrast)
-    occupancy = _edge_corrected_time_mean(exceedance.astype(np.float32), params.support_records)
-
     power_log_ratio = np.log(np.maximum(calibrated, MIN_POSITIVE) / threshold)
     shape_power = threshold * float(params.shape_power_softness) * np.logaddexp(
         0.0,
@@ -255,30 +281,13 @@ def cpro_activity(
         )
     else:
         contrast_weight = np.ones_like(shape_power, dtype=np.float32)
-    shape_map = _edge_corrected_time_mean(
+    shape_map = _period_mean(
         shape_power * contrast_weight,
-        params.support_records,
+        params.period_support_bins,
     )
-    shape_map = _period_mean(shape_map, params.period_support_bins)
-    occupancy_weight = _sigmoid(
-        (occupancy - float(params.min_occupancy))
-        / float(params.shape_occupancy_softness)
-    )
-    occupancy_weight = _period_mean(occupancy_weight, params.period_support_bins)
-    window_support = _edge_corrected_time_mean(
-        occupancy_weight,
-        params.window_support_records,
-    )
-    window_weight = _sigmoid(
-        (window_support - float(params.min_window_occupancy))
-        / float(params.shape_occupancy_softness)
-    )
-    shape_map *= window_weight
-    shape_map = shape_map.astype(np.float32, copy=False)
-    shape_activity = _top_k_period_mean(shape_map, params.shape_top_k)
+    shape_activity = np.max(shape_map, axis=0).astype(np.float32, copy=False)
     return CPROActivityResult(
         shape_activity=shape_activity,
         shape_map=shape_map,
-        occupancy_map=occupancy.astype(np.float32, copy=False),
         threshold=threshold,
     )

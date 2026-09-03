@@ -40,6 +40,7 @@ from cwipss.data.readers import open_spectrum_reader  # noqa: E402
 from cwipss.signal.cpro import (  # noqa: E402
     CPROParameters,
     cpro_activity,
+    cpro_continuity_map,
     cpro_period_mask,
     difference_noise_std,
     impulse_cwt_noise_gain,
@@ -56,26 +57,28 @@ def _cpro_parameters(config: CWTSearchConfig) -> CPROParameters:
         period_center_bins=config.cpro_period_center_bins,
         period_context_bins=config.cpro_period_context_bins,
         min_period_contrast=config.cpro_min_period_contrast,
-        support_records=config.cpro_support_records,
-        min_occupancy=config.cpro_min_occupancy,
         period_support_bins=config.cpro_period_support_bins,
-        window_support_records=config.cpro_window_support_records,
-        min_window_occupancy=config.cpro_min_window_occupancy,
         shape_power_softness=config.cpro_shape_power_softness,
         shape_contrast_softness=config.cpro_shape_contrast_softness,
-        shape_occupancy_softness=config.cpro_shape_occupancy_softness,
-        shape_top_k=config.cpro_shape_top_k,
     )
 
 
-def _pelt_windows(activity: np.ndarray, config: CWTSearchConfig) -> list[dict]:
+def _pelt_windows(cpro, config: CWTSearchConfig) -> list[dict]:
+    continuity = cpro_continuity_map(
+        cpro.shape_map,
+        decay=config.cpro_continuity_decay,
+        power=config.cpro_continuity_power,
+    )
     return pelt_windows_from_activity(
-        activity,
+        cpro.shape_activity,
+        continuity,
+        calibrated_threshold=cpro.threshold,
         penalty=config.pelt_penalty,
         min_size=config.pelt_min_size_records,
         jump=config.pelt_jump_records,
-        min_duration=config.window_min_duration_records,
         min_mean=config.window_min_activity_mean,
+        min_continuity_mean=config.cpro_min_continuity_mean,
+        min_ridge_lock=config.cpro_min_ridge_lock,
         merge_gap=config.window_merge_gap_records,
     )[0]
 
@@ -171,7 +174,7 @@ def _injection_metrics(reader, specs, periods, noise_gain, config, cpro_params, 
         )
         timing["cpro_seconds"] += perf_counter() - started
         started = perf_counter()
-        windows = _pelt_windows(cpro.shape_activity, config)
+        windows = _pelt_windows(cpro, config)
         timing["pelt_seconds"] += perf_counter() - started
         started = perf_counter()
         evaluated = _evaluated_windows(
@@ -279,7 +282,7 @@ def _negative_metrics(reader, periods, noise_gain, config, cpro_params, cprf_par
             )
             timing["cpro_seconds"] += perf_counter() - started
             started = perf_counter()
-            windows = _pelt_windows(cpro.shape_activity, config)
+            windows = _pelt_windows(cpro, config)
             timing["pelt_seconds"] += perf_counter() - started
             started = perf_counter()
             evaluated = _evaluated_windows(

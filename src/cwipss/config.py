@@ -27,7 +27,7 @@ class CWTSearchConfig:
     block_channels: int = 128
     time_aggregation: str = "p95"
     aggregation_percentile: float = 95.0
-    detector: str = "calibrated_persistent_ridge_occupancy"
+    detector: str = "calibrated_period_ridge_observation"
     candidate_period_min_records: float = 10.0
     candidate_period_max_records: float = 200.0
     cpro_threshold_snr: float = 32.0
@@ -35,23 +35,20 @@ class CWTSearchConfig:
     cpro_period_center_bins: int = 3
     cpro_period_context_bins: int = 15
     cpro_min_period_contrast: float = 1.5
-    cpro_support_records: int = 65
-    cpro_min_occupancy: float = 0.65
     cpro_period_support_bins: int = 3
-    cpro_window_support_records: int = 769
-    cpro_min_window_occupancy: float = 0.40
-    cpro_shape_power_softness: float = 0.50
-    cpro_shape_contrast_softness: float = 0.25
-    cpro_shape_occupancy_softness: float = 0.10
-    cpro_shape_top_k: int = 3
+    cpro_shape_power_softness: float = 1.0
+    cpro_shape_contrast_softness: float = 0.10
+    cpro_continuity_decay: float = 0.995
+    cpro_continuity_power: float = 2.0
+    cpro_min_continuity_mean: float = 0.47
+    cpro_min_ridge_lock: float = 0.94
     pelt_penalty: float = 16.0
-    pelt_min_size_records: int = 384
+    pelt_min_size_records: int = 64
     pelt_jump_records: int = 8
     pelt_threads: int = 1
     cuda_max_pending_blocks: int = 2
-    window_min_duration_records: int = 384
     window_min_activity_mean: float = 0.05
-    window_merge_gap_records: int = 256
+    window_merge_gap_records: int = 0
     cprf_threshold_snr: float = 32.0
     cprf_texture_quantile: float = 0.9375
     cprf_smooth_bins: int = 3
@@ -135,21 +132,18 @@ _SECTION_KEY_MAP: dict[str, dict[str, str]] = {
         "cpro_period_center_bins": "cpro_period_center_bins",
         "cpro_period_context_bins": "cpro_period_context_bins",
         "cpro_min_period_contrast": "cpro_min_period_contrast",
-        "cpro_support_records": "cpro_support_records",
-        "cpro_min_occupancy": "cpro_min_occupancy",
         "cpro_period_support_bins": "cpro_period_support_bins",
-        "cpro_window_support_records": "cpro_window_support_records",
-        "cpro_min_window_occupancy": "cpro_min_window_occupancy",
         "cpro_shape_power_softness": "cpro_shape_power_softness",
         "cpro_shape_contrast_softness": "cpro_shape_contrast_softness",
-        "cpro_shape_occupancy_softness": "cpro_shape_occupancy_softness",
-        "cpro_shape_top_k": "cpro_shape_top_k",
+        "cpro_continuity_decay": "cpro_continuity_decay",
+        "cpro_continuity_power": "cpro_continuity_power",
+        "cpro_min_continuity_mean": "cpro_min_continuity_mean",
+        "cpro_min_ridge_lock": "cpro_min_ridge_lock",
         "pelt_penalty": "pelt_penalty",
         "pelt_min_size_records": "pelt_min_size_records",
         "pelt_jump_records": "pelt_jump_records",
         "pelt_threads": "pelt_threads",
         "cuda_max_pending_blocks": "cuda_max_pending_blocks",
-        "window_min_duration_records": "window_min_duration_records",
         "window_min_activity_mean": "window_min_activity_mean",
         "window_merge_gap_records": "window_merge_gap_records",
         "cprf_threshold_snr": "cprf_threshold_snr",
@@ -288,15 +282,13 @@ def validate_cwt_config(config: CWTSearchConfig) -> None:
         period_center_bins=config.cpro_period_center_bins,
         period_context_bins=config.cpro_period_context_bins,
         min_period_contrast=config.cpro_min_period_contrast,
-        support_records=config.cpro_support_records,
-        min_occupancy=config.cpro_min_occupancy,
         period_support_bins=config.cpro_period_support_bins,
-        window_support_records=config.cpro_window_support_records,
-        min_window_occupancy=config.cpro_min_window_occupancy,
         shape_power_softness=config.cpro_shape_power_softness,
         shape_contrast_softness=config.cpro_shape_contrast_softness,
-        shape_occupancy_softness=config.cpro_shape_occupancy_softness,
-        shape_top_k=config.cpro_shape_top_k,
+        continuity_decay=config.cpro_continuity_decay,
+        continuity_power=config.cpro_continuity_power,
+        min_continuity_mean=config.cpro_min_continuity_mean,
+        min_ridge_lock=config.cpro_min_ridge_lock,
     ).validate()
     cprf_parameters_from_config(config).validate()
     if config.pelt_penalty < 0.0:
@@ -307,8 +299,6 @@ def validate_cwt_config(config: CWTSearchConfig) -> None:
         raise ValueError("pelt_threads must be positive")
     if config.cuda_max_pending_blocks < 1:
         raise ValueError("cuda_max_pending_blocks must be positive")
-    if config.window_min_duration_records < 1:
-        raise ValueError("window_min_duration_records must be positive")
     if config.window_min_activity_mean < 0.0:
         raise ValueError("PELT window activity threshold must be non-negative")
     if config.window_merge_gap_records < 0:
@@ -334,7 +324,7 @@ def resolve_output_dir(config: CWTSearchConfig, project_dir: str | Path) -> CWTS
 
 def cwt_config_to_nested_dict(config: CWTSearchConfig) -> dict[str, Any]:
     return {
-        "schema_version": 3,
+        "schema_version": 6,
         "input": {
             "path": config.input,
         },
@@ -364,21 +354,18 @@ def cwt_config_to_nested_dict(config: CWTSearchConfig) -> dict[str, Any]:
             "cpro_period_center_bins": config.cpro_period_center_bins,
             "cpro_period_context_bins": config.cpro_period_context_bins,
             "cpro_min_period_contrast": config.cpro_min_period_contrast,
-            "cpro_support_records": config.cpro_support_records,
-            "cpro_min_occupancy": config.cpro_min_occupancy,
             "cpro_period_support_bins": config.cpro_period_support_bins,
-            "cpro_window_support_records": config.cpro_window_support_records,
-            "cpro_min_window_occupancy": config.cpro_min_window_occupancy,
             "cpro_shape_power_softness": config.cpro_shape_power_softness,
             "cpro_shape_contrast_softness": config.cpro_shape_contrast_softness,
-            "cpro_shape_occupancy_softness": config.cpro_shape_occupancy_softness,
-            "cpro_shape_top_k": config.cpro_shape_top_k,
+            "cpro_continuity_decay": config.cpro_continuity_decay,
+            "cpro_continuity_power": config.cpro_continuity_power,
+            "cpro_min_continuity_mean": config.cpro_min_continuity_mean,
+            "cpro_min_ridge_lock": config.cpro_min_ridge_lock,
             "pelt_penalty": config.pelt_penalty,
             "pelt_min_size_records": config.pelt_min_size_records,
             "pelt_jump_records": config.pelt_jump_records,
             "pelt_threads": config.pelt_threads,
             "cuda_max_pending_blocks": config.cuda_max_pending_blocks,
-            "window_min_duration_records": config.window_min_duration_records,
             "window_min_activity_mean": config.window_min_activity_mean,
             "window_merge_gap_records": config.window_merge_gap_records,
             "cprf_threshold_snr": config.cprf_threshold_snr,

@@ -1,7 +1,7 @@
-# Calibrated Persistent Ridge Occupancy
+# Calibrated Period-Ridge Observation
 
-Calibrated Persistent Ridge Occupancy (CPRO) compresses one physical
-frequency channel's `period x time` CWT power map into one continuous 1D time
+Calibrated Period-Ridge Observation (CPRO) compresses one physical frequency
+channel's `period x time` CWT power map into one edge-preserving 1D observation
 axis. Physical frequency channels remain independent.
 
 For raw series `x(t)`, first-difference MAD estimates white-noise sigma:
@@ -10,80 +10,110 @@ For raw series `x(t)`, first-difference MAD estimates white-noise sigma:
 sigma = 1.4826 * MAD(diff(x)) / sqrt(2)
 ```
 
-For period-dependent unit-noise CWT gain `g(p)` and CWT power `P(p,t)`:
+For period-dependent unit-noise CWT gain `g(p)` and power `P(p,t)`:
 
 ```text
-C(p,t) = P(p,t) / (sigma^2 * g(p))
-tau = max(32, quantile(C, 0.9375))
+A(p,t) = P(p,t) / (sigma^2 * g(p))
+tau = max(threshold_snr, quantile(A, texture_quantile))
 ```
 
-CPRO measures continuous proposal evidence around the same calibrated-power,
-period-contrast, short-occupancy, and long-occupancy reference levels:
+Local period-ridge contrast compares a 3-bin center with the surrounding part
+of a 15-bin context:
 
 ```text
-soft_power = tau * sP * softplus(log(C / tau) / sP)
-soft_contrast = sigmoid(log(R / Rmin) / sR)
-soft_occupancy = sigmoid((occupancy - occupancy_min) / sO)
-shape_activity = Top3Mean(time/period-supported soft evidence)
+R(p,t) = center_mean(A) / sideband_mean(A)
+Q(p,t) = tau * sP * softplus(log(A / tau) / sP)
+W(p,t) = sigmoid(log(R / Rmin) / sR)
+S(p,t) = period_mean_3(Q * W)
+activity(t) = max_p S(p,t)
 ```
 
-Defaults are `Rmin=1.5`, short support `65`, short occupancy `0.65`, period
-support `3` bins, long support `769`, long occupancy `0.40`, and softness
-`sP/sR/sO=0.50/0.25/0.10`. The hard exceedance map is used only to estimate
-occupancy inside this continuous formula; it is not emitted as another
-detector output.
+Defaults are `Rmin=1.5`, `sP=1.0`, `sR=0.10`, and period support `3` bins.
+The PELT boundary reduction is fixed Top-1 and has no time smoothing. Absolute
+calibrated power controls `Q`; local period contrast controls `W`; native PELT
+owns all time-boundary placement.
 
-CPRO does not fill time gaps, delete short runs, or define windows. The required
-native C++ mean-shift PELT implementation converts only `shape_activity` into
-time-window indices. PELT applies its standardized activity and duration
-conditions; there is no absolute-activity gate.
+After PELT proposes active segments, CPRO measures whether each response is
+supported from both time directions on a consistent CWT period ridge. For each
+period row, with decay `d=0.995`:
 
-CPRF receives each PELT window's indices and evaluates the original, unmasked
-CWT2D slice. Therefore absolute power, ridge strength, concentration,
-persistence, local contrast, and harmonic diagnostics have one owner: CPRF.
-The selected production gates are persistence `0.40`, concentration `0.50`,
-local contrast `1.20`, and integrated strength `0.0`.
+```text
+F(p,t) = (1-d) S(p,t) + d F(p,t-1)
+B(p,t) = (1-d) S(p,t) + d B(p,t+1)
+H(p,t) = sqrt(F(p,t) B(p,t))
+E(p,t) = S(p,t) * [min(H(p,t), S(p,t)) / S(p,t)]^2
+```
+
+For a PELT segment `I`:
+
+```text
+cont_mean = mean_t(max_p E(p,t)) / tau
+ridge_lock = max_p sum_t E(p,t) / sum_t max_p E(p,t)
+```
+
+The segment is retained when `cont_mean >= 0.47` and `ridge_lock >= 0.94`.
+The first condition suppresses isolated vertical energy; the second requires
+the surviving energy to remain on one period row. These are continuous response
+and shape criteria, not duration cutoffs. `pelt_min_size_records=64` is the only
+time-size constraint. There is no separate 96-record segment gate or 640-record
+window gate.
+
+CPRF receives each continuity-retained PELT window's indices and evaluates the
+original, unmasked CWT2D slice. CPRO selects time proposals; CPRF owns final
+ridge strength, concentration, persistence, local contrast, and harmonic
+diagnostics.
 
 ## CPU and CUDA
 
-`cpro.py` and `cpro_cuda.py` implement the same operations. Explicit CUDA mode
+`cpro.py` and `cpro_cuda.py` implement the same formula. Explicit CUDA mode
 fails when CUDA/CuPy is unavailable; it never invokes CPU CPRO as a scientific
 fallback.
 
-CUDA retains CWT2D and all CPRO maps on device. Only the 1D `shape_activity`
-axis and calibration scalars cross to CPU for native PELT. Returned window
-indices select slices from the still-resident CWT2D, and `cprf_cuda.py`
-completes normalization and acceptance on GPU. Only final CPRF scalars cross
-back to CPU.
+CUDA retains CWT2D and the CPRO continuity map on device. Only the 1D
+`shape_activity` axis and calibration scalars cross to CPU for native PELT.
+Returned window indices are transferred to GPU; continuity reduction and CPRF
+operate on resident 2D arrays. Only per-window continuity/CPRF scalar packs
+cross back to CPU. Native PELT can overlap the next queued GPU block.
 
-CUDA orchestration is split into prepare, native-PELT future, and finalize
-stages. `cuda_max_pending_blocks=2` permits native PELT for one block to overlap
-the next block's GPU work while bounding resident memory.
+## Manual Continuity Evaluation
 
-## Tuned working point
+The cutoff-free filter was selected on the fixed 1,993-case real single-channel
+review set. It contains 313 cases with manually selected high-confidence Real
+intervals, 816 FP intervals, and 605 pure-FP cases. Native PELT uses penalty
+`16`, minimum size `64`, jump `8`, and standardized active mean `0.05`.
 
-The current parameters were selected on the same 100-group weak injection set
-and independently checked against two CE4 observations. Each observation also
-contributed 90 real no-injection channels.
+| Method | High-confidence Real recall | FP interval response | Pure-FP case retention | Median IoU | Median boundary error |
+|---|---:|---:|---:|---:|---:|
+| Bidirectional continuity + ridge lock | 304/313 = 97.12% | 68/816 = 8.33% | 61/605 = 10.08% | 0.912 | 42 records |
+| Former 96/640 hard-duration gates | 95.53% | 2.70% | 2.64% | 0.901 | 40 records |
 
-| Observation | PELT group coverage | CPRF recall, period error <=10% | CPRF recall, period error <=50% | Retained real negative windows |
-|---|---:|---:|---:|---:|
-| 2021-12-05 | 84/100 | 59/100 | 60/100 | 0/1162 |
-| 2019-08-30 | 82/100 | 51/100 | 52/100 | 0/1029 |
+On deterministic even/odd review-rank halves, high-confidence recall is
+`96.05%/98.14%`; FP-interval response is `6.83%/9.85%`; pure-FP retention is
+`8.91%/11.26%`. A tested period-profile-coherence gate removed zero additional
+segments at this working point and is intentionally absent from production.
 
-The selected CPRF gates are `min_band_persistence=0.40`,
-`min_band_concentration=0.50`, `min_local_contrast=1.20`, and
-`min_integrated_strength=0.0`. Lowering contrast recovers weak ridges while the
-persistence and concentration gates preserve separation from the sampled real
-negative windows.
+Continuity calculation is `O(P*T)` for `P` period rows and `T` records. PELT
+segment filtering is linear in the number of segments and never changes a PELT
+boundary. The method remains channel-independent: `p` indexes CWT period rows
+inside one physical frequency channel, never neighboring frequency channels.
 
-Changing native PELT endpoint stride from `1` to `8` preserved the above PELT
-coverage and reduced combined PELT time over the 180 negative channels from
-about `77.3 s` to `2.33 s` in the CPU benchmark.
+The production implementation itself is replayed, rather than a copied
+formula, by:
 
-Authoritative reproducible outputs:
+```bash
+python tests/perf/cprf_manual_review/compare_activity.py \
+  --production-continuity \
+  --assert-production-target \
+  --output-dir tests/perf/cprf_manual_review/artifacts/production_continuity_validation_v1
+```
+
+The command fails unless high-confidence recall remains at least `304/313`,
+both deterministic halves remain at least 96%, FP interval hits remain at most
+`68`, pure-FP retained cases remain at most `61`, and median IoU remains at
+least `0.91`.
+
+Authoritative reproducible output:
 
 ```text
-runs/cpro_shape_pipeline_tuned_full100_neg90_2021_v1
-runs/cpro_shape_pipeline_tuned_full100_neg90_2019_v1
+tests/perf/cprf_manual_review/artifacts/production_continuity_validation_v1
 ```

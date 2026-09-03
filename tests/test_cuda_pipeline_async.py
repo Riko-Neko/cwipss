@@ -58,13 +58,19 @@ def test_invalid_channel_quality_is_compacted_per_file() -> None:
 
 
 def test_cpro_core_has_no_host_array_transfer() -> None:
-    source = inspect.getsource(cpro_cuda)
-    assert "asnumpy" not in source
+    activity_source = inspect.getsource(cpro_cuda.cpro_activity_cuda)
+    continuity_source = inspect.getsource(cpro_cuda.cpro_continuity_map_cuda)
+    feature_source = inspect.getsource(cpro_cuda.cpro_continuity_features_cuda)
+    assert "asnumpy" not in activity_source
+    assert "asnumpy" not in continuity_source
+    assert feature_source.count("cp.asnumpy") == 1
 
 
 def test_cuda_orchestration_keeps_cwt_resident_through_cprf() -> None:
     source = inspect.getsource(detection_cuda.prepare_block_period_chunks_cuda_power)
     assert "cp.asnumpy(result.shape_activity)" in source
+    assert "cpro_continuity_map_cuda" in source
+    assert "cp.asnumpy(continuity_map)" not in source
     assert "cp.asnumpy(result.shape_map)" not in source
     assert "cp.asnumpy(result.occupancy_map)" not in source
     assert "cp.asnumpy(power" not in source
@@ -76,6 +82,7 @@ def test_cuda_orchestration_keeps_cwt_resident_through_cprf() -> None:
 
     finalize_source = inspect.getsource(detection_cuda.finalize_prepared_cuda_period_chunks)
     assert "evaluate_cprf_cuda" in finalize_source
+    assert "cpro_continuity_features_cuda" in finalize_source
     assert "cp.asnumpy" not in finalize_source
     assert "channel.power_map = None" in finalize_source
 
@@ -156,11 +163,14 @@ def test_shared_window_pipeline_short_circuits_below_mean_gate(monkeypatch: pyte
     monkeypatch.setattr(detection, "pelt_mean_shift", fail_pelt)
     windows, activity_z, segment_count = detection.pelt_windows_from_activity(
         np.zeros(2048, dtype=np.float32),
+        np.zeros((3, 2048), dtype=np.float32),
+        calibrated_threshold=32.0,
         penalty=16.0,
         min_size=384,
         jump=1,
-        min_duration=96,
         min_mean=0.05,
+        min_continuity_mean=0.47,
+        min_ridge_lock=0.94,
         merge_gap=256,
     )
 

@@ -16,7 +16,9 @@ def test_structured_cpro_config_round_trips() -> None:
                 "detector": CPRO_DETECTOR,
                 "cpro_threshold_snr": 24.0,
                 "cpro_texture_quantile": 0.9,
-                "cpro_min_occupancy": 0.7,
+                "cpro_shape_contrast_softness": 0.2,
+                "cpro_min_continuity_mean": 0.5,
+                "cpro_min_ridge_lock": 0.9,
                 "pelt_penalty": 6.0,
                 "pelt_threads": 4,
                 "cuda_max_pending_blocks": 2,
@@ -32,9 +34,11 @@ def test_structured_cpro_config_round_trips() -> None:
     assert config.pelt_threads == 4
     assert config.cuda_max_pending_blocks == 2
     nested = cwt_config_to_nested_dict(config)
-    assert nested["schema_version"] == 3
+    assert nested["schema_version"] == 6
     assert nested["detection"]["cpro_texture_quantile"] == 0.9
-    assert nested["detection"]["cpro_min_occupancy"] == 0.7
+    assert nested["detection"]["cpro_shape_contrast_softness"] == 0.2
+    assert nested["detection"]["cpro_min_continuity_mean"] == 0.5
+    assert nested["detection"]["cpro_min_ridge_lock"] == 0.9
     assert nested["detection"]["pelt_penalty"] == 6.0
     assert nested["detection"]["cuda_max_pending_blocks"] == 2
     assert nested["detection"]["cprf_min_band_concentration"] == 0.55
@@ -62,5 +66,12 @@ def test_non_cpro_detector_is_rejected_without_fallback() -> None:
 
 
 def test_invalid_cpro_parameter_is_rejected() -> None:
-    with pytest.raises(ValueError, match="cpro_min_occupancy"):
-        cwt_config_from_mapping({"detection": {"cpro_min_occupancy": 0.0}})
+    with pytest.raises(ValueError, match="cpro_shape_contrast_softness"):
+        cwt_config_from_mapping({"detection": {"cpro_shape_contrast_softness": 0.0}})
+
+
+def test_removed_duration_gate_is_rejected_as_unknown_science() -> None:
+    with pytest.raises(ValueError, match="Unknown config key"):
+        cwt_config_from_mapping(
+            {"detection": {"pelt_segment_min_duration_records": 0}}
+        )

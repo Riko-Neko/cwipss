@@ -9,9 +9,17 @@ from time import perf_counter
 import numpy as np
 
 from .activity import robust_standardize
-from .cpro import CPRO_DETECTOR, CPROParameters, cpro_activity, cpro_period_mask, difference_noise_std
+from .cpro import (
+    CPRO_DETECTOR,
+    CPROParameters,
+    cpro_activity,
+    cpro_continuity_features,
+    cpro_continuity_map,
+    cpro_period_mask,
+    difference_noise_std,
+)
 from .cprf import CPRF_METHOD, CPRFParameters, CPRFResult, evaluate_cprf, normalize_cwt_power
-from .windows import Segment, active_windows_from_segments, merge_close_windows, pelt_mean_shift
+from .windows import Segment, merge_close_windows, pelt_mean_shift
 
 
 WINDOW_METHOD = f"{CPRO_DETECTOR}_pelt"
@@ -93,12 +101,15 @@ def activity_can_reach_window_mean(activity_z: np.ndarray, min_mean: float) -> b
 
 def pelt_windows_from_activity(
     shape_activity: np.ndarray,
+    continuity_map: np.ndarray,
     *,
+    calibrated_threshold: float,
     penalty: float,
     min_size: int,
     jump: int,
-    min_duration: int,
     min_mean: float,
+    min_continuity_mean: float,
+    min_ridge_lock: float,
     merge_gap: int,
 ) -> tuple[list[dict[str, float | int]], np.ndarray, int]:
     """Segment the sole CPRO shape axis with the required native PELT bridge."""
@@ -114,51 +125,81 @@ def pelt_windows_from_activity(
         min_size=min_size,
         jump=jump,
     )
-    accepted = pelt_windows_from_segments(
+    proposals = pelt_proposals_from_segments(
         shape,
         activity_z,
         segments,
         penalty=penalty,
-        min_duration=min_duration,
         min_mean=min_mean,
+    )
+    continuity = [
+        cpro_continuity_features(
+            continuity_map,
+            int(window["record_start"]),
+            int(window["record_stop"]),
+            threshold=calibrated_threshold,
+        )
+        for window in proposals
+    ]
+    accepted = filter_ridge_continuity_windows(
+        proposals,
+        [row[0] for row in continuity],
+        [row[1] for row in continuity],
+        min_continuity_mean=min_continuity_mean,
+        min_ridge_lock=min_ridge_lock,
         merge_gap=merge_gap,
+    )
+    merged_continuity = [
+        cpro_continuity_features(
+            continuity_map,
+            int(window["record_start"]),
+            int(window["record_stop"]),
+            threshold=calibrated_threshold,
+        )
+        for window in accepted
+    ]
+    accepted = describe_pelt_windows(
+        shape,
+        activity_z,
+        accepted,
+        [row[0] for row in merged_continuity],
+        [row[1] for row in merged_continuity],
+        penalty=penalty,
     )
     return accepted, activity_z, len(segments)
 
 
-def pelt_windows_from_segments(
+def pelt_proposals_from_segments(
     shape_activity: np.ndarray,
     activity_z: np.ndarray,
     segments: list[Segment],
     *,
     penalty: float,
-    min_duration: int,
     min_mean: float,
-    merge_gap: int,
 ) -> list[dict[str, float | int]]:
-    """Apply boundary-only gates to native PELT segments."""
+    """Return mean-active PELT segments without an independent duration gate."""
     shape = np.asarray(shape_activity, dtype=np.float32)
     standardized = np.asarray(activity_z, dtype=np.float32)
     if shape.ndim != 1 or standardized.shape != shape.shape:
         raise ValueError("CPRO activity products must be matching 1D arrays")
-    windows = active_windows_from_segments(
-        segments,
-        standardized,
-        min_duration=min_duration,
-        min_mean=min_mean,
-    )
-    windows = merge_close_windows(windows, max_gap=merge_gap)
-    accepted: list[dict[str, float | int]] = []
-    for window in windows:
-        start = int(window["record_start"])
-        stop = int(window["record_stop"])
+    proposals: list[dict[str, float | int]] = []
+    for segment in segments:
+        if float(segment.mean) < float(min_mean):
+            continue
+        start = int(segment.start)
+        stop = int(segment.stop)
         shape_window = shape[start:stop]
         if shape_window.size == 0:
             continue
         z_window = standardized[start:stop]
-        accepted.append(
+        proposals.append(
             {
-                **window,
+                "record_start": start,
+                "record_stop": stop,
+                "duration_records": stop - start,
+                "activity_mean": float(np.mean(z_window)),
+                "activity_max": float(np.max(z_window)),
+                "pelt_cost": float(segment.cost),
                 "shape_activity_mean": float(np.mean(shape_window)),
                 "shape_activity_max": float(np.max(shape_window)),
                 "pelt_activity_mean": float(np.mean(z_window)),
@@ -166,7 +207,78 @@ def pelt_windows_from_segments(
                 "pelt_penalty": float(penalty),
             }
         )
-    return accepted
+    return proposals
+
+
+def filter_ridge_continuity_windows(
+    proposals: Sequence[dict[str, float | int]],
+    continuity_means: Sequence[float],
+    ridge_locks: Sequence[float],
+    *,
+    min_continuity_mean: float,
+    min_ridge_lock: float,
+    merge_gap: int,
+) -> list[dict[str, float | int]]:
+    """Gate PELT segments by persistent strength and single-ridge locking."""
+    if not (len(proposals) == len(continuity_means) == len(ridge_locks)):
+        raise ValueError("CPRO continuity features must match PELT proposals")
+    selected = [
+        {
+            **window,
+            "continuity_mean": float(continuity_mean),
+            "ridge_lock": float(ridge_lock),
+        }
+        for window, continuity_mean, ridge_lock in zip(
+            proposals,
+            continuity_means,
+            ridge_locks,
+            strict=True,
+        )
+        if float(continuity_mean) >= float(min_continuity_mean)
+        and float(ridge_lock) >= float(min_ridge_lock)
+    ]
+    return merge_close_windows(selected, max_gap=merge_gap)
+
+
+def describe_pelt_windows(
+    shape_activity: np.ndarray,
+    activity_z: np.ndarray,
+    windows: Sequence[dict[str, float | int]],
+    continuity_means: Sequence[float],
+    ridge_locks: Sequence[float],
+    *,
+    penalty: float,
+) -> list[dict[str, float | int]]:
+    """Attach exact post-merge CPRO and PELT measurements to selected windows."""
+    if not (len(windows) == len(continuity_means) == len(ridge_locks)):
+        raise ValueError("window measurements must have matching lengths")
+    shape = np.asarray(shape_activity, dtype=np.float32)
+    standardized = np.asarray(activity_z, dtype=np.float32)
+    described: list[dict[str, float | int]] = []
+    for window, continuity_mean, ridge_lock in zip(
+        windows,
+        continuity_means,
+        ridge_locks,
+        strict=True,
+    ):
+        start = int(window["record_start"])
+        stop = int(window["record_stop"])
+        shape_window = shape[start:stop]
+        z_window = standardized[start:stop]
+        described.append(
+            {
+                **window,
+                "duration_records": stop - start,
+                "shape_activity_mean": float(np.mean(shape_window)),
+                "shape_activity_max": float(np.max(shape_window)),
+                "pelt_activity_mean": float(np.mean(z_window)),
+                "pelt_activity_max": float(np.max(z_window)),
+                "pelt_penalty": float(penalty),
+                "continuity_mean": float(continuity_mean),
+                "ridge_lock": float(ridge_lock),
+            }
+        )
+    return described
 
 
 def build_channel_candidates(
@@ -205,6 +317,8 @@ def build_channel_candidates(
             "pelt_z_mean": float(window.get("pelt_activity_mean", 0.0)),
             "pelt_z_max": float(window.get("pelt_activity_max", 0.0)),
             "pelt_pen": float(window.get("pelt_penalty", 0.0)),
+            "cont_mean": float(window.get("continuity_mean", 0.0)),
+            "ridge_lock": float(window.get("ridge_lock", 0.0)),
         }
         result = cprf_getter(local_start, local_stop)
         window_row.update(
@@ -258,6 +372,8 @@ def build_channel_candidates(
                     "pelt_z_mean": window_row["pelt_z_mean"],
                     "pelt_z_max": window_row["pelt_z_max"],
                     "pelt_pen": window_row["pelt_pen"],
+                    "cont_mean": window_row["cont_mean"],
+                    "ridge_lock": window_row["ridge_lock"],
                     "cprf_thr": result.normalization_threshold,
                     "ridge_peak": result.peak_strength,
                     "ridge_int": result.integrated_strength,
@@ -298,20 +414,17 @@ def detect_block_periods(
     cpro_period_center_bins: int,
     cpro_period_context_bins: int,
     cpro_min_period_contrast: float,
-    cpro_support_records: int,
-    cpro_min_occupancy: float,
     cpro_period_support_bins: int,
-    cpro_window_support_records: int,
-    cpro_min_window_occupancy: float,
     cpro_shape_power_softness: float,
     cpro_shape_contrast_softness: float,
-    cpro_shape_occupancy_softness: float,
-    cpro_shape_top_k: int,
+    cpro_continuity_decay: float,
+    cpro_continuity_power: float,
+    cpro_min_continuity_mean: float,
+    cpro_min_ridge_lock: float,
     pelt_penalty: float,
     pelt_min_size_records: int,
     pelt_jump_records: int,
     pelt_threads: int,
-    window_min_duration_records: int,
     window_min_activity_mean: float,
     window_merge_gap_records: int,
     cprf_params: CPRFParameters,
@@ -355,15 +468,13 @@ def detect_block_periods(
         period_center_bins=cpro_period_center_bins,
         period_context_bins=cpro_period_context_bins,
         min_period_contrast=cpro_min_period_contrast,
-        support_records=cpro_support_records,
-        min_occupancy=cpro_min_occupancy,
         period_support_bins=cpro_period_support_bins,
-        window_support_records=cpro_window_support_records,
-        min_window_occupancy=cpro_min_window_occupancy,
         shape_power_softness=cpro_shape_power_softness,
         shape_contrast_softness=cpro_shape_contrast_softness,
-        shape_occupancy_softness=cpro_shape_occupancy_softness,
-        shape_top_k=cpro_shape_top_k,
+        continuity_decay=cpro_continuity_decay,
+        continuity_power=cpro_continuity_power,
+        min_continuity_mean=cpro_min_continuity_mean,
+        min_ridge_lock=cpro_min_ridge_lock,
     )
     params.validate()
     cap = resolve_channel_candidate_cap(
@@ -395,6 +506,11 @@ def detect_block_periods(
             noise_gain=gain,
             params=params,
         )
+        continuity_map = cpro_continuity_map(
+            result.shape_map,
+            decay=params.continuity_decay,
+            power=params.continuity_power,
+        )
         _timing_add(timing, "cpro_seconds", perf_counter() - stage_start if timing is not None else 0.0)
         normalized_cwt, cprf_threshold = normalize_cwt_power(
             valid_power[:, :, target],
@@ -405,11 +521,14 @@ def detect_block_periods(
         stage_start = perf_counter() if timing is not None else 0.0
         pelt_windows, _activity_z, segment_count = pelt_windows_from_activity(
             result.shape_activity,
+            continuity_map,
+            calibrated_threshold=result.threshold,
             penalty=pelt_penalty,
             min_size=pelt_min_size_records,
             jump=pelt_jump_records,
-            min_duration=window_min_duration_records,
             min_mean=window_min_activity_mean,
+            min_continuity_mean=params.min_continuity_mean,
+            min_ridge_lock=params.min_ridge_lock,
             merge_gap=window_merge_gap_records,
         )
         _timing_add(timing, "pelt_seconds", perf_counter() - stage_start if timing is not None else 0.0)

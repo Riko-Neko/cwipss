@@ -53,7 +53,7 @@ def pelt_parameters_from_config(config: Any) -> PELTWindowParameters:
         penalty=float(config.pelt_penalty),
         min_size_records=int(config.pelt_min_size_records),
         jump_records=int(config.pelt_jump_records),
-        min_duration_records=int(config.window_min_duration_records),
+        min_duration_records=int(config.pelt_min_size_records),
         min_activity_mean=float(config.window_min_activity_mean),
         merge_gap_records=int(config.window_merge_gap_records),
     )

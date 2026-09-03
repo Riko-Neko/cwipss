@@ -131,13 +131,26 @@ def active_windows_from_segments(
 def merge_close_windows(windows: list[dict], max_gap: int = 0) -> list[dict]:
     if not windows:
         return []
-    max_gap = max(0, int(max_gap))
-    ordered = sorted(windows, key=lambda row: (int(row["record_start"]), int(row["record_stop"])))
-    merged: list[dict] = [dict(ordered[0])]
-    for row in ordered[1:]:
+    if int(max_gap) < 0:
+        raise ValueError("max_gap must be non-negative")
+    max_gap = int(max_gap)
+    first_start = int(windows[0]["record_start"])
+    first_stop = int(windows[0]["record_stop"])
+    if first_stop < first_start:
+        raise ValueError("window stop must not precede its start")
+    merged: list[dict] = [dict(windows[0])]
+    previous_start = first_start
+    for row in windows[1:]:
+        row_start = int(row["record_start"])
+        row_stop = int(row["record_stop"])
+        if row_start < previous_start:
+            raise ValueError("windows must be ordered by record_start")
+        if row_stop < row_start:
+            raise ValueError("window stop must not precede its start")
+        previous_start = row_start
         last = merged[-1]
-        if int(row["record_start"]) - int(last["record_stop"]) <= max_gap:
-            last["record_stop"] = max(int(last["record_stop"]), int(row["record_stop"]))
+        if row_start - int(last["record_stop"]) <= max_gap:
+            last["record_stop"] = max(int(last["record_stop"]), row_stop)
             last["duration_records"] = int(last["record_stop"]) - int(last["record_start"])
             last["activity_mean"] = max(float(last.get("activity_mean", 0.0)), float(row.get("activity_mean", 0.0)))
             last["activity_max"] = max(float(last.get("activity_max", 0.0)), float(row.get("activity_max", 0.0)))

@@ -167,7 +167,7 @@ def compression_config_from_cwt(
         pelt_penalty=cwt.pelt_penalty,
         pelt_min_size_records=cwt.pelt_min_size_records,
         pelt_jump_records=cwt.pelt_jump_records,
-        window_min_duration_records=cwt.window_min_duration_records,
+        window_min_duration_records=cwt.pelt_min_size_records,
         window_min_activity_mean=cwt.window_min_activity_mean,
         window_merge_gap_records=cwt.window_merge_gap_records,
         algorithms=run.algorithms,

@@ -63,18 +63,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cpro-period-center-bins", type=int, default=3, help="Period-ridge center width in bins.")
     parser.add_argument("--cpro-period-context-bins", type=int, default=15, help="Period-ridge context width in bins.")
     parser.add_argument("--cpro-min-period-contrast", type=float, default=1.5, help="Minimum center-to-sideband period contrast.")
-    parser.add_argument("--cpro-support-records", type=int, default=65, help="Short occupancy support in records.")
-    parser.add_argument("--cpro-min-occupancy", type=float, default=0.65, help="Minimum short-window ridge occupancy.")
     parser.add_argument("--cpro-period-support-bins", type=int, default=3, help="Required contiguous period-bin support.")
-    parser.add_argument("--cpro-window-support-records", type=int, default=769, help="Long consensus support in records.")
-    parser.add_argument("--cpro-min-window-occupancy", type=float, default=0.40, help="Minimum long-window ridge occupancy.")
+    parser.add_argument("--cpro-continuity-decay", type=float, default=0.995, help="Bidirectional ridge-continuity IIR decay.")
+    parser.add_argument("--cpro-continuity-power", type=float, default=2.0, help="Isolated-response suppression power.")
+    parser.add_argument("--cpro-min-continuity-mean", type=float, default=0.47, help="Minimum normalized persistent ridge strength.")
+    parser.add_argument("--cpro-min-ridge-lock", type=float, default=0.94, help="Minimum energy fraction locked to one period ridge.")
     parser.add_argument("--pelt-penalty", type=float, default=16.0, help="Native PELT mean-shift penalty.")
-    parser.add_argument("--pelt-min-size-records", type=int, default=384, help="Native PELT minimum segment size.")
+    parser.add_argument("--pelt-min-size-records", type=int, default=64, help="Native PELT minimum segment size.")
     parser.add_argument("--pelt-jump-records", type=int, default=8, help="Native PELT endpoint stride.")
     parser.add_argument("--pelt-threads", type=int, default=1, help="Native PELT worker threads.")
-    parser.add_argument("--window-min-duration-records", type=int, default=384, help="Minimum accepted PELT window duration.")
     parser.add_argument("--window-min-activity-mean", type=float, default=0.05, help="Minimum standardized PELT segment mean.")
-    parser.add_argument("--window-merge-gap-records", type=int, default=256, help="Maximum gap merged between PELT windows.")
+    parser.add_argument("--window-merge-gap-records", type=int, default=0, help="Maximum gap merged between PELT windows.")
     parser.add_argument("--cprf-threshold-snr", type=float, default=32.0, help="CPRF absolute CWT normalization floor.")
     parser.add_argument("--cprf-texture-quantile", type=float, default=0.9375, help="CPRF absolute CWT texture quantile.")
     parser.add_argument("--cprf-min-band-concentration", type=float, default=0.50, help="Minimum CPRF main-band concentration.")
@@ -168,16 +167,15 @@ def main() -> None:
         cpro_period_center_bins=args.cpro_period_center_bins,
         cpro_period_context_bins=args.cpro_period_context_bins,
         cpro_min_period_contrast=args.cpro_min_period_contrast,
-        cpro_support_records=args.cpro_support_records,
-        cpro_min_occupancy=args.cpro_min_occupancy,
         cpro_period_support_bins=args.cpro_period_support_bins,
-        cpro_window_support_records=args.cpro_window_support_records,
-        cpro_min_window_occupancy=args.cpro_min_window_occupancy,
+        cpro_continuity_decay=args.cpro_continuity_decay,
+        cpro_continuity_power=args.cpro_continuity_power,
+        cpro_min_continuity_mean=args.cpro_min_continuity_mean,
+        cpro_min_ridge_lock=args.cpro_min_ridge_lock,
         pelt_penalty=args.pelt_penalty,
         pelt_min_size_records=args.pelt_min_size_records,
         pelt_jump_records=args.pelt_jump_records,
         pelt_threads=args.pelt_threads,
-        window_min_duration_records=args.window_min_duration_records,
         window_min_activity_mean=args.window_min_activity_mean,
         window_merge_gap_records=args.window_merge_gap_records,
         cprf_threshold_snr=args.cprf_threshold_snr,

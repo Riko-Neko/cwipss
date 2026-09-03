@@ -134,7 +134,7 @@ def _historical_negative_cases(
     pelt_parameters: Any,
 ) -> list[_WindowCase]:
     """Build negative windows with the current shape-axis CPRO and PELT."""
-    parameters = CPROParameters(window_support_records=385, min_window_occupancy=0.40)
+    parameters = CPROParameters()
     cases: list[_WindowCase] = []
     first = max(0, int(channel_start))
     last = min(int(reader.n_channels), int(channel_stop))
