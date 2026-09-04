@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 from math import ceil, log2, sqrt
 
 import numpy as np
@@ -165,18 +166,15 @@ def difference_noise_std(values: np.ndarray) -> float:
     return sigma
 
 
-def impulse_cwt_noise_gain(
-    periods: np.ndarray,
-    *,
+@lru_cache(maxsize=32)
+def _cached_impulse_cwt_noise_gain(
+    period_key: tuple[float, ...],
     wavelet: str,
-    method: str = "fft",
+    method: str,
 ) -> np.ndarray:
-    """Return the canonical per-period CWT power gain for unit white noise."""
     from .cwt import cwt_power_cube
 
-    period_values = np.asarray(periods, dtype=np.float64)
-    if period_values.ndim != 1 or period_values.size == 0 or np.any(period_values <= 0.0):
-        raise ValueError("periods must be a positive 1D array")
+    period_values = np.asarray(period_key, dtype=np.float64)
     required = max(4096, int(32.0 * float(np.max(period_values))))
     records = 1 << int(ceil(log2(required)))
     impulse = np.zeros((records, 1), dtype=np.float32)
@@ -189,10 +187,29 @@ def impulse_cwt_noise_gain(
         method=method,
         backend="cpu",
     )[:, :, 0]
-    gain = np.sum(power, axis=1, dtype=np.float64)
+    gain = np.sum(power, axis=1, dtype=np.float64).astype(np.float32)
+    gain.setflags(write=False)
+    return gain
+
+
+def impulse_cwt_noise_gain(
+    periods: np.ndarray,
+    *,
+    wavelet: str,
+    method: str = "fft",
+) -> np.ndarray:
+    """Return a process-cached canonical CWT power gain for unit white noise."""
+    period_values = np.asarray(periods, dtype=np.float64)
+    if period_values.ndim != 1 or period_values.size == 0 or np.any(period_values <= 0.0):
+        raise ValueError("periods must be a positive 1D array")
+    gain = _cached_impulse_cwt_noise_gain(
+        tuple(float(value) for value in period_values),
+        str(wavelet),
+        str(method),
+    )
     if not np.all(np.isfinite(gain)) or np.any(gain <= 0.0):
         raise ValueError("CWT impulse gains must be finite and positive")
-    return gain.astype(np.float32)
+    return gain
 
 
 def _period_mean(values: np.ndarray, bins: int) -> np.ndarray:
@@ -245,6 +262,7 @@ def cpro_activity(
     *,
     noise_std: float,
     noise_gain: np.ndarray,
+    target_period_mask: np.ndarray | None = None,
     params: CPROParameters | None = None,
 ) -> CPROActivityResult:
     """Compress one CWT2D map into an edge-preserving ridge-observation axis."""
@@ -254,6 +272,11 @@ def cpro_activity(
     gain = np.asarray(noise_gain, dtype=np.float32)
     if values.ndim != 2 or gain.shape != (values.shape[0],):
         raise ValueError("power and noise_gain must match on the period axis")
+    target = np.ones(values.shape[0], dtype=bool)
+    if target_period_mask is not None:
+        target = np.asarray(target_period_mask, dtype=bool)
+        if target.shape != (values.shape[0],) or not np.any(target):
+            raise ValueError("target_period_mask must select at least one period row")
     if not np.isfinite(noise_std) or noise_std <= 0.0:
         raise ValueError("noise_std must be finite and positive")
     values = np.maximum(np.where(np.isfinite(values), values, 0.0), 0.0)
@@ -261,7 +284,10 @@ def cpro_activity(
     calibrated = values / denominator
     threshold = float(params.threshold_snr)
     if params.texture_quantile > 0.0:
-        threshold = max(threshold, float(np.quantile(calibrated, params.texture_quantile)))
+        threshold = max(
+            threshold,
+            float(np.quantile(calibrated[target], params.texture_quantile)),
+        )
     period_contrast = _period_ridge_contrast(
         calibrated,
         center_bins=params.period_center_bins,
@@ -285,6 +311,7 @@ def cpro_activity(
         shape_power * contrast_weight,
         params.period_support_bins,
     )
+    shape_map = np.where(target[:, None], shape_map, 0.0).astype(np.float32, copy=False)
     shape_activity = np.max(shape_map, axis=0).astype(np.float32, copy=False)
     return CPROActivityResult(
         shape_activity=shape_activity,

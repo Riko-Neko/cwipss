@@ -160,8 +160,8 @@ def prepare_block_period_chunks_cuda_power(
         valid_power = power[cp.asarray(mask)]
         valid_periods = period_values[mask]
         gain = np.asarray(noise_gain, dtype=np.float32)
-        if gain.shape != (valid_periods.size,):
-            raise ValueError("noise_gain must match the candidate period domain")
+        if gain.shape != (period_values.size,):
+            raise ValueError("noise_gain must match the complete CWT period domain")
         params = CPROParameters(
             threshold_snr=cpro_threshold_snr,
             texture_quantile=cpro_texture_quantile,
@@ -178,7 +178,9 @@ def prepare_block_period_chunks_cuda_power(
         )
         params.validate()
         cprf_params.validate()
+        mask_device = cp.asarray(mask)
         gain_device = cp.asarray(gain, dtype=cp.float32)
+        valid_gain_device = gain_device[mask_device]
         cap = resolve_channel_candidate_cap(
             max_candidates_per_channel,
             max_candidates_per_record,
@@ -203,9 +205,10 @@ def prepare_block_period_chunks_cuda_power(
                     )
                 continue
             result = cpro_activity_cuda(
-                valid_power[:, :, target],
+                power[:, :, target],
                 noise_std=noise_std_gpu,
                 noise_gain=gain_device,
+                target_period_mask=mask,
                 params=params,
             )
             continuity_map = cpro_continuity_map_cuda(
@@ -216,7 +219,7 @@ def prepare_block_period_chunks_cuda_power(
             cprf_threshold = cprf_normalization_threshold_cuda(
                 valid_power[:, :, target],
                 noise_std=noise_std_gpu,
-                noise_gain=gain_device,
+                noise_gain=valid_gain_device,
                 params=cprf_params,
             )
             # Only the 1D proposal axis crosses the boundary; CWT2D remains resident for CPRF.
@@ -226,7 +229,7 @@ def prepare_block_period_chunks_cuda_power(
                     output_channel=output_channel,
                     target_channel=target,
                     power_map=valid_power[:, :, target],
-                    noise_gain_device=gain_device,
+                    noise_gain_device=valid_gain_device,
                     noise_std_device=noise_std_gpu,
                     cprf_normalization_threshold=cprf_threshold,
                     cprf_params=cprf_params,

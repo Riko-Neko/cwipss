@@ -460,8 +460,9 @@ def detect_block_periods(
     )
     valid_power, valid_periods = power[mask], period_values[mask]
     gain = np.asarray(noise_gain, dtype=np.float32)
-    if gain.shape != (valid_periods.size,):
-        raise ValueError("noise_gain must match the candidate period domain")
+    if gain.shape != (period_values.size,):
+        raise ValueError("noise_gain must match the complete CWT period domain")
+    valid_gain = gain[mask]
     params = CPROParameters(
         threshold_snr=cpro_threshold_snr,
         texture_quantile=cpro_texture_quantile,
@@ -501,9 +502,10 @@ def detect_block_periods(
                 )
             continue
         result = cpro_activity(
-            valid_power[:, :, target],
+            power[:, :, target],
             noise_std=noise_std,
             noise_gain=gain,
+            target_period_mask=mask,
             params=params,
         )
         continuity_map = cpro_continuity_map(
@@ -515,7 +517,7 @@ def detect_block_periods(
         normalized_cwt, cprf_threshold = normalize_cwt_power(
             valid_power[:, :, target],
             noise_std=noise_std,
-            noise_gain=gain,
+            noise_gain=valid_gain,
             params=cprf_params,
         )
         stage_start = perf_counter() if timing is not None else 0.0

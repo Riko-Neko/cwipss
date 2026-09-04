@@ -117,11 +117,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--archive",
         type=Path,
-        default=BASE_DIR / "artifacts/single_channel_slices.npz",
+        default=BASE_DIR / "data/single_channel_slices.npz",
     )
-    parser.add_argument("--metadata", type=Path, default=BASE_DIR / "artifacts/metadata.json")
+    parser.add_argument("--metadata", type=Path, default=BASE_DIR / "data/metadata.json")
     parser.add_argument("--config", type=Path, default=PROJECT_DIR / "configs/cwt_default.json")
-    parser.add_argument("--output-dir", type=Path, default=BASE_DIR / "artifacts/activity_comparison")
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=PROJECT_DIR / "runs/perf/cprf_manual_review/activity_comparison",
+    )
     parser.add_argument("--limit", type=int, default=0)
     parser.add_argument(
         "--priority-only",

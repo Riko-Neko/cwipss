@@ -11,7 +11,7 @@ from typing import Any
 
 import numpy as np
 
-from ..signal.cpro import CPRO_DETECTOR, CPROParameters, cpro_period_mask, impulse_cwt_noise_gain
+from ..signal.cpro import CPRO_DETECTOR, CPROParameters, impulse_cwt_noise_gain
 from ..signal.cprf import CPRFParameters
 from ..signal.cwt import cwt_power_cube, period_grid_records
 from ..signal.detection import add_candidate_ids, detect_block_periods
@@ -217,13 +217,8 @@ def run_cwt_candidate_search(
         search_config.period_count,
         search_config.period_spacing,
     )
-    candidate_period_mask = cpro_period_mask(
-        periods,
-        search_config.candidate_period_min_records,
-        search_config.candidate_period_max_records,
-    )
     noise_gain = impulse_cwt_noise_gain(
-        periods[candidate_period_mask],
+        periods,
         wavelet=search_config.wavelet,
         method=search_config.cwt_method,
     )

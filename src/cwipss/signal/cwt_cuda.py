@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from functools import lru_cache
 from math import ceil, floor
 from typing import Any
 
@@ -36,7 +37,7 @@ def _wavelet_object(wavelet: str | ContinuousWavelet | Wavelet):
     return DiscreteContinuousWavelet(wavelet)
 
 
-def _integrated_wavelet(wavelet: str | ContinuousWavelet | Wavelet, data_dtype: np.dtype):
+def _build_integrated_wavelet(wavelet: str | ContinuousWavelet | Wavelet, data_dtype: np.dtype):
     wavelet_obj = _wavelet_object(wavelet)
     dt_cplx = np.result_type(data_dtype, np.complex64)
     precision = 10
@@ -48,6 +49,20 @@ def _integrated_wavelet(wavelet: str | ContinuousWavelet | Wavelet, data_dtype: 
         np.asarray(int_psi, dtype=dt_psi),
         np.asarray(x, dtype=np.dtype(data_dtype).type),
     )
+
+
+@lru_cache(maxsize=16)
+def _cached_integrated_wavelet(wavelet: str, dtype_string: str):
+    wavelet_obj, int_psi, x = _build_integrated_wavelet(wavelet, np.dtype(dtype_string))
+    int_psi.setflags(write=False)
+    x.setflags(write=False)
+    return wavelet_obj, int_psi, x
+
+
+def _integrated_wavelet(wavelet: str | ContinuousWavelet | Wavelet, data_dtype: np.dtype):
+    if isinstance(wavelet, str):
+        return _cached_integrated_wavelet(wavelet, np.dtype(data_dtype).str)
+    return _build_integrated_wavelet(wavelet, data_dtype)
 
 
 def _scaled_integrated_wavelet(int_psi: np.ndarray, x: np.ndarray, scale: float) -> np.ndarray:

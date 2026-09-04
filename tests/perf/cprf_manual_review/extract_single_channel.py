@@ -36,7 +36,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--selection", type=Path, default=BASE_DIR / "selection.csv")
     parser.add_argument("--source-root", type=Path, default=DEFAULT_SOURCE_ROOT)
-    parser.add_argument("--output-dir", type=Path, default=BASE_DIR / "artifacts")
+    parser.add_argument("--output-dir", type=Path, default=BASE_DIR / "data")
     return parser.parse_args()
 
 

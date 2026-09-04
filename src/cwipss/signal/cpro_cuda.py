@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 
 import numpy as np
 
@@ -83,6 +84,18 @@ def _cupy_modules():
     return cp, ndimage
 
 
+@lru_cache(maxsize=1)
+def _cached_continuity_kernel():
+    cp, _ndimage = _cupy_modules()
+    return cp.RawKernel(_CONTINUITY_KERNEL, "cpro_bidirectional_continuity")
+
+
+@lru_cache(maxsize=1)
+def _cached_window_ridge_sum_kernel():
+    cp, _ndimage = _cupy_modules()
+    return cp.RawKernel(_WINDOW_RIDGE_SUM_KERNEL, "cpro_window_ridge_sum")
+
+
 def difference_noise_std_cuda(values):
     """Estimate one channel's noise sigma entirely on CUDA."""
     cp, _ndimage = _cupy_modules()
@@ -149,6 +162,7 @@ def cpro_activity_cuda(
     *,
     noise_std,
     noise_gain: np.ndarray,
+    target_period_mask: np.ndarray | None = None,
     params: CPROParameters | None = None,
 ) -> CPROActivityCudaResult:
     """Stage 1 only: compress one absolute CWT map entirely on CUDA."""
@@ -159,6 +173,12 @@ def cpro_activity_cuda(
     gain = cp.asarray(noise_gain, dtype=cp.float32)
     if values.ndim != 2 or gain.shape != (values.shape[0],):
         raise ValueError("power and noise_gain must match on the period axis")
+    target = cp.ones(values.shape[0], dtype=cp.bool_)
+    if target_period_mask is not None:
+        target_host = np.asarray(target_period_mask, dtype=bool)
+        if target_host.shape != (values.shape[0],) or not np.any(target_host):
+            raise ValueError("target_period_mask must select at least one period row")
+        target = cp.asarray(target_host)
     sigma = cp.asarray(noise_std, dtype=cp.float64)
     if not bool(cp.isfinite(sigma) & (sigma > 0.0)):
         raise ValueError("noise_std must be finite and positive")
@@ -167,7 +187,10 @@ def cpro_activity_cuda(
     calibrated = values / denominator
     threshold = cp.asarray(params.threshold_snr, dtype=cp.float64)
     if params.texture_quantile > 0.0:
-        threshold = cp.maximum(threshold, cp.quantile(calibrated, params.texture_quantile))
+        threshold = cp.maximum(
+            threshold,
+            cp.quantile(calibrated[target], params.texture_quantile),
+        )
     period_contrast = _period_ridge_contrast(calibrated, params, cp, ndimage)
     power_log_ratio = cp.log(cp.maximum(calibrated, MIN_POSITIVE) / threshold)
     shape_power = threshold * float(params.shape_power_softness) * cp.logaddexp(
@@ -190,6 +213,7 @@ def cpro_activity_cuda(
         cp,
         ndimage,
     )
+    shape_map = cp.where(target[:, None], shape_map, 0.0).astype(cp.float32, copy=False)
     shape_activity = cp.max(shape_map, axis=0).astype(cp.float32, copy=False)
     return CPROActivityCudaResult(
         shape_activity=shape_activity,
@@ -209,7 +233,7 @@ def cpro_continuity_map_cuda(shape_map, *, decay: float, power: float):
     if values.ndim != 2 or int(values.shape[1]) == 0:
         raise ValueError("shape_map must have shape (periods, non-empty records)")
     evidence = cp.empty_like(values)
-    kernel = cp.RawKernel(_CONTINUITY_KERNEL, "cpro_bidirectional_continuity")
+    kernel = _cached_continuity_kernel()
     threads = 128
     blocks = (int(values.shape[0]) + threads - 1) // threads
     kernel(
@@ -255,7 +279,7 @@ def cpro_continuity_features_cuda(
         (activity_prefix[stops] - activity_prefix[starts]) / durations / threshold_device
     )
     ridge_energy = cp.empty((values.shape[0], starts.size), dtype=cp.float64)
-    kernel = cp.RawKernel(_WINDOW_RIDGE_SUM_KERNEL, "cpro_window_ridge_sum")
+    kernel = _cached_window_ridge_sum_kernel()
     threads = 128
     work_items = int(values.shape[0]) * int(starts.size)
     kernel(

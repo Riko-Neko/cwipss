@@ -154,16 +154,17 @@ def _cpro_products(
     )
     noise_std = difference_noise_std(raw_series)
     result = cpro_activity(
-        power[valid, :, target],
+        power[:, :, target],
         noise_std=noise_std,
         noise_gain=noise_gain,
+        target_period_mask=valid,
         params=params,
     )
     cprf_params = _cprf_parameters(cfg)
     normalized_cwt, threshold = normalize_cwt_power(
         power[valid, :, target],
         noise_std=noise_std,
-        noise_gain=noise_gain,
+        noise_gain=noise_gain[valid],
         params=cprf_params,
     )
     return periods[valid], result, normalized_cwt, threshold, cprf_params
@@ -308,13 +309,8 @@ def visualize_cwt_stages(
     for path in output.glob("stage_*.png"):
         path.unlink()
     truths, windows = truths or [], time_windows or []
-    valid_period_mask = cpro_period_mask(
-        periods,
-        search_config.candidate_period_min_records,
-        search_config.candidate_period_max_records,
-    )
     noise_gain = impulse_cwt_noise_gain(
-        periods[valid_period_mask],
+        periods,
         wavelet=search_config.wavelet,
         method=search_config.cwt_method,
     )
@@ -370,7 +366,13 @@ def visualize_cwt_stages(
             path = output / f"stage_03_{prefix}_cpro_score_map.png"
             cwt_view(
                 path,
-                result.shape_map,
+                result.shape_map[
+                    cpro_period_mask(
+                        periods,
+                        search_config.candidate_period_min_records,
+                        search_config.candidate_period_max_records,
+                    )
+                ],
                 valid_periods,
                 offset=record_offset,
                 title=f"Stage 03 CPRO score map: {block_id}, channel {channel}",

@@ -67,9 +67,6 @@ python scripts/run_cwt_candidates.py \
   --f-stop 38.3 \
   --t-start 0 \
   --t-stop 2048 \
-  --period-min-records 2 \
-  --period-max-records 512 \
-  --period-count 96 \
   --block-channels 32
 ```
 
@@ -86,6 +83,10 @@ than committed to the repository.
 
 Default candidate generation is intentionally conservative:
 
+- CWT period bounds and count default to the smallest logarithmic grid that
+  contains the candidate domain, 8 context bins on each side, and 12 bins per
+  octave. `period_min_records`, `period_max_records`, and `period_count` remain
+  advanced explicit overrides and are not required for normal searches.
 - `candidate_period_min_records=10` and `candidate_period_max_records=200`:
   reject low-period instrument-like stripes and long-period trend-like domains.
 - `cpro_threshold_snr=32` and `cpro_texture_quantile=0.9375`: require absolute

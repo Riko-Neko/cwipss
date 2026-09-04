@@ -44,9 +44,24 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cwt-method", choices=["conv", "fft"], default=None, help="PyWavelets CWT computation method.")
     parser.add_argument("--cwt-backend", choices=["cpu", "cuda", "auto"], default=None, help="CWT compute backend.")
     parser.add_argument("--cuda-device", type=int, default=None, help="CUDA device index for --cwt-backend cuda/auto.")
-    parser.add_argument("--period-min-records", type=float, default=None, help="Minimum CWT period in records.")
-    parser.add_argument("--period-max-records", type=float, default=None, help="Maximum CWT period in records.")
-    parser.add_argument("--period-count", type=int, default=None, help="Number of CWT periods.")
+    parser.add_argument(
+        "--period-min-records",
+        type=float,
+        default=None,
+        help="Advanced override for the CWT lower bound; omitted bounds use the minimum safe context.",
+    )
+    parser.add_argument(
+        "--period-max-records",
+        type=float,
+        default=None,
+        help="Advanced override for the CWT upper bound; omitted bounds use the minimum safe context.",
+    )
+    parser.add_argument(
+        "--period-count",
+        type=int,
+        default=None,
+        help="Advanced CWT grid-size override; omitted uses 12 bins/octave plus safe context.",
+    )
     parser.add_argument("--period-spacing", choices=["log", "linear"], default=None, help="CWT period spacing.")
     parser.add_argument("--time-aggregation", type=str, default=None, help="Time aggregation for period-channel response.")
     parser.add_argument("--aggregation-percentile", type=float, default=None, help="Percentile for percentile aggregation.")

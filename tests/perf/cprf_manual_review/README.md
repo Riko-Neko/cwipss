@@ -17,11 +17,11 @@ Copy this directory to the server and run without arguments:
 python extract_single_channel.py
 ```
 
-The extractor reads only the selected frequency channel and candidate-centered time context. It writes one compressed archive plus metadata under `artifacts/`.
+The extractor reads only the selected frequency channel and candidate-centered time context. It writes one compressed archive plus metadata under `data/`.
 
 ## Render Review Images
 
-After copying `artifacts/single_channel_slices.npz` and `artifacts/metadata.json` back into this directory:
+After copying `data/single_channel_slices.npz` and `data/metadata.json` back into this directory:
 
 ```bash
 python render_review.py
@@ -76,7 +76,8 @@ It compares the edge-preserving CPRO, direct period mean, and normalized period 
 same native PELT. CPRO calibrates absolute CWT power, applies soft absolute-power and local
 period-contrast responses, averages three adjacent period bins, and takes the strongest period
 response at each record. It performs no time smoothing: PELT alone determines persistence and
-time boundaries. Outputs are written to `artifacts/activity_comparison/`. `summary.json` sets
+time boundaries. Outputs are written to `runs/perf/cprf_manual_review/activity_comparison/`.
+`summary.json` sets
 `formal_metrics_ready` only for the complete 1,993-case labelled dataset; `--limit` is smoke-only.
 
 For labelled `keep` cases the report includes any-overlap recall, IoU recall at 0.10/0.30/0.50,
@@ -98,8 +99,8 @@ Render a separate boundary-comparison gallery without changing the original revi
 
 ```bash
 python render_review.py \
-  --comparison-windows artifacts/activity_comparison/windows.csv \
-  --output-dir artifacts/comparison_review
+  --comparison-windows ../../../runs/perf/cprf_manual_review/activity_comparison/windows.csv \
+  --output-dir ../../../runs/perf/cprf_manual_review/comparison_review
 ```
 
 Add `--confidence high --limit 30` for a focused high-confidence Real audit. Solid green lines are
@@ -117,7 +118,7 @@ from `src`, not inferred only from an exported feature table:
 python compare_activity.py \
   --production-continuity \
   --assert-production-target \
-  --output-dir artifacts/production_continuity_validation_v1
+  --output-dir ../../../runs/perf/cprf_manual_review/production_continuity_validation_v1
 ```
 
 This requires all 1,993 labelled cases and fails if the selected frontier
@@ -128,3 +129,19 @@ IoU on fully observed high-confidence Real cases is `0.9115`. The production
 branch uses PELT minimum size `64` and no independent duration gate; the
 historical `96/640` values in the same report belong only to the comparison
 baseline.
+
+## Analyze The Full Candidate Population
+
+Run the fixed 1,993-case manual labels against the complete reviewed batch:
+
+```bash
+python analyze_population.py
+```
+
+The script fits robust K-means phenotypes only to high-confidence Real cases, projects the full
+candidate population into that feature space, and writes plots plus reproducible CSV/JSON summaries
+to `runs/batch_20260823_140527/analysis/cprf_population_v1/`. The first two figures contain the basic distributions
+for every exported physical, CPRO, PELT, CPRF, harmonic, and score field. CPRF response figures show
+one-at-a-time and joint stricter post-filter behavior among candidates already exported by the
+batch; they are not estimates of recovery for PELT windows rejected before export. Full-population
+cluster membership means morphology similarity to a reviewed phenotype, not a Real classification.

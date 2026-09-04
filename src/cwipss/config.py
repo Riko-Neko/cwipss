@@ -3,8 +3,12 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, fields, replace
+from math import ceil, isfinite, log2
 from pathlib import Path
 from typing import Any
+
+
+AUTO_PERIOD_BINS_PER_OCTAVE = 12.0
 
 
 @dataclass
@@ -20,9 +24,9 @@ class CWTSearchConfig:
     cwt_method: str = "fft"
     cwt_backend: str = "cpu"
     cuda_device: int = 0
-    period_min_records: float = 2.0
-    period_max_records: float = 512.0
-    period_count: int = 96
+    period_min_records: float | None = None
+    period_max_records: float | None = None
+    period_count: int | None = None
     period_spacing: str = "log"
     block_channels: int = 128
     time_aggregation: str = "p95"
@@ -243,9 +247,73 @@ def cwt_config_from_mapping(
     flat = flatten_cwt_config_mapping(payload or {})
     if overrides:
         flat.update({key: value for key, value in overrides.items() if value is not None})
-    config = CWTSearchConfig(**flat)
+    config = resolve_cwt_period_domain(CWTSearchConfig(**flat))
     validate_cwt_config(config)
     return config
+
+
+def _automatic_period_margin_bins(config: CWTSearchConfig) -> int:
+    contrast_radius = int(config.cpro_period_context_bins) // 2
+    support_radius = int(config.cpro_period_support_bins) // 2
+    return contrast_radius + support_radius
+
+
+def resolve_cwt_period_domain(config: CWTSearchConfig) -> CWTSearchConfig:
+    """Resolve the smallest safe CWT grid around the candidate period domain."""
+    candidate_min = float(config.candidate_period_min_records)
+    candidate_max = float(config.candidate_period_max_records)
+    if (
+        not isfinite(candidate_min)
+        or not isfinite(candidate_max)
+        or candidate_min <= 0.0
+        or candidate_max <= candidate_min
+    ):
+        raise ValueError("candidate period bounds must be finite, positive, and increasing")
+
+    period_min = config.period_min_records
+    period_max = config.period_max_records
+    period_count = config.period_count
+    if (period_min is None) != (period_max is None):
+        raise ValueError("period_min_records and period_max_records must both be set or both be null")
+
+    if period_min is not None and period_max is not None:
+        lo = float(period_min)
+        hi = float(period_max)
+        if not isfinite(lo) or not isfinite(hi) or lo <= 0.0 or hi <= lo:
+            raise ValueError("explicit CWT period bounds must be finite, positive, and increasing")
+        if lo > candidate_min or hi < candidate_max:
+            raise ValueError("explicit CWT period bounds must contain the candidate period domain")
+        if period_count is None:
+            period_count = int(ceil(log2(hi / lo) * AUTO_PERIOD_BINS_PER_OCTAVE)) + 1
+        return replace(
+            config,
+            period_min_records=lo,
+            period_max_records=hi,
+            period_count=int(period_count),
+        )
+
+    if config.period_spacing != "log":
+        raise ValueError("automatic CWT period bounds require logarithmic spacing")
+    margin = _automatic_period_margin_bins(config)
+    target_octaves = log2(candidate_max / candidate_min)
+    if period_count is None:
+        target_intervals = max(1, int(ceil(target_octaves * AUTO_PERIOD_BINS_PER_OCTAVE)))
+        period_count = target_intervals + 2 * margin + 1
+    else:
+        period_count = int(period_count)
+        target_intervals = period_count - 1 - 2 * margin
+        if target_intervals < 1:
+            raise ValueError(
+                f"period_count must exceed {2 * margin + 1} for the automatic safe margin"
+            )
+    step_octaves = target_octaves / float(target_intervals)
+    padding = 2.0 ** (float(margin) * step_octaves)
+    return replace(
+        config,
+        period_min_records=candidate_min / padding,
+        period_max_records=candidate_max * padding,
+        period_count=period_count,
+    )
 
 
 def cprf_parameters_from_config(config: CWTSearchConfig):
@@ -291,6 +359,10 @@ def validate_cwt_config(config: CWTSearchConfig) -> None:
         min_ridge_lock=config.cpro_min_ridge_lock,
     ).validate()
     cprf_parameters_from_config(config).validate()
+    if config.period_min_records is None or config.period_max_records is None or config.period_count is None:
+        raise ValueError("CWT period domain must be resolved before validation")
+    if config.period_count < 1:
+        raise ValueError("period_count must be positive")
     if config.pelt_penalty < 0.0:
         raise ValueError("pelt_penalty must be non-negative")
     if config.pelt_min_size_records < 1 or config.pelt_jump_records < 1:

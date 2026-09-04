@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from cwipss.signal import cpro_cuda, detection, detection_cuda
+from cwipss.signal import cpro_cuda, cwt_cuda, detection, detection_cuda
 from cwipss.signal.windows import PeltCancellation, Segment, pelt_mean_shift_batch
 from cwipss.workflows import search
 
@@ -64,6 +64,27 @@ def test_cpro_core_has_no_host_array_transfer() -> None:
     assert "asnumpy" not in activity_source
     assert "asnumpy" not in continuity_source
     assert feature_source.count("cp.asnumpy") == 1
+
+
+def test_cuda_wavelet_integration_is_cached(monkeypatch: pytest.MonkeyPatch) -> None:
+    original = cwt_cuda.integrate_wavelet
+    calls = 0
+
+    def counted(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(cwt_cuda, "integrate_wavelet", counted)
+    cwt_cuda._cached_integrated_wavelet.cache_clear()
+    first = cwt_cuda._integrated_wavelet("cmor1.5-1.0", np.dtype(np.float32))
+    second = cwt_cuda._integrated_wavelet("cmor1.5-1.0", np.dtype(np.float32))
+
+    assert calls == 1
+    assert first[1] is second[1]
+    assert first[2] is second[2]
+    assert not first[1].flags.writeable
+    cwt_cuda._cached_integrated_wavelet.cache_clear()
 
 
 def test_cuda_orchestration_keeps_cwt_resident_through_cprf() -> None:

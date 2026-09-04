@@ -46,7 +46,7 @@ def pytest_addoption(parser) -> None:
     )
     group.addoption("--wavelet-basis-t-start", action="store", type=int, default=None)
     group.addoption("--wavelet-basis-t-stop", action="store", type=int, default=0)
-    group.addoption("--wavelet-basis-period-min", action="store", type=float, default=None)
+    group.addoption("--wavelet-basis-period-min", action="store", type=float, default=2.0)
     group.addoption("--wavelet-basis-period-max", action="store", type=float, default=2048.0)
     group.addoption("--wavelet-basis-period-count", action="store", type=int, default=128)
     group.addoption("--wavelet-basis-period-spacing", action="store", default="")

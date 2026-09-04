@@ -28,6 +28,12 @@ S(p,t) = period_mean_3(Q * W)
 activity(t) = max_p S(p,t)
 ```
 
+The CWT grid includes the smallest safe period context outside the requested
+candidate domain. Those context rows contribute to center/sideband and support
+calculations at the two boundaries, then are masked before the strongest-period
+reduction. They therefore stabilize edge candidates without becoming candidate
+periods themselves.
+
 Defaults are `Rmin=1.5`, `sP=1.0`, `sR=0.10`, and period support `3` bins.
 The PELT boundary reduction is fixed Top-1 and has no time smoothing. Absolute
 calibrated power controls `Q`; local period contrast controls `W`; native PELT

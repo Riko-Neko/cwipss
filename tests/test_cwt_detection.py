@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 from scipy import ndimage
 
+from cwipss.signal import cpro as cpro_module
 from cwipss.signal import cpro_cuda
 from cwipss.signal.cpro import (
     CPROParameters,
@@ -88,6 +89,59 @@ def test_cpro_activity_is_in_noise_calibrated_power_units() -> None:
 
     np.testing.assert_allclose(base.shape_activity, scaled.shape_activity)
     np.testing.assert_allclose(base.shape_map, scaled.shape_map)
+
+
+def test_cpro_uses_context_outside_target_period_domain_without_emitting_it() -> None:
+    power = np.ones((5, 16), dtype=np.float32)
+    power[1, :] = 10.0
+    target = np.array([False, True, True, True, False])
+    params = CPROParameters(
+        threshold_snr=0.1,
+        texture_quantile=0.0,
+        period_center_bins=1,
+        period_context_bins=3,
+        min_period_contrast=2.0,
+        period_support_bins=1,
+        shape_power_softness=1.0,
+        shape_contrast_softness=0.1,
+    )
+
+    contextual = cpro_activity(
+        power,
+        noise_std=1.0,
+        noise_gain=np.ones(5),
+        target_period_mask=target,
+        params=params,
+    )
+    cropped = cpro_activity(
+        power[target],
+        noise_std=1.0,
+        noise_gain=np.ones(3),
+        params=params,
+    )
+
+    assert np.all(contextual.shape_map[~target] == 0.0)
+    assert contextual.shape_activity[0] > cropped.shape_activity[0]
+
+
+def test_impulse_cwt_noise_gain_is_cached(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = 0
+
+    def fake_cwt_power_cube(data, periods, **_kwargs):
+        nonlocal calls
+        calls += 1
+        return np.ones((len(periods), len(data), 1), dtype=np.float32)
+
+    monkeypatch.setattr("cwipss.signal.cwt.cwt_power_cube", fake_cwt_power_cube)
+    cpro_module._cached_impulse_cwt_noise_gain.cache_clear()
+    periods = np.array([4.0, 8.0, 16.0])
+    first = cpro_module.impulse_cwt_noise_gain(periods, wavelet="cmor1.5-1.0")
+    second = cpro_module.impulse_cwt_noise_gain(periods.copy(), wavelet="cmor1.5-1.0")
+
+    assert calls == 1
+    assert first is second
+    assert not first.flags.writeable
+    cpro_module._cached_impulse_cwt_noise_gain.cache_clear()
 
 
 def test_cpro_continuity_suppresses_time_isolated_ridge_energy() -> None:

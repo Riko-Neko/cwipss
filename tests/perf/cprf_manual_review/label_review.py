@@ -43,7 +43,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--selection", type=Path, default=BASE_DIR / "selection.csv")
     parser.add_argument("--labels", type=Path, default=BASE_DIR / "labels.csv")
     parser.add_argument("--image-dir", type=Path, default=BASE_DIR / "artifacts/review")
-    parser.add_argument("--metadata", type=Path, default=BASE_DIR / "artifacts/metadata.json")
+    parser.add_argument("--metadata", type=Path, default=BASE_DIR / "data/metadata.json")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--check", action="store_true", help="Validate inputs and exit")

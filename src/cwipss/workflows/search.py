@@ -17,9 +17,10 @@ from ..config import (
     CWTSearchConfig,
     cprf_parameters_from_config,
     cwt_config_to_nested_dict,
+    resolve_cwt_period_domain,
     validate_cwt_config,
 )
-from ..signal.cpro import cpro_period_mask, impulse_cwt_noise_gain
+from ..signal.cpro import impulse_cwt_noise_gain
 from ..signal.cwt import cwt_power_cube, period_grid_records
 from ..signal.detection import add_candidate_ids, detect_block_periods
 from ..signal.windows import PeltCancellation, require_native_pelt
@@ -272,6 +273,7 @@ def _use_cuda_block_backend(backend: str, method: str, cuda_device: int) -> bool
 def run_cwt_search(config: CWTSearchConfig) -> Path:
     run_start = perf_counter()
     require_native_pelt()
+    config = resolve_cwt_period_domain(config)
     validate_cwt_config(config)
     cprf_params = cprf_parameters_from_config(config)
     if not config.input:
@@ -290,13 +292,8 @@ def run_cwt_search(config: CWTSearchConfig) -> Path:
         config.period_count,
         config.period_spacing,
     )
-    candidate_period_mask = cpro_period_mask(
-        periods,
-        config.candidate_period_min_records,
-        config.candidate_period_max_records,
-    )
     noise_gain = impulse_cwt_noise_gain(
-        periods[candidate_period_mask],
+        periods,
         wavelet=config.wavelet,
         method=config.cwt_method,
     )
@@ -428,10 +425,7 @@ def run_cwt_search(config: CWTSearchConfig) -> Path:
             _timing_add(timing_totals, "read_seconds", read_seconds)
             block_count += 1
             block_id = f"block_{block_index:04d}"
-            all_zero_mask = np.all(
-                np.isfinite(block.data) & (block.data == 0.0),
-                axis=0,
-            )
+            all_zero_mask = np.all(block.data == 0.0, axis=0)
             for local_channel in np.flatnonzero(all_zero_mask):
                 all_invalid_channels.append(
                     {

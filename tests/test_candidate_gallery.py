@@ -64,16 +64,20 @@ def test_visualize_candidate_gallery_writes_raw_and_cwt_figure(tmp_path: Path) -
         json.dumps(
             {
                 "input": {"path": str(source)},
-                "scan": {
+                    "scan": {
                     "wavelet": "cmor1.5-1.0",
                     "cwt_method": "fft",
                     "cwt_backend": "cpu",
                     "period_min_records": 2,
                     "period_max_records": 64,
                     "period_count": 24,
-                    "period_spacing": "log",
-                },
-            }
+                        "period_spacing": "log",
+                    },
+                    "detection": {
+                        "candidate_period_min_records": 2,
+                        "candidate_period_max_records": 64,
+                    },
+                }
         )
     )
     candidate_fields = [

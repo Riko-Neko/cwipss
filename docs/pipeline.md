@@ -23,11 +23,12 @@ input adapters. See `architecture.md` for package boundaries.
 
 ```text
 time x channel data
-  -> per-channel CWT over explicit period grid
+  -> resolve the minimum safe CWT context around the candidate period domain
+  -> per-channel CWT over that logarithmic period grid
   -> period x time x channel power cube
-  -> candidate period-domain filter
   -> absolute noise and wavelet-gain calibration
-  -> soft absolute-power and local period-ridge contrast response
+  -> soft absolute-power and local period-ridge contrast using context rows
+  -> suppress output outside the candidate period domain
   -> 3-bin period support and strongest-period reduction
   -> one edge-preserving CPRO observation axis per channel
   -> native C++ PELT mean-shift segments on that axis
@@ -57,6 +58,8 @@ validation, null tests, RFI veto, and multiple-testing correction.
 See [cpro.md](cpro.md) for equations and the CUDA transfer boundary. Defaults:
 
 - candidate period domain `10..200` records;
+- automatic CWT domain: 12 bins per octave and the minimum 8 context bins on
+  each side of the candidate domain; explicit CWT bounds are advanced overrides;
 - calibrated threshold `32` and texture quantile `0.9375`;
 - period contrast `1.5` using center/context widths `3/15` bins;
 - period support `3` bins, power softness `1.0`, and contrast softness `0.10`;
@@ -85,7 +88,12 @@ values must be retained in `config.resolved.json`.
 ## Feasible Period Domain
 
 The default candidate domain rejects periods below 10 records and above 200
-records. This is a detection-domain filter, not a CWT-grid limit.
+records. The CWT grid is derived automatically from this domain. With the
+default CPRO widths, its minimum safe margin is 8 period bins on each side:
+7 bins for the 15-bin local-contrast radius plus 1 bin for 3-bin support.
+These context rows participate in CPRO boundary calculations but cannot emit
+candidates. At 12 bins per octave, the default `10..200` candidate domain
+resolves to a 69-row CWT grid spanning approximately `6.307..317.094` records.
 
 For currently supported CE4 files with `.2CL` labels, one record is about one
 second. In the current 4096-record low-frequency review windows, the assumed

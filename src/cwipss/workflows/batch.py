@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from ..config import CWTSearchConfig, cwt_config_to_nested_dict
+from ..config import CWTSearchConfig, cwt_config_to_nested_dict, resolve_cwt_period_domain
 from ..data.schemas import (
     BATCH_MANIFEST_FIELDNAMES,
     RAW_CANDIDATE_FIELDNAMES,
@@ -249,6 +249,7 @@ def run_batch(
     project_dir: str | Path,
 ) -> Path:
     project_dir = Path(project_dir)
+    base_config = resolve_cwt_period_domain(base_config)
     batch_dir = Path(batch_config.output_dir) / batch_config.batch_id
     files_dir = batch_dir / "files"
     batch_dir.mkdir(parents=True, exist_ok=True)
